@@ -1,10 +1,10 @@
 import type { Session } from "../types.ts";
 
-const ACCENT: Record<string, string> = {
-  working: "border-l-blue-500",
-  needs_you: "border-l-amber-500",
-  idle: "border-l-slate-500",
-  ended: "border-l-slate-700",
+const STATUS: Record<string, { accent: string; label: string; dot: string }> = {
+  working: { accent: "var(--working)", label: "Working", dot: "bg-working" },
+  needs_you: { accent: "var(--attention)", label: "Needs you", dot: "bg-attention" },
+  idle: { accent: "var(--idle)", label: "Idle", dot: "bg-idle" },
+  ended: { accent: "var(--idle)", label: "Ended", dot: "bg-idle" },
 };
 
 function ago(ts: number): string {
@@ -15,16 +15,29 @@ function ago(ts: number): string {
 }
 
 export function SessionCard({ s }: { s: Session }) {
+  const st = STATUS[s.status] ?? STATUS.idle;
   return (
-    <div className={`rounded-md border border-slate-800 border-l-4 ${ACCENT[s.status]} bg-slate-900 p-3 mb-2`}>
-      <div className="font-semibold text-slate-100">{s.project}</div>
-      <div className="text-xs text-slate-400 mt-1">
+    <div
+      className="mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      style={{ borderLeft: `3px solid hsl(${st.accent})` }}
+    >
+      <div className="font-medium text-foreground">{s.project}</div>
+      <div
+        className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold"
+        style={{ color: `hsl(${st.accent})` }}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+        {st.label}
+      </div>
+      <div className="mt-1.5 text-xs text-muted-foreground">
         {s.current_task ?? s.current_intent ?? "—"}
       </div>
       {s.attention_reason && s.status === "needs_you" && (
-        <div className="text-xs text-amber-400 mt-1">⚠ {s.attention_reason}</div>
+        <div className="mt-2 rounded-md border border-attention/25 bg-attention/10 px-2 py-1.5 text-xs text-attention">
+          ⚠ {s.attention_reason}
+        </div>
       )}
-      <div className="text-[10px] text-slate-600 mt-2">{ago(s.last_activity_at)}</div>
+      <div className="mt-2 text-[11px] text-muted-foreground/70">{ago(s.last_activity_at)}</div>
     </div>
   );
 }
