@@ -2,5 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
-body { @apply bg-slate-950 text-slate-200; }
+:root {
+  color-scheme: light;
+  --background: 210 30% 98%;
+  --card: 0 0% 100%;
+  --card-hover: 214 32% 97%;
+  --muted: 214 24% 94%;
+  --muted-foreground: 220 12% 42%;
+  --foreground: 222 34% 12%;
+  --border: 214 22% 86%;
+  --chip: 214 24% 92%;
+  --shadow: 220 40% 30%;
+  --shadow-a: 0.08;
+  --primary: 258 82% 56%;
+  --working: 213 88% 50%;
+  --attention: 35 92% 46%;
+  --handed: 245 70% 58%;
+  --done: 152 55% 38%;
+  --idle: 220 10% 55%;
+}
+
+html.dark {
+  color-scheme: dark;
+  --background: 222 26% 5%;
+  --card: 222 20% 8.5%;
+  --card-hover: 222 18% 11%;
+  --muted: 222 16% 15%;
+  --muted-foreground: 220 12% 60%;
+  --foreground: 210 22% 95%;
+  --border: 222 16% 16%;
+  --chip: 222 16% 16%;
+  --shadow: 0 0% 0%;
+  --shadow-a: 0.35;
+  --primary: 258 90% 67%;
+  --working: 213 90% 62%;
+  --attention: 38 94% 58%;
+  --handed: 246 84% 70%;
+  --done: 152 58% 48%;
+  --idle: 220 10% 55%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+}
