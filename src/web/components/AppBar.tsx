@@ -36,7 +36,7 @@ export function AppBar({ state }: { state: State }) {
         aria-label="Toggle theme"
         className="ml-auto inline-flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground"
       >
-        <span>{theme === "dark" ? "☾" : "☀"}</span>
+        <span aria-hidden="true">{theme === "dark" ? "☾" : "☀"}</span>
         <span>{theme === "dark" ? "Dark" : "Light"}</span>
       </button>
     </header>
