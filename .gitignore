@@ -1,0 +1,20 @@
+# Visual companion / brainstorm scratch
+.superpowers/
+
+# Dependencies
+node_modules/
+bun.lockb
+
+# Build output
+dist/
+build/
+
+# Local data / runtime
+*.sqlite
+*.sqlite-*
+*.db
+.env
+.env.local
+
+# OS / editor
+.DS_Store
