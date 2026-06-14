@@ -21,7 +21,7 @@ const EVENT_TYPES = new Set<EventType>([
   "session_end",
 ]);
 
-const TODO_STATUSES = new Set(["to_hand_off", "handed_off", "done"]);
+const TODO_STATUSES = new Set(["todo", "done"]);
 
 function tryParse(raw: string): { ok: true; value: any } | { ok: false } {
   try {

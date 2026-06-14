@@ -95,10 +95,10 @@ export class Store {
   createTodo(input: CreateTodoInput, now: number): Todo {
     const id = randomUUID();
     const nextPos =
-      (this.db.query(`SELECT COALESCE(MAX(position), -1) AS m FROM todos WHERE status = 'to_hand_off'`).get() as { m: number }).m + 1;
+      (this.db.query(`SELECT COALESCE(MAX(position), -1) AS m FROM todos WHERE status = 'todo'`).get() as { m: number }).m + 1;
     this.db
       .query(
-        `INSERT INTO todos (${TODO_COLS}) VALUES ($id, $title, $note, $for_who, 'to_hand_off', $origin_session_id, $origin_project, $branch, $links, $position, $created_at, $updated_at)`
+        `INSERT INTO todos (${TODO_COLS}) VALUES ($id, $title, $note, $for_who, 'todo', $origin_session_id, $origin_project, $branch, $links, $position, $created_at, $updated_at)`
       )
       .run({
         $id: id,

@@ -11,7 +11,7 @@ export function openDb(path: string): Database {
   return db;
 }
 
-function migrate(db: Database): void {
+export function migrate(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -39,7 +39,7 @@ function migrate(db: Database): void {
       title TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '',
       for_who TEXT,
-      status TEXT NOT NULL DEFAULT 'to_hand_off',
+      status TEXT NOT NULL DEFAULT 'todo',
       origin_session_id TEXT,
       origin_project TEXT,
       branch TEXT,
@@ -49,4 +49,6 @@ function migrate(db: Database): void {
       updated_at INTEGER NOT NULL
     );
   `);
+  // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
+  db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);
 }

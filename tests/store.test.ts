@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { openDb } from "../src/server/db.ts";
+import { openDb, migrate } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import { reduceEvent } from "../src/server/events.ts";
 import { randomUUID } from "node:crypto";
@@ -58,10 +58,10 @@ describe("Store todos", () => {
     store = new Store(openDb(":memory:"));
   });
 
-  it("creates a todo in to_hand_off with incrementing position", () => {
-    const a = store.createTodo({ title: "Hand off spec", note: "branch feat/pay" }, 5000);
+  it("creates a todo in the 'todo' status with incrementing position", () => {
+    const a = store.createTodo({ title: "Set a reminder", note: "branch feat/pay" }, 5000);
     const b = store.createTodo({ title: "Review PR", note: "" }, 5001);
-    expect(a.status).toBe("to_hand_off");
+    expect(a.status).toBe("todo");
     expect(a.position).toBe(0);
     expect(b.position).toBe(1);
     expect(store.listTodos().length).toBe(2);
@@ -75,8 +75,8 @@ describe("Store todos", () => {
 
   it("updates status and note", () => {
     const t = store.createTodo({ title: "x", note: "n" }, 5000);
-    const u = store.updateTodo(t.id, { status: "handed_off", note: "passed to Sam" }, 6000)!;
-    expect(u.status).toBe("handed_off");
+    const u = store.updateTodo(t.id, { status: "done", note: "passed to Sam" }, 6000)!;
+    expect(u.status).toBe("done");
     expect(u.note).toBe("passed to Sam");
     expect(u.updated_at).toBe(6000);
   });
@@ -85,7 +85,7 @@ describe("Store todos", () => {
     store.createTodo({ title: "a", note: "" }, 1);
     const b = store.createTodo({ title: "b", note: "" }, 2);
     store.updateTodo(b.id, { status: "done" }, 3);
-    expect(store.listTodos("to_hand_off").length).toBe(1);
+    expect(store.listTodos("todo").length).toBe(1);
     expect(store.listTodos("done").length).toBe(1);
   });
 
@@ -94,5 +94,24 @@ describe("Store todos", () => {
     expect(store.deleteTodo(t.id)).toBe(true);
     expect(store.listTodos().length).toBe(0);
     expect(store.deleteTodo("nope")).toBe(false);
+  });
+
+  it("migrates legacy hand-off statuses to 'todo'", () => {
+    const ins = (id: string, status: string) =>
+      store.db
+        .query(
+          `INSERT INTO todos (id, title, note, status, position, created_at, updated_at)
+           VALUES ($id, 't', '', $status, 0, 1, 1)`
+        )
+        .run({ $id: id, $status: status });
+    ins("a", "handed_off");
+    ins("b", "to_hand_off");
+    ins("c", "done");
+    migrate(store.db);
+    const status = (id: string) =>
+      (store.db.query(`SELECT status FROM todos WHERE id = $id`).get({ $id: id }) as { status: string }).status;
+    expect(status("a")).toBe("todo");
+    expect(status("b")).toBe("todo");
+    expect(status("c")).toBe("done");
   });
 });

@@ -37,14 +37,14 @@ describe("MCP over HTTP (real SDK client)", () => {
     const { client, transport } = await connect();
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["list_todos", "record_handoff", "update_handoff"]);
+    expect(names).toEqual(["add_todo", "list_todos", "update_todo"]);
     await transport.close();
   });
 
-  it("record_handoff creates a todo via a real tool call", async () => {
+  it("add_todo creates a todo via a real tool call", async () => {
     const { client, transport } = await connect();
     await client.callTool({
-      name: "record_handoff",
+      name: "add_todo",
       arguments: { title: "Hand off", note: "ctx", for_who: "Maria" },
     });
     expect(store.listTodos().length).toBe(1);

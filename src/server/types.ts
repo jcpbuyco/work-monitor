@@ -48,7 +48,7 @@ export interface SessionPatch {
   ended_at?: number | null;
 }
 
-export type TodoStatus = "to_hand_off" | "handed_off" | "done";
+export type TodoStatus = "todo" | "done";
 
 export interface Todo {
   id: string;

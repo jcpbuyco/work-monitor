@@ -57,16 +57,16 @@ describe("todos REST", () => {
         body: JSON.stringify({ title: "Hand off spec", note: "branch feat/pay", for_who: "Maria" }),
       })
     ).json() as any;
-    expect(created.status).toBe("to_hand_off");
+    expect(created.status).toBe("todo");
 
     const patched = await (
       await fetch(`${base}/api/todos/${created.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: "handed_off" }),
+        body: JSON.stringify({ status: "done" }),
       })
     ).json() as any;
-    expect(patched.status).toBe("handed_off");
+    expect(patched.status).toBe("done");
 
     const del = await fetch(`${base}/api/todos/${created.id}`, { method: "DELETE" });
     expect(del.status).toBe(204);
@@ -107,7 +107,7 @@ describe("todo input validation", () => {
     });
     expect(bad.status).toBe(400);
     const state = await (await fetch(`${base}/api/state`)).json() as any;
-    expect(state.todos[0].status).toBe("to_hand_off");
+    expect(state.todos[0].status).toBe("todo");
   });
 
   it("accepts a null note on PATCH without a 500", async () => {

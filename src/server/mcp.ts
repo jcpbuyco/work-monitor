@@ -18,9 +18,9 @@ export function makeTools(deps: McpDeps) {
   const now = deps.now ?? (() => Date.now());
   const { store, onChange } = deps;
   return {
-    record_handoff(input: {
+    add_todo(input: {
       title: string;
-      note: string;
+      note?: string;
       for_who?: string;
       project?: string;
       branch?: string;
@@ -43,15 +43,11 @@ export function makeTools(deps: McpDeps) {
     list_todos(input: { status?: TodoStatus }) {
       return { todos: store.listTodos(input.status) };
     },
-    update_handoff(input: { id: string; status?: TodoStatus; note?: string }) {
+    update_todo(input: { id: string; status?: TodoStatus; note?: string }) {
       const patch: { status?: TodoStatus; note?: string } = {};
       if (input.status !== undefined) patch.status = input.status;
       if (input.note !== undefined) patch.note = input.note;
-      const updated = store.updateTodo(
-        input.id,
-        patch,
-        now()
-      );
+      const updated = store.updateTodo(input.id, patch, now());
       if (updated) onChange();
       return { ok: !!updated };
     },
@@ -63,21 +59,21 @@ function buildServer(deps: McpDeps): McpServer {
   const tools = makeTools(deps);
 
   server.registerTool(
-    "record_handoff",
+    "add_todo",
     {
       description:
-        "Record a persistent hand-off todo that appears on the work-monitor dashboard. Use when the user asks you to remember to hand work off to another engineer. Fill note with the context the next person needs (what's done, what's left, where the spec/branch is).",
+        "Record a todo on the work-monitor dashboard — any task, reminder, or hand-off worth not forgetting, for yourself or someone else (not limited to engineer hand-offs). Use whenever you or the user want something tracked on the board. Put any useful context in note.",
       inputSchema: {
-        title: z.string().describe("Short title, e.g. 'Hand off payments spec'"),
-        note: z.string().describe("Rich context: what's done, what's left, paths"),
-        for_who: z.string().optional().describe("Who to hand off to, if known"),
-        project: z.string().optional().describe("Project name"),
-        branch: z.string().optional().describe("Git branch holding the work"),
-        links: z.array(z.string()).optional().describe("Spec paths, PR URLs, etc."),
+        title: z.string().describe("Short title, e.g. 'Run bun run setup' or 'Hand off payments spec'"),
+        note: z.string().optional().describe("Optional context — what's done, what's left, paths"),
+        for_who: z.string().optional().describe("Optional — who it's for, if you're handing off to someone"),
+        project: z.string().optional().describe("Optional project name"),
+        branch: z.string().optional().describe("Optional git branch the work is on"),
+        links: z.array(z.string()).optional().describe("Optional — spec paths, PR URLs, etc."),
       },
     },
     async (args) => ({
-      content: [{ type: "text", text: JSON.stringify(tools.record_handoff(args as any)) }],
+      content: [{ type: "text", text: JSON.stringify(tools.add_todo(args as any)) }],
     })
   );
 
@@ -85,8 +81,8 @@ function buildServer(deps: McpDeps): McpServer {
     "list_todos",
     {
       description:
-        "List current work-monitor hand-off todos (optionally filtered by status) so you can avoid creating duplicates.",
-      inputSchema: { status: z.enum(["to_hand_off", "handed_off", "done"]).optional() },
+        "List todos on the work-monitor dashboard (optionally filtered by status) — e.g. to avoid creating duplicates or to check what's still open.",
+      inputSchema: { status: z.enum(["todo", "done"]).optional() },
     },
     async (args) => ({
       content: [{ type: "text", text: JSON.stringify(tools.list_todos(args as any)) }],
@@ -94,18 +90,18 @@ function buildServer(deps: McpDeps): McpServer {
   );
 
   server.registerTool(
-    "update_handoff",
+    "update_todo",
     {
       description:
-        "Update a hand-off todo (e.g. mark it handed_off or done, or amend the note).",
+        "Update a todo on the work-monitor dashboard — mark it done (or back to todo), or amend its note.",
       inputSchema: {
         id: z.string(),
-        status: z.enum(["to_hand_off", "handed_off", "done"]).optional(),
+        status: z.enum(["todo", "done"]).optional(),
         note: z.string().optional(),
       },
     },
     async (args) => ({
-      content: [{ type: "text", text: JSON.stringify(tools.update_handoff(args as any)) }],
+      content: [{ type: "text", text: JSON.stringify(tools.update_todo(args as any)) }],
     })
   );
 
