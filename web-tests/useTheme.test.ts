@@ -27,10 +27,26 @@ describe("useTheme", () => {
 
   it("falls back to system preference when nothing is stored", () => {
     vi.stubGlobal("matchMedia", (q: string) => ({
-      matches: true, media: q, addEventListener() {}, removeEventListener() {},
+      matches: q === "(prefers-color-scheme: light)",
+      media: q, addEventListener() {}, removeEventListener() {},
     }));
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light"); // prefers-color-scheme: light matches
+  });
+
+  it("defaults to dark when nothing is stored and system preference is unavailable", () => {
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("toggle from dark flips to light, removes the dark class, and persists", () => {
+    localStorage.setItem("wm-theme", "dark");
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.toggle());
+    expect(result.current.theme).toBe("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(localStorage.getItem("wm-theme")).toBe("light");
   });
 
   it("toggle flips theme, the dark class, and persists to localStorage", () => {
