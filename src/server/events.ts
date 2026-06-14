@@ -33,6 +33,12 @@ export function reduceEvent(
       if (task !== null) patch.current_task = task;
       break;
     }
+    case "activity":
+      // Heartbeat from any tool use: the session is actively working, so keep it
+      // out of the stale sweep and clear any "needs you" once work resumes.
+      patch.status = "working";
+      patch.attention_reason = null;
+      break;
     case "notification":
       patch.status = "needs_you";
       patch.attention_reason = event.message ?? "Needs your attention";

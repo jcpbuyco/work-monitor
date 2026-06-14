@@ -61,6 +61,17 @@ describe("reduceEvent", () => {
     expect(patch.status).toBe("idle");
   });
 
+  it("activity -> working and clears attention (tool-use heartbeat)", () => {
+    const { sessionId, patch } = reduceEvent(
+      base({ wm_event_type: "activity", cwd: "/x/browns" }),
+      NOW
+    );
+    expect(sessionId).toBe("s1");
+    expect(patch.status).toBe("working");
+    expect(patch.attention_reason).toBeNull();
+    expect(patch.last_activity_at).toBe(NOW);
+  });
+
   it("session_end -> ended with ended_at", () => {
     const { patch } = reduceEvent(base({ wm_event_type: "session_end" }), NOW);
     expect(patch.status).toBe("ended");

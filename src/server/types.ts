@@ -18,6 +18,7 @@ export type EventType =
   | "session_start"
   | "prompt"
   | "todo_update"
+  | "activity"
   | "notification"
   | "stop"
   | "session_end";

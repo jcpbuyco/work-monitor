@@ -46,6 +46,21 @@ describe("POST /events", () => {
     });
     expect(res.status).toBe(204);
   });
+
+  it("an activity heartbeat brings an idle session back to working", async () => {
+    const post = (type: string, body: object) =>
+      fetch(`${base}/events?type=${type}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    await post("session_start", { session_id: "s9", cwd: "/x/foo" });
+    await post("stop", { session_id: "s9" });
+    const res = await post("activity", { session_id: "s9", cwd: "/x/foo" });
+    expect(res.status).toBe(204);
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "s9").status).toBe("working");
+  });
 });
 
 describe("todos REST", () => {

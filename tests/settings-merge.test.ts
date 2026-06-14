@@ -35,4 +35,20 @@ describe("mergeHooks", () => {
     const out = mergeHooks({}, HOOK);
     expect(out.hooks.PostToolUse[0].matcher).toBe("TodoWrite");
   });
+
+  it("adds a PostToolUse activity heartbeat (matcher '') alongside todo_update", () => {
+    const post = mergeHooks({}, HOOK).hooks.PostToolUse;
+    const activity = post.find((g: any) => g.hooks.some((h: any) => h.command.endsWith(" activity")));
+    expect(activity).toBeDefined();
+    expect(activity!.matcher).toBe("");
+    expect(post.some((g: any) => g.hooks.some((h: any) => h.command.endsWith(" todo_update")))).toBe(true);
+  });
+
+  it("is idempotent for both PostToolUse hooks (no duplicates on re-merge)", () => {
+    const twice = mergeHooks(mergeHooks({}, HOOK), HOOK);
+    const wm = twice.hooks.PostToolUse
+      .flatMap((g: any) => g.hooks)
+      .filter((h: any) => h.command.includes("wm-hook.sh"));
+    expect(wm.length).toBe(2);
+  });
 });
