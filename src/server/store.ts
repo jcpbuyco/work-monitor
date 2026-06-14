@@ -61,7 +61,8 @@ export class Store {
       }
     }
     if (fields.length > 0) {
-      this.db.query(`UPDATE sessions SET ${fields.join(", ")} WHERE id = $id`).run(params);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.db.query(`UPDATE sessions SET ${fields.join(", ")} WHERE id = $id`).run(params as any);
     }
     return this.getSession(sessionId)!;
   }
@@ -135,14 +136,16 @@ export class Store {
     for (const key of ["title", "note", "for_who", "status", "branch", "position"] as const) {
       if (key in patch) {
         fields.push(`${key} = $${key}`);
-        params[`$${key}`] = (patch as Record<string, unknown>)[key] ?? null;
+        const val = (patch as Record<string, unknown>)[key];
+        params[`$${key}`] = key === "note" ? (val ?? "") : (val ?? null);
       }
     }
     if ("links" in patch) {
       fields.push("links = $links");
       params.$links = patch.links ? JSON.stringify(patch.links) : null;
     }
-    this.db.query(`UPDATE todos SET ${fields.join(", ")} WHERE id = $id`).run(params);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.db.query(`UPDATE todos SET ${fields.join(", ")} WHERE id = $id`).run(params as any);
     return this.getTodo(id);
   }
 

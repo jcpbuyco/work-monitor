@@ -1,6 +1,7 @@
 import { DndContext, type DragEndEvent } from "@dnd-kit/core";
-import type { State, Todo, Session, TodoStatus } from "../types.ts";
+import type { State, Session, TodoStatus } from "../types.ts";
 import { patchTodo } from "../api.ts";
+import { resolveDrop } from "../drag.ts";
 import { Lane, Column } from "./Lane.tsx";
 import { TodoCard } from "./TodoCard.tsx";
 import { SessionCard } from "./SessionCard.tsx";
@@ -22,11 +23,8 @@ export function Board({ state }: { state: State }) {
   const bySession = (s: Session["status"]) => state.sessions.filter((x) => x.status === s);
 
   function onDragEnd(e: DragEndEvent) {
-    const id = String(e.active.id);
-    const over = e.over?.id as TodoStatus | undefined;
-    if (!over) return;
-    const todo = state.todos.find((t: Todo) => t.id === id);
-    if (todo && todo.status !== over) patchTodo(id, { status: over });
+    const drop = resolveDrop(state.todos, String(e.active.id), e.over ? String(e.over.id) : null);
+    if (drop) patchTodo(drop.id, { status: drop.status });
   }
 
   return (

@@ -15,7 +15,7 @@ describe("mergeHooks", () => {
 
   it("preserves unrelated existing hooks", () => {
     const existing = {
-      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "other.sh" }] }] },
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command" as const, command: "other.sh" }] }] },
     };
     const out = mergeHooks(existing, HOOK);
     const stopCmds = out.hooks.Stop.flatMap((g: any) => g.hooks.map((h: any) => h.command));

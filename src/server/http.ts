@@ -21,6 +21,16 @@ const EVENT_TYPES = new Set<EventType>([
   "session_end",
 ]);
 
+const TODO_STATUSES = new Set(["to_hand_off", "handed_off", "done"]);
+
+function tryParse(raw: string): { ok: true; value: any } | { ok: false } {
+  try {
+    return { ok: true, value: raw ? JSON.parse(raw) : {} };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -101,8 +111,13 @@ export function createApp(deps: AppDeps) {
 
       // --- todos CRUD ---
       if (method === "POST" && path === "/api/todos") {
-        const body = JSON.parse((await readBody(req)) || "{}");
-        if (!body.title) {
+        const parsed = tryParse(await readBody(req));
+        if (!parsed.ok) {
+          json(res, 400, { error: "invalid JSON" });
+          return;
+        }
+        const body = parsed.value;
+        if (!body.title || typeof body.title !== "string") {
           json(res, 400, { error: "title is required" });
           return;
         }
@@ -116,7 +131,20 @@ export function createApp(deps: AppDeps) {
       if (todoMatch) {
         const id = decodeURIComponent(todoMatch[1]);
         if (method === "PATCH") {
-          const body = JSON.parse((await readBody(req)) || "{}");
+          const parsed = tryParse(await readBody(req));
+          if (!parsed.ok) {
+            json(res, 400, { error: "invalid JSON" });
+            return;
+          }
+          const body = parsed.value;
+          if (body.status !== undefined && !TODO_STATUSES.has(body.status)) {
+            json(res, 400, { error: "invalid status" });
+            return;
+          }
+          if (body.position !== undefined && typeof body.position !== "number") {
+            json(res, 400, { error: "invalid position" });
+            return;
+          }
           const updated = store.updateTodo(id, body, now());
           if (!updated) {
             json(res, 404, { error: "not found" });

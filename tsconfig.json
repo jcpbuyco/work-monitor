@@ -4,13 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["bun-types"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
+    "lib": ["ES2022"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests", "web-tests"]
+  "include": ["src/server", "src/hooks", "src/cli", "tests"]
 }

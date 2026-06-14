@@ -32,7 +32,7 @@ describe("POST /events", () => {
       body: JSON.stringify({ session_id: "s1", cwd: "/x/browns" }),
     });
     expect(res.status).toBe(204);
-    const state = await (await fetch(`${base}/api/state`)).json();
+    const state = await (await fetch(`${base}/api/state`)).json() as any;
     expect(state.sessions.length).toBe(1);
     expect(state.sessions[0].project).toBe("browns");
     expect(state.sessions[0].status).toBe("working");
@@ -56,7 +56,7 @@ describe("todos REST", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: "Hand off spec", note: "branch feat/pay", for_who: "Maria" }),
       })
-    ).json();
+    ).json() as any;
     expect(created.status).toBe("to_hand_off");
 
     const patched = await (
@@ -65,12 +65,12 @@ describe("todos REST", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: "handed_off" }),
       })
-    ).json();
+    ).json() as any;
     expect(patched.status).toBe("handed_off");
 
     const del = await fetch(`${base}/api/todos/${created.id}`, { method: "DELETE" });
     expect(del.status).toBe(204);
-    const state = await (await fetch(`${base}/api/state`)).json();
+    const state = await (await fetch(`${base}/api/state`)).json() as any;
     expect(state.todos.length).toBe(0);
   });
 });
@@ -79,5 +79,52 @@ describe("MCP route without deps", () => {
   it("returns 503 when no mcp deps are wired", async () => {
     const res = await fetch(`${base}/mcp`, { method: "GET" });
     expect(res.status).toBe(503);
+  });
+});
+
+describe("todo input validation", () => {
+  it("rejects malformed JSON on POST with 400", async () => {
+    const res = await fetch(`${base}/api/todos`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an invalid status on PATCH with 400 and does not corrupt the card", async () => {
+    const created = await (
+      await fetch(`${base}/api/todos`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "t", note: "" }),
+      })
+    ).json() as any;
+    const bad = await fetch(`${base}/api/todos/${created.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "garbage" }),
+    });
+    expect(bad.status).toBe(400);
+    const state = await (await fetch(`${base}/api/state`)).json() as any;
+    expect(state.todos[0].status).toBe("to_hand_off");
+  });
+
+  it("accepts a null note on PATCH without a 500", async () => {
+    const created = await (
+      await fetch(`${base}/api/todos`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "t", note: "x" }),
+      })
+    ).json() as any;
+    const res = await fetch(`${base}/api/todos/${created.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ note: null }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.note).toBe("");
   });
 });

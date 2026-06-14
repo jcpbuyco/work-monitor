@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "./db.ts";
 import { Store } from "./store.ts";
@@ -27,7 +27,12 @@ const server = createServer(async (req, res) => {
     url.pathname === "/mcp";
   if (!apiish && existsSync(webDir)) {
     const rel = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-    const file = Bun.file(join(webDir, rel));
+    const target = resolve(webDir, rel);
+    if (!target.startsWith(resolve(webDir))) {
+      res.writeHead(403).end();
+      return;
+    }
+    const file = Bun.file(target);
     if (await file.exists()) {
       res.writeHead(200, { "content-type": file.type || "application/octet-stream" });
       res.end(Buffer.from(await file.arrayBuffer()));
