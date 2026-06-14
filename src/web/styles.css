@@ -17,7 +17,6 @@
   --primary: 258 82% 56%;
   --working: 213 88% 50%;
   --attention: 35 92% 46%;
-  --handed: 245 70% 58%;
   --done: 152 55% 38%;
   --idle: 220 10% 55%;
 }
@@ -37,7 +36,6 @@ html.dark {
   --primary: 258 90% 67%;
   --working: 213 90% 62%;
   --attention: 38 94% 58%;
-  --handed: 246 84% 70%;
   --done: 152 58% 48%;
   --idle: 220 10% 55%;
 }

@@ -11,7 +11,6 @@ export default {
         primary: "hsl(var(--primary) / <alpha-value>)",
         working: "hsl(var(--working) / <alpha-value>)",
         attention: "hsl(var(--attention) / <alpha-value>)",
-        handed: "hsl(var(--handed) / <alpha-value>)",
         done: "hsl(var(--done) / <alpha-value>)",
         idle: "hsl(var(--idle) / <alpha-value>)",
         card: {

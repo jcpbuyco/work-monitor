@@ -16,7 +16,7 @@ const state: State = {
 };
 
 describe("Board", () => {
-  it("renders sessions in the right status columns and the hand-off card", () => {
+  it("renders sessions in the right status columns and a todo card", () => {
     render(<Board state={state} />);
     expect(screen.getByText("browns")).toBeDefined();
     expect(screen.getByText("Refactor (1/3 done)")).toBeDefined();
