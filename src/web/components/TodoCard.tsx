@@ -11,17 +11,25 @@ export function TodoCard({ t }: { t: Todo }) {
     <div
       ref={setNodeRef}
       style={style}
-      className="rounded-md border border-slate-800 bg-slate-900 p-3 mb-2 cursor-grab"
+      className="group mb-2 cursor-grab rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
     >
       <div className="flex justify-between gap-2">
-        <div className="font-semibold text-slate-100" {...listeners} {...attributes}>{t.title}</div>
-        <button className="text-slate-600 hover:text-red-400 text-xs" onClick={() => deleteTodo(t.id)}>✕</button>
+        <div className="font-medium text-foreground" {...listeners} {...attributes}>
+          {t.title}
+        </div>
+        <button
+          className="text-xs text-muted-foreground/50 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
+          onClick={() => deleteTodo(t.id)}
+          aria-label="Delete"
+        >
+          ✕
+        </button>
       </div>
-      {t.note && <div className="text-xs text-slate-400 mt-1 whitespace-pre-wrap">{t.note}</div>}
-      <div className="text-[10px] mt-2 space-x-2">
-        {t.for_who && <span className="text-amber-400">→ {t.for_who}</span>}
-        {t.branch && <span className="text-slate-500">⎇ {t.branch}</span>}
-        {t.origin_project && <span className="text-slate-600">{t.origin_project}</span>}
+      {t.note && <div className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{t.note}</div>}
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+        {t.for_who && <span className="font-semibold text-attention">→ {t.for_who}</span>}
+        {t.branch && <span className="text-muted-foreground">⎇ {t.branch}</span>}
+        {t.origin_project && <span className="text-muted-foreground/70">{t.origin_project}</span>}
       </div>
     </div>
   );
