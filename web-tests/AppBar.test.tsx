@@ -9,7 +9,7 @@ const state: State = {
     { id: "s2", project: "b", status: "needs_you", current_task: null, current_intent: null, attention_reason: "x", started_at: 0, last_activity_at: 0 },
   ],
   todos: [
-    { id: "t1", title: "t", note: "", for_who: null, status: "to_hand_off", origin_project: null, branch: null, links: null, position: 0 },
+    { id: "t1", title: "t", note: "", for_who: null, status: "todo", origin_project: null, branch: null, links: null, position: 0 },
   ],
 };
 
@@ -23,7 +23,7 @@ describe("AppBar", () => {
     render(<AppBar state={state} />);
     expect(screen.getByText("1 working")).toBeDefined();
     expect(screen.getByText("1 needs you")).toBeDefined();
-    expect(screen.getByText("1 to hand off")).toBeDefined();
+    expect(screen.getByText("1 to do")).toBeDefined();
   });
 
   it("toggles the dark class when the theme button is clicked", () => {

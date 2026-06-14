@@ -1,5 +1,5 @@
 export type SessionStatus = "working" | "needs_you" | "idle" | "ended";
-export type TodoStatus = "to_hand_off" | "handed_off" | "done";
+export type TodoStatus = "todo" | "done";
 
 export interface Session {
   id: string;

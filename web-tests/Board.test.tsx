@@ -11,7 +11,7 @@ const state: State = {
     { id: "s2", project: "love-island", status: "needs_you", current_task: null, current_intent: "tests", attention_reason: "Run migration?", started_at: Date.now(), last_activity_at: Date.now() },
   ],
   todos: [
-    { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "to_hand_off", origin_project: "bov", branch: "feat/pay", links: null, position: 0 },
+    { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "todo", origin_project: "bov", branch: "feat/pay", links: null, position: 0 },
   ],
 };
 

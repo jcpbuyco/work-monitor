@@ -14,7 +14,7 @@ export function AppBar({ state }: { state: State }) {
   const { theme, toggle } = useTheme();
   const working = state.sessions.filter((s) => s.status === "working").length;
   const needsYou = state.sessions.filter((s) => s.status === "needs_you").length;
-  const toHandOff = state.todos.filter((t) => t.status === "to_hand_off").length;
+  const todoCount = state.todos.filter((t) => t.status === "todo").length;
 
   return (
     <header className="sticky top-0 z-10 -mx-4 mb-2 flex flex-wrap items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur">
@@ -28,7 +28,7 @@ export function AppBar({ state }: { state: State }) {
       <div className="flex flex-wrap gap-1.5">
         <Count dotClass="bg-working" label="working" n={working} />
         <Count dotClass="bg-attention" label="needs you" n={needsYou} />
-        <Count dotClass="bg-attention" label="to hand off" n={toHandOff} />
+        <Count dotClass="bg-attention" label="to do" n={todoCount} />
       </div>
       <button
         type="button"

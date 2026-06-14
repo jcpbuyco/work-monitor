@@ -8,8 +8,7 @@ import { SessionCard } from "./SessionCard.tsx";
 import { AppBar } from "./AppBar.tsx";
 
 const TODO_COLS: { id: TodoStatus; title: string; dot: string }[] = [
-  { id: "to_hand_off", title: "To hand off", dot: "bg-attention" },
-  { id: "handed_off", title: "Handed off", dot: "bg-handed" },
+  { id: "todo", title: "To do", dot: "bg-attention" },
   { id: "done", title: "Done", dot: "bg-done" },
 ];
 
@@ -33,7 +32,7 @@ export function Board({ state }: { state: State }) {
       <AppBar state={state} />
 
       <DndContext onDragEnd={onDragEnd}>
-        <Lane label="★ Hand-offs & todos" hint="manual — drag cards as you deal with them">
+        <Lane label="★ Todos" hint="manual — drag cards as you deal with them">
           {TODO_COLS.map((c) => {
             const items = byTodo(c.id);
             return (

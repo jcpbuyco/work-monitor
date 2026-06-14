@@ -9,14 +9,14 @@ const todo = (id: string, status: Todo["status"]): Todo => ({
 
 describe("resolveDrop", () => {
   it("returns a status patch when dropped on a different column", () => {
-    expect(resolveDrop([todo("t1", "to_hand_off")], "t1", "handed_off")).toEqual({ id: "t1", status: "handed_off" });
+    expect(resolveDrop([todo("t1", "todo")], "t1", "done")).toEqual({ id: "t1", status: "done" });
   });
   it("returns null when dropped on its own column", () => {
-    expect(resolveDrop([todo("t1", "to_hand_off")], "t1", "to_hand_off")).toBeNull();
+    expect(resolveDrop([todo("t1", "todo")], "t1", "todo")).toBeNull();
   });
   it("returns null for a non-column target, a missing target, or a missing todo", () => {
-    expect(resolveDrop([todo("t1", "to_hand_off")], "t1", null)).toBeNull();
-    expect(resolveDrop([todo("t1", "to_hand_off")], "t1", "sess-working")).toBeNull();
+    expect(resolveDrop([todo("t1", "todo")], "t1", null)).toBeNull();
+    expect(resolveDrop([todo("t1", "todo")], "t1", "sess-working")).toBeNull();
     expect(resolveDrop([], "t1", "done")).toBeNull();
   });
 });

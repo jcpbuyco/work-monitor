@@ -1,6 +1,6 @@
 import type { Todo, TodoStatus } from "./types.ts";
 
-const STATUSES: TodoStatus[] = ["to_hand_off", "handed_off", "done"];
+const STATUSES: TodoStatus[] = ["todo", "done"];
 
 /** Given a drag from `activeId` dropped over `overId`, return the status patch to
  *  persist, or null if it's not a valid cross-column move. */
