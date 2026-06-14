@@ -1,18 +1,18 @@
 # work-monitor
 
-Live dashboard for parallel Claude Code sessions + agent-authored hand-off todos.
+Live dashboard for parallel Claude Code sessions + agent-authored todos.
 
 ## What it does
 
 - Each Claude Code session reports status automatically (via hooks): **working / needs you / idle**.
-- A pinned web dashboard shows a two-lane kanban: **hand-offs on top** (you drag through `To hand off → Handed off → Done`), **live sessions below** (auto-grouped by status — you never drag these).
-- Agents record hand-off todos via an MCP tool (`record_handoff`) — just say *"set a hand-off todo for this"* and the agent fills in the context (branch, spec path, what's left, who it's for).
+- A pinned web dashboard shows a two-lane kanban: **todos on top** (you drag through `To do → Done`), **live sessions below** (auto-grouped by status — you never drag these).
+- Agents record todos via an MCP tool (`add_todo`) — just say *"add a todo for this"* — for any task, reminder, or hand-off; the agent fills in the context (branch, spec path, what's left, who it's for).
 
 ## Architecture
 
 One long-running Bun process (`wm-server`, on `127.0.0.1:4317`) exposes:
 - a **REST API** — `POST /events` (hook ingestion), `GET /api/state`, `GET /api/stream` (SSE), `/api/todos` CRUD;
-- an **MCP endpoint** at `/mcp` (Streamable HTTP) with tools `record_handoff`, `list_todos`, `update_handoff`;
+- an **MCP endpoint** at `/mcp` (Streamable HTTP) with tools `add_todo`, `list_todos`, `update_todo`;
 - the built **dashboard** (React + Vite + Tailwind).
 
 State lives in SQLite (`~/.local/share/work-monitor/work-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events, with a staleness sweep that retires crashed sessions.
