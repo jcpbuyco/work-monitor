@@ -8,6 +8,35 @@ Live dashboard for parallel Claude Code sessions + agent-authored todos.
 - A pinned web dashboard shows a two-lane kanban: **todos on top** (you drag through `To do → Done`), **live sessions below** (auto-grouped by status — you never drag these).
 - Agents record todos via an MCP tool (`add_todo`) — just say *"add a todo for this"* — for any task, reminder, or hand-off; the agent fills in the context (branch, spec path, what's left, who it's for).
 
+## Adding a todo (from an agent)
+
+Any Claude Code session can drop a todo onto the dashboard through the `add_todo` MCP tool — no shell, no flags. Just tell the agent in plain language:
+
+> "Add a todo to verify the checkout flow on mobile before we ship — it's for QA, on branch `feat/checkout`."
+
+The agent calls the tool, filling in whatever context it has:
+
+```jsonc
+add_todo({
+  "title":   "Verify checkout flow on mobile",          // required
+  "note":    "Payment sheet clipped on iOS Safari — retest before shipping.", // optional
+  "for_who": "QA",                       // optional — who it's for / who you're handing off to
+  "branch":  "feat/checkout",            // optional
+  "project": "storefront",               // optional
+  "links":   ["docs/specs/checkout.md"]  // optional
+})
+```
+
+Only `title` is required; everything else is optional (a quick `add_todo({ "title": "Run db migration" })` works too). The card shows up instantly in the **To do** column (pushed live over SSE).
+
+To close it out, drag the card to **Done** on the dashboard, or have the agent do it:
+
+```jsonc
+update_todo({ "id": "<id>", "status": "done" })   // or "todo" to reopen
+```
+
+An agent can call `list_todos()` (optionally `list_todos({ "status": "todo" })`) first to see what's already open and avoid duplicates.
+
 ## Architecture
 
 One long-running Bun process (`wm-server`, on `127.0.0.1:4317`) exposes:
@@ -15,7 +44,7 @@ One long-running Bun process (`wm-server`, on `127.0.0.1:4317`) exposes:
 - an **MCP endpoint** at `/mcp` (Streamable HTTP) with tools `add_todo`, `list_todos`, `update_todo`;
 - the built **dashboard** (React + Vite + Tailwind).
 
-State lives in SQLite (`~/.local/share/work-monitor/work-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events, with a staleness sweep that retires crashed sessions.
+State lives in SQLite (`~/.local/share/work-monitor/work-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events: a tool-use heartbeat (`PostToolUse`) keeps actively-working sessions marked **working**, and a staleness sweep retires ones that go silent for 10 minutes (e.g. a closed terminal).
 
 ## Install / activate
 
