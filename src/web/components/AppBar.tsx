@@ -1,0 +1,44 @@
+import type { State } from "../types.ts";
+import { useTheme } from "../useTheme.ts";
+
+function Count({ dotClass, label, n }: { dotClass: string; label: string; n: number }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground">
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
+      <span>{n} {label}</span>
+    </span>
+  );
+}
+
+export function AppBar({ state }: { state: State }) {
+  const { theme, toggle } = useTheme();
+  const working = state.sessions.filter((s) => s.status === "working").length;
+  const needsYou = state.sessions.filter((s) => s.status === "needs_you").length;
+  const toHandOff = state.todos.filter((t) => t.status === "to_hand_off").length;
+
+  return (
+    <header className="sticky top-0 z-10 -mx-4 mb-2 flex flex-wrap items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur">
+      <div className="flex items-center gap-2 font-semibold tracking-tight text-foreground">
+        <span
+          className="h-2.5 w-2.5 rounded-[3px] bg-primary"
+          style={{ boxShadow: "0 0 0 3px hsl(var(--primary) / 0.18)" }}
+        />
+        work-monitor
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <Count dotClass="bg-working" label="working" n={working} />
+        <Count dotClass="bg-attention" label="needs you" n={needsYou} />
+        <Count dotClass="bg-primary" label="to hand off" n={toHandOff} />
+      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label="Toggle theme"
+        className="ml-auto inline-flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground"
+      >
+        <span>{theme === "dark" ? "☾" : "☀"}</span>
+        <span>{theme === "dark" ? "Dark" : "Light"}</span>
+      </button>
+    </header>
+  );
+}
