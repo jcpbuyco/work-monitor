@@ -1,0 +1,27 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { Board } from "../src/web/components/Board.tsx";
+import type { State } from "../src/web/types.ts";
+
+vi.mock("../src/web/api.ts", () => ({ patchTodo: vi.fn(), deleteTodo: vi.fn() }));
+
+const state: State = {
+  sessions: [
+    { id: "s1", project: "browns", status: "working", current_task: "Refactor (1/3 done)", current_intent: null, attention_reason: null, started_at: Date.now(), last_activity_at: Date.now() },
+    { id: "s2", project: "love-island", status: "needs_you", current_task: null, current_intent: "tests", attention_reason: "Run migration?", started_at: Date.now(), last_activity_at: Date.now() },
+  ],
+  todos: [
+    { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "to_hand_off", origin_project: "bov", branch: "feat/pay", links: null, position: 0 },
+  ],
+};
+
+describe("Board", () => {
+  it("renders sessions in the right status columns and the hand-off card", () => {
+    render(<Board state={state} />);
+    expect(screen.getByText("browns")).toBeDefined();
+    expect(screen.getByText("Refactor (1/3 done)")).toBeDefined();
+    expect(screen.getByText("⚠ Run migration?")).toBeDefined();
+    expect(screen.getByText("Hand off spec")).toBeDefined();
+    expect(screen.getByText("→ Maria")).toBeDefined();
+  });
+});
