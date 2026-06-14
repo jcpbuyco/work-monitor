@@ -11,14 +11,14 @@ export function TodoCard({ t }: { t: Todo }) {
     <div
       ref={setNodeRef}
       style={style}
-      className="group mb-2 cursor-grab rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      className="mb-2 cursor-grab rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
     >
       <div className="flex justify-between gap-2">
         <div className="font-medium text-foreground" {...listeners} {...attributes}>
           {t.title}
         </div>
         <button
-          className="text-xs text-muted-foreground/50 opacity-0 transition hover:text-red-400 group-hover:opacity-100 focus-visible:opacity-100"
+          className="text-xs text-muted-foreground/40 transition hover:text-red-400 focus-visible:text-red-400"
           onClick={() => deleteTodo(t.id)}
           aria-label="Delete"
         >

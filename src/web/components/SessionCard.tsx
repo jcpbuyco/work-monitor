@@ -1,7 +1,7 @@
 import type { Session } from "../types.ts";
 
-const STATUS: Record<string, { accent: string; label: string; dot: string }> = {
-  working: { accent: "var(--working)", label: "Working", dot: "bg-working" },
+const STATUS: Record<string, { accent: string; label: string; dot: string; pulse?: boolean }> = {
+  working: { accent: "var(--working)", label: "Working", dot: "bg-working", pulse: true },
   needs_you: { accent: "var(--attention)", label: "Needs you", dot: "bg-attention" },
   idle: { accent: "var(--idle)", label: "Idle", dot: "bg-idle" },
   ended: { accent: "var(--idle)", label: "Ended", dot: "bg-idle" },
@@ -26,7 +26,7 @@ export function SessionCard({ s }: { s: Session }) {
         className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold"
         style={{ color: `hsl(${st.accent})` }}
       >
-        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}${st.pulse ? " animate-pulse" : ""}`} />
         {st.label}
       </div>
       <div className="mt-1.5 text-xs text-muted-foreground">

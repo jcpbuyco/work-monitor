@@ -34,24 +34,30 @@ export function Board({ state }: { state: State }) {
 
       <DndContext onDragEnd={onDragEnd}>
         <Lane label="★ Hand-offs & todos" hint="manual — drag cards as you deal with them">
-          {TODO_COLS.map((c) => (
-            <Column key={c.id} id={c.id} title={c.title} dot={c.dot} count={byTodo(c.id).length} droppable>
-              {byTodo(c.id).map((t) => (
-                <TodoCard key={t.id} t={t} />
-              ))}
-            </Column>
-          ))}
+          {TODO_COLS.map((c) => {
+            const items = byTodo(c.id);
+            return (
+              <Column key={c.id} id={c.id} title={c.title} dot={c.dot} count={items.length} droppable>
+                {items.map((t) => (
+                  <TodoCard key={t.id} t={t} />
+                ))}
+              </Column>
+            );
+          })}
         </Lane>
       </DndContext>
 
       <Lane label="Sessions" hint="auto — moves itself from agent hook events">
-        {SESSION_COLS.map((c) => (
-          <Column key={c.id} id={`sess-${c.id}`} title={c.title} dot={c.dot} count={bySession(c.id).length}>
-            {bySession(c.id).map((s) => (
-              <SessionCard key={s.id} s={s} />
-            ))}
-          </Column>
-        ))}
+        {SESSION_COLS.map((c) => {
+          const items = bySession(c.id);
+          return (
+            <Column key={c.id} id={`sess-${c.id}`} title={c.title} dot={c.dot} count={items.length}>
+              {items.map((s) => (
+                <SessionCard key={s.id} s={s} />
+              ))}
+            </Column>
+          );
+        })}
       </Lane>
     </div>
   );

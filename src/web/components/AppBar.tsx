@@ -28,7 +28,7 @@ export function AppBar({ state }: { state: State }) {
       <div className="flex flex-wrap gap-1.5">
         <Count dotClass="bg-working" label="working" n={working} />
         <Count dotClass="bg-attention" label="needs you" n={needsYou} />
-        <Count dotClass="bg-primary" label="to hand off" n={toHandOff} />
+        <Count dotClass="bg-attention" label="to hand off" n={toHandOff} />
       </div>
       <button
         type="button"
