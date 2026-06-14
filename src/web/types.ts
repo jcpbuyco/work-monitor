@@ -1,0 +1,30 @@
+export type SessionStatus = "working" | "needs_you" | "idle" | "ended";
+export type TodoStatus = "to_hand_off" | "handed_off" | "done";
+
+export interface Session {
+  id: string;
+  project: string;
+  status: SessionStatus;
+  current_task: string | null;
+  current_intent: string | null;
+  attention_reason: string | null;
+  started_at: number;
+  last_activity_at: number;
+}
+
+export interface Todo {
+  id: string;
+  title: string;
+  note: string;
+  for_who: string | null;
+  status: TodoStatus;
+  origin_project: string | null;
+  branch: string | null;
+  links: string[] | null;
+  position: number;
+}
+
+export interface State {
+  sessions: Session[];
+  todos: Todo[];
+}
