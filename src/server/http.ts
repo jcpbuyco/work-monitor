@@ -3,11 +3,13 @@ import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { reduceEvent } from "./events.ts";
 import type { EventType, HookEvent, TodoStatus } from "./types.ts";
+import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 
 export interface AppDeps {
   store: Store;
   sse: SseHub;
   now?: () => number;
+  mcp?: McpDeps;
 }
 
 const EVENT_TYPES = new Set<EventType>([
@@ -136,6 +138,20 @@ export function createApp(deps: AppDeps) {
       if (method === "GET" && path === "/api/todos") {
         const status = url.searchParams.get("status") as TodoStatus | null;
         json(res, 200, store.listTodos(status ?? undefined));
+        return;
+      }
+
+      if (path === "/mcp") {
+        if (!deps.mcp) {
+          res.writeHead(503).end();
+          return;
+        }
+        let body: unknown = undefined;
+        if (method === "POST") {
+          const raw = await readBody(req);
+          body = raw ? JSON.parse(raw) : undefined;
+        }
+        await handleMcpRequest(deps.mcp, req, res, body);
         return;
       }
 

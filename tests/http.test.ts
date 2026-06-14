@@ -74,3 +74,10 @@ describe("todos REST", () => {
     expect(state.todos.length).toBe(0);
   });
 });
+
+describe("MCP route without deps", () => {
+  it("returns 503 when no mcp deps are wired", async () => {
+    const res = await fetch(`${base}/mcp`, { method: "GET" });
+    expect(res.status).toBe(503);
+  });
+});
