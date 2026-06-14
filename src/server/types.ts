@@ -67,7 +67,7 @@ export interface Todo {
 
 export interface CreateTodoInput {
   title: string;
-  note: string;
+  note?: string;
   for_who?: string | null;
   origin_session_id?: string | null;
   origin_project?: string | null;

@@ -127,4 +127,9 @@ describe("todo input validation", () => {
     const body = await res.json() as any;
     expect(body.note).toBe("");
   });
+
+  it("rejects an invalid status filter on GET with 400", async () => {
+    const res = await fetch(`${base}/api/todos?status=handed_off`);
+    expect(res.status).toBe(400);
+  });
 });

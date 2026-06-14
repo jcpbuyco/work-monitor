@@ -164,8 +164,12 @@ export function createApp(deps: AppDeps) {
 
       // --- list todos (optional filter) ---
       if (method === "GET" && path === "/api/todos") {
-        const status = url.searchParams.get("status") as TodoStatus | null;
-        json(res, 200, store.listTodos(status ?? undefined));
+        const status = url.searchParams.get("status");
+        if (status !== null && !TODO_STATUSES.has(status)) {
+          json(res, 400, { error: "invalid status" });
+          return;
+        }
+        json(res, 200, store.listTodos((status as TodoStatus) ?? undefined));
         return;
       }
 

@@ -57,4 +57,12 @@ describe("MCP tools", () => {
     const { t } = tools();
     expect(t.update_todo({ id: "nope", status: "done" }).ok).toBe(false);
   });
+
+  it("update_todo can move a todo from done back to todo", () => {
+    const { store, t } = tools();
+    const { id } = t.add_todo({ title: "a" });
+    t.update_todo({ id, status: "done" });
+    t.update_todo({ id, status: "todo" });
+    expect(store.getTodo(id)!.status).toBe("todo");
+  });
 });
