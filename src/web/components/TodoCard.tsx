@@ -18,7 +18,7 @@ export function TodoCard({ t }: { t: Todo }) {
           {t.title}
         </div>
         <button
-          className="text-xs text-muted-foreground/50 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
+          className="text-xs text-muted-foreground/50 opacity-0 transition hover:text-red-400 group-hover:opacity-100 focus-visible:opacity-100"
           onClick={() => deleteTodo(t.id)}
           aria-label="Delete"
         >
