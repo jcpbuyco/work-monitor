@@ -7,6 +7,7 @@ import { TodosSection } from "./TodosSection.tsx";
 import { ActivityFeed } from "./ActivityFeed.tsx";
 import { ToolStats } from "./ToolStats.tsx";
 import { CostPanel } from "./CostPanel.tsx";
+import { CostBreakdown } from "./CostBreakdown.tsx";
 
 const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
   { id: "working", title: "Working", dot: "bg-working" },
@@ -57,6 +58,7 @@ export function Board({ state }: { state: State }) {
         <aside className="lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
           <ToolStats stats={state.stats} />
           <CostPanel cost={state.cost} />
+          <CostBreakdown cost={state.cost} />
           <ActivityFeed activity={state.activity} sessions={state.sessions} />
         </aside>
       </div>

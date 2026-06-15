@@ -10,7 +10,7 @@ export default function App() {
     todos: [],
     activity: [],
     stats: [],
-    cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [] },
+    cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [], byProject: [], byBranch: [] },
   });
   const ready = useRef(false);
 

@@ -160,6 +160,8 @@ describe("buildState", () => {
     expect(state.cost.liveTotalUsd).toBe(0);
     expect(state.cost.todayUsd).toBe(0);
     expect(state.cost.byModelToday).toEqual([]);
+    expect(state.cost.byProject).toEqual([]);
+    expect(state.cost.byBranch).toEqual([]);
   });
 });
 
