@@ -15,6 +15,31 @@ function rowToTodo(row: Record<string, unknown>): Todo {
   };
 }
 
+function baseName(p: string): string {
+  const parts = p.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || p;
+}
+
+/** A short, human-friendly one-liner for a tool call, derived from its input.
+ *  Returns null when there's nothing concise to show. Capped in length and
+ *  reduced to basenames / descriptions so we never ship file contents, full
+ *  diffs, or long raw commands to the dashboard. */
+export function summarizeTool(tool: string | null, input: unknown): string | null {
+  if (!tool || !input || typeof input !== "object") return null;
+  const i = input as Record<string, unknown>;
+  let s: string | null = null;
+  if (tool === "Bash") s = (i.description as string) || (i.command as string) || null;
+  else if (/^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(tool) && typeof i.file_path === "string")
+    s = baseName(i.file_path);
+  else if ((tool === "Grep" || tool === "Glob") && (i.pattern || i.glob)) s = String(i.pattern ?? i.glob);
+  else if ((tool === "Task" || tool === "Agent") && typeof i.description === "string") s = i.description;
+  else if (typeof i.url === "string") s = i.url;
+  else if (typeof i.query === "string") s = i.query;
+  if (!s) return null;
+  s = s.replace(/\s+/g, " ").trim();
+  return s.length > 100 ? s.slice(0, 99) + "…" : s;
+}
+
 export class Store {
   constructor(public db: Database) {}
 
@@ -83,19 +108,24 @@ export class Store {
 
   /** Most recent tool-call activity across all sessions, newest first.
    *  Parses `tool_name` out of stored `activity` event payloads. */
-  recentActivity(limit: number): { id: number; session_id: string; tool: string; at: number }[] {
+  recentActivity(limit: number): { id: number; session_id: string; tool: string; detail: string | null; at: number }[] {
     const rows = this.db
       .query(
         `SELECT id, session_id, payload, at FROM events WHERE type = 'activity' ORDER BY at DESC LIMIT $limit`
       )
       .all({ $limit: limit }) as { id: number; session_id: string; payload: string | null; at: number }[];
-    const out: { id: number; session_id: string; tool: string; at: number }[] = [];
+    const out: { id: number; session_id: string; tool: string; detail: string | null; at: number }[] = [];
     for (const r of rows) {
       let tool: string | null = null;
+      let detail: string | null = null;
       try {
-        tool = r.payload ? ((JSON.parse(r.payload) as { tool_name?: string }).tool_name ?? null) : null;
+        if (r.payload) {
+          const p = JSON.parse(r.payload) as { tool_name?: string; tool_input?: unknown };
+          tool = p.tool_name ?? null;
+          detail = summarizeTool(tool, p.tool_input);
+        }
       } catch {}
-      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, at: r.at });
+      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, detail, at: r.at });
     }
     return out;
   }

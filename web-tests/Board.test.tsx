@@ -28,7 +28,7 @@ describe("Board", () => {
   });
 
   it("renders the live activity feed with recent tool calls", () => {
-    const withActivity: State = { ...state, activity: [{ id: 1, session_id: "s1", tool: "Bash", at: Date.now() }] };
+    const withActivity: State = { ...state, activity: [{ id: 1, session_id: "s1", tool: "Bash", detail: "git status", at: Date.now() }] };
     render(<Board state={withActivity} />);
     expect(screen.getByText("⚡ Live activity")).toBeDefined();
     // the Bash call shows in the feed and as the working session's current tool

@@ -8,8 +8,8 @@ const session = (id: string, project: string): Session => ({
   attention_reason: null, branch: null, started_at: 0, last_activity_at: 0,
 });
 
-const act = (id: number, session_id: string, tool: string): Activity => ({
-  id, session_id, tool, at: Date.now(),
+const act = (id: number, session_id: string, tool: string, detail: string | null = null): Activity => ({
+  id, session_id, tool, detail, at: Date.now(),
 });
 
 describe("ActivityFeed", () => {
@@ -23,6 +23,16 @@ describe("ActivityFeed", () => {
     expect(screen.getByText("Bash")).toBeDefined();
     expect(screen.getByText("Read")).toBeDefined();
     expect(screen.getAllByText("oxygenrx").length).toBe(2);
+  });
+
+  it("shows the per-call detail line", () => {
+    render(
+      <ActivityFeed
+        activity={[act(1, "s1", "Edit", "Board.tsx")]}
+        sessions={[session("s1", "p")]}
+      />
+    );
+    expect(screen.getByText("Board.tsx")).toBeDefined();
   });
 
   it("shortens verbose mcp tool names", () => {

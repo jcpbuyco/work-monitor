@@ -1,4 +1,4 @@
-import type { State, Session } from "../types.ts";
+import type { State, Session, Activity } from "../types.ts";
 import { useNow } from "../useNow.ts";
 import { Lane, Column } from "./Lane.tsx";
 import { SessionCard } from "./SessionCard.tsx";
@@ -19,9 +19,9 @@ export function Board({ state }: { state: State }) {
   const bySession = (s: Session["status"]) => state.sessions.filter((x) => x.status === s);
 
   // Newest-first activity → first entry per session is its latest tool call.
-  const latestTool = new Map<string, string>();
+  const latest = new Map<string, Activity>();
   for (const a of state.activity) {
-    if (!latestTool.has(a.session_id)) latestTool.set(a.session_id, a.tool);
+    if (!latest.has(a.session_id)) latest.set(a.session_id, a);
   }
 
   return (
@@ -38,7 +38,12 @@ export function Board({ state }: { state: State }) {
               return (
                 <Column key={c.id} title={c.title} dot={c.dot} count={items.length}>
                   {items.map((s) => (
-                    <SessionCard key={s.id} s={s} latestTool={latestTool.get(s.id)} />
+                    <SessionCard
+                      key={s.id}
+                      s={s}
+                      latestTool={latest.get(s.id)?.tool}
+                      latestDetail={latest.get(s.id)?.detail ?? null}
+                    />
                   ))}
                 </Column>
               );

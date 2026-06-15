@@ -56,8 +56,8 @@ describe("POST /events", () => {
         body: JSON.stringify(body),
       });
     await post("session_start", { session_id: "sa", cwd: "/x/repo" });
-    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Read" });
-    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash" });
+    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Read", tool_input: { file_path: "/x/repo/src/web/Board.tsx" } });
+    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash", tool_input: { description: "run tests", command: "bun test" } });
     await post("activity", { session_id: "sa", cwd: "/x/repo" }); // no tool_name — excluded
     const state = (await (await fetch(`${base}/api/state`)).json()) as any;
     expect(Array.isArray(state.activity)).toBe(true);
@@ -65,6 +65,9 @@ describe("POST /events", () => {
     expect(tools).toEqual(["Bash", "Read"]); // newest first, untagged event dropped
     expect(state.activity[0]).toHaveProperty("id");
     expect(state.activity[0].session_id).toBe("sa");
+    // detail: bash prefers its description, file tools show the basename
+    expect(state.activity[0].detail).toBe("run tests");
+    expect(state.activity.find((a: any) => a.tool === "Read").detail).toBe("Board.tsx");
   });
 
   it("an activity heartbeat brings an idle session back to working", async () => {

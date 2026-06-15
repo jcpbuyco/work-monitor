@@ -30,6 +30,7 @@ export interface Activity {
   id: number;
   session_id: string;
   tool: string;
+  detail: string | null;
   at: number;
 }
 

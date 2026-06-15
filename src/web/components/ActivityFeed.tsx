@@ -29,11 +29,16 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
         ) : (
           <ul className="divide-y divide-border/60">
             {rows.map((a) => (
-              <li key={a.id} className="wm-row-in flex items-center gap-3 px-3 py-2 font-mono text-2xs">
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(a.tool)}`} />
-                <span className="shrink-0 font-semibold text-foreground">{prettyTool(a.tool)}</span>
-                <span className="truncate text-muted-foreground/70">{projectFor(a.session_id)}</span>
-                <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/60">{ago(a.at)}</span>
+              <li key={a.id} className="wm-row-in px-3 py-2 font-mono text-2xs">
+                <div className="flex items-center gap-2">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(a.tool)}`} />
+                  <span className="shrink-0 font-semibold text-foreground">{prettyTool(a.tool)}</span>
+                  <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/55">{ago(a.at)}</span>
+                </div>
+                <div className="mt-0.5 flex items-baseline gap-2 pl-3.5">
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground/80">{a.detail ?? ""}</span>
+                  <span className="shrink-0 text-muted-foreground/45">{projectFor(a.session_id)}</span>
+                </div>
               </li>
             ))}
           </ul>

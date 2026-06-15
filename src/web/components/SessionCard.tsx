@@ -9,7 +9,15 @@ const STATUS: Record<string, { accent: string; label: string; dot: string; pulse
   ended: { accent: "var(--idle)", label: "Ended", dot: "bg-idle" },
 };
 
-export function SessionCard({ s, latestTool }: { s: Session; latestTool?: string }) {
+export function SessionCard({
+  s,
+  latestTool,
+  latestDetail,
+}: {
+  s: Session;
+  latestTool?: string;
+  latestDetail?: string | null;
+}) {
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
   return (
@@ -29,9 +37,12 @@ export function SessionCard({ s, latestTool }: { s: Session; latestTool?: string
         {s.current_task ?? s.current_intent ?? "—"}
       </div>
       {isWorking && latestTool && (
-        <div className="mt-1.5 flex items-center gap-1.5 font-mono text-2xs text-working">
+        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working">
           <span aria-hidden="true">▸</span>
-          <span className="truncate">{prettyTool(latestTool)}</span>
+          <span className="truncate">
+            {prettyTool(latestTool)}
+            {latestDetail ? <span className="text-working/70"> · {latestDetail}</span> : null}
+          </span>
         </div>
       )}
       {s.attention_reason && s.status === "needs_you" && (
