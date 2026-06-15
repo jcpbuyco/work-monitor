@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented — merged to `main` (2026-06-15)
+
 **Goal:** Add an app-bar text-size control (so the dashboard is readable on a 4K monitor) and a todo detail modal opened by clicking a card, with cards clamped to keep the board compact.
 
 **Architecture:** A `useTextSize` hook scales the whole UI via the root `font-size` (the type scale is `rem`-based; a new `2xs` token converts the few hardcoded `px` labels). A `TodoModal` built on the native `<dialog>` element shows the full todo; clicking a card opens it, while dragging still works via a `PointerSensor` movement threshold. `src/web/` only — no server/data changes.

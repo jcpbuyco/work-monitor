@@ -1,7 +1,7 @@
 # Generalize hand-offs into a simple todo tool
 
 **Date:** 2026-06-15
-**Status:** Approved design — ready for implementation plan
+**Status:** Implemented — merged to `main` (2026-06-15)
 **Scope:** MCP tool surface + the todo status model (server + dashboard + DB migration). Sessions, hooks, and the REST ingestion path are untouched except for the todo status enum.
 
 ## Motivation

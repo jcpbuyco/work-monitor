@@ -1,7 +1,7 @@
 # work-monitor — Design Spec
 
 - **Date:** 2026-06-14
-- **Status:** Approved (ready for implementation planning)
+- **Status:** Implemented — merged to `main` (2026-06-14)
 - **Author:** jcpbuyco (with Claude)
 
 ## Problem
@@ -43,25 +43,19 @@ Single developer running several parallel Claude Code sessions across projects u
 
 One long-running local server is the hub; thin clients feed it and read from it.
 
-```
-  Claude Code sessions                          ┌─────────────────────┐
-  ┌──────────────┐  hook events (POST /events)  │     wm-server       │
-  │ session A ──────────────────────────────────▶│  (long-running,    │
-  │ session B ──────────────────────────────────▶│   systemd --user)  │
-  └──────────────┘                              │                     │
-                                                │  • REST API         │
-  Agent inside a session (MCP, HTTP transport)  │  • MCP endpoint     │
-  ┌──────────────┐  record_handoff(...)         │  • SQLite (WAL)     │
-  │ "set a hand-off todo" ─────(/mcp)──────────▶│  • SSE live stream  │
-  └──────────────┘                              └─────────┬───────────┘
-                                                          │ serves dashboard
-                                                          │ + live updates (SSE)
-                                                          ▼
-                                                ┌─────────────────────┐
-                                                │  Web dashboard       │
-                                                │  (pinned browser tab)│
-                                                │  two-lane kanban     │
-                                                └─────────────────────┘
+```mermaid
+flowchart LR
+    subgraph cc["Claude Code sessions"]
+        A["session A"]
+        B["session B"]
+    end
+    agent["Agent inside a session<br/>(MCP, HTTP transport)<br/>record_handoff(...)"]
+    server["wm-server<br/>(long-running, systemd --user)<br/>REST API • MCP endpoint<br/>SQLite (WAL) • SSE live stream"]
+    dash["Web dashboard<br/>(pinned browser tab)<br/>two-lane kanban"]
+    A -->|"hook events (POST /events)"| server
+    B -->|"hook events (POST /events)"| server
+    agent -->|"/mcp"| server
+    server -->|"serves dashboard + live updates (SSE)"| dash
 ```
 
 ### Components
@@ -137,13 +131,14 @@ scope.
 
 ## Session status state machine
 
-```
-SessionStart ─────────────▶ working
-UserPromptSubmit ─────────▶ working   (refresh last_activity_at, set current_intent)
-PostToolUse (TodoWrite) ──▶ working   (refresh last_activity_at, set current_task)
-Notification ─────────────▶ needs_you (set attention_reason)
-Stop ─────────────────────▶ idle
-SessionEnd ───────────────▶ ended     (card fades off the board)
+```mermaid
+flowchart LR
+    SessionStart --> working
+    UserPromptSubmit -->|"refresh last_activity_at, set current_intent"| working
+    PostToolUse["PostToolUse (TodoWrite)"] -->|"refresh last_activity_at, set current_task"| working
+    Notification -->|"set attention_reason"| needs_you
+    Stop --> idle
+    SessionEnd -->|"card fades off the board"| ended
 ```
 
 **Staleness sweep:** a periodic check moves any `working` session with no activity for

@@ -1,7 +1,7 @@
 # work-monitor — Dashboard UI Redesign (shadcn-inspired)
 
 **Date:** 2026-06-14
-**Status:** Approved design — ready for implementation plan
+**Status:** Implemented — merged to `main` (2026-06-14)
 **Scope:** `src/web/` only (styling + light structure). No backend, API, MCP, hook, or data-model changes.
 
 ## Goal

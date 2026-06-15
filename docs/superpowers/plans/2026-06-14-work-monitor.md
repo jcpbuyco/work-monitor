@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented — merged to `main` (2026-06-14)
+
 **Goal:** A local web dashboard that shows the live status of every parallel Claude Code session (working / needs-you / idle) and holds agent-authored hand-off todos, fed automatically by Claude Code hooks and an MCP endpoint.
 
 **Architecture:** One long-running Bun process (`wm-server`) exposes a REST API (hook ingestion + dashboard), an MCP endpoint over Streamable HTTP (agent-authored hand-offs), and an SSE stream (live updates), backed by SQLite. Thin shell hook scripts POST session lifecycle events; a React/Vite dashboard renders a two-lane kanban. A `wm setup` script wires hooks + MCP + a systemd user service.

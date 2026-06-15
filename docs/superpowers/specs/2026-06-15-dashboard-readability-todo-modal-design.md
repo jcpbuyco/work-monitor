@@ -1,7 +1,7 @@
 # Dashboard readability (text-size control) + todo detail modal
 
 **Date:** 2026-06-15
-**Status:** Approved design — ready for implementation plan
+**Status:** Implemented — merged to `main` (2026-06-15)
 **Scope:** `src/web/` only (plus the `tailwind.config.js` font token). No server/API/data changes — the modal shows fields already in `/api/state`.
 
 ## Motivation

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented — merged to `main` (2026-06-15)
+
 **Goal:** Rename the hand-off MCP tools to generic todo tools (`add_todo` / `list_todos` / `update_todo`), broaden their descriptions, make `note` optional, and collapse the todo statuses from `to_hand_off / handed_off / done` to `todo / done` (2-column board), with a migration for legacy rows.
 
 **Architecture:** The server and the web app each define their own `TodoStatus`, so the change splits cleanly: Task 1 migrates the **server** (types, DB + migration, store, http, MCP tools) and its tests; Task 2 migrates the **web** app (types, drag, board, app bar) and its tests; Task 3 updates docs and runs full verification. After each task the whole project is green (the other half is untouched and internally consistent).

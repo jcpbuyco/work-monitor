@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented — merged to `main` (2026-06-14)
+
 **Goal:** Give the work-monitor dashboard a polished, shadcn-style look with a light/dark theme toggle, without changing the two-lane × three-column information architecture or any backend.
 
 **Architecture:** Introduce a hand-rolled shadcn token layer — HSL CSS variables in `styles.css` (light under `:root`, dark under `html.dark`) mapped to semantic Tailwind color names via `tailwind.config.js`. A `useTheme` hook plus a no-flash inline script drive `darkMode: 'class'`. A new sticky `AppBar` (brand + live counts + theme toggle) replaces the bare `<h1>`. The four card/lane components are restyled to token classes while preserving their exact text content so existing tests stay green.
