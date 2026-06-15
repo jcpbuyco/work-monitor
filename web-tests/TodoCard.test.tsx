@@ -9,7 +9,7 @@ vi.mock("../src/web/api.ts", () => ({ deleteTodo: (...a: any[]) => deleteTodo(..
 
 const todo: Todo = {
   id: "t1", title: "Card Title", note: "a clamped note", for_who: "Sam",
-  status: "todo", origin_project: "p", branch: "b", links: null, position: 0,
+  status: "todo", origin_project: "p", branch: "b", links: null, position: 0, updated_at: 0,
 };
 
 beforeEach(() => deleteTodo.mockClear());

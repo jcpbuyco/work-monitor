@@ -23,6 +23,7 @@ export interface Todo {
   branch: string | null;
   links: string[] | null;
   position: number;
+  updated_at: number;
 }
 
 export interface State {

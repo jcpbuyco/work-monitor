@@ -4,7 +4,7 @@ import type { Todo } from "../src/web/types.ts";
 
 const todo = (id: string, status: Todo["status"]): Todo => ({
   id, title: id, note: "", for_who: null, status,
-  origin_project: null, branch: null, links: null, position: 0,
+  origin_project: null, branch: null, links: null, position: 0, updated_at: 0,
 });
 
 describe("resolveDrop", () => {

@@ -5,7 +5,7 @@ import type { Todo } from "../src/web/types.ts";
 
 const todo: Todo = {
   id: "t1", title: "Full Title", note: "Line one\nLine two", for_who: "Sam",
-  status: "todo", origin_project: "proj", branch: "feat/x", links: ["docs/spec.md"], position: 0,
+  status: "todo", origin_project: "proj", branch: "feat/x", links: ["docs/spec.md"], position: 0, updated_at: 0,
 };
 
 describe("TodoModal", () => {
