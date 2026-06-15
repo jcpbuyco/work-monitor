@@ -5,7 +5,7 @@ Live dashboard for parallel Claude Code sessions + agent-authored todos.
 ## What it does
 
 - Each Claude Code session reports status automatically (via hooks): **working / needs you / idle**.
-- A pinned web dashboard shows a two-lane kanban: **todos on top** (you drag through `To do → Done`), **live sessions below** (auto-grouped by status — you never drag these).
+- A pinned web dashboard shows **todos on top** — a single collapsible open-to-do list (✓ to complete a card, ✕ to delete; completed todos live behind a paginated **Done** dialog) — and **live sessions below** (auto-grouped by status).
 - Agents record todos via an MCP tool (`add_todo`) — just say *"add a todo for this"* — for any task, reminder, or hand-off; the agent fills in the context (branch, spec path, what's left, who it's for).
 
 ## Adding a todo (from an agent)
@@ -29,7 +29,7 @@ add_todo({
 
 Only `title` is required; everything else is optional (a quick `add_todo({ "title": "Run db migration" })` works too). The card shows up instantly in the **To do** column (pushed live over SSE).
 
-To close it out, drag the card to **Done** on the dashboard, or have the agent do it:
+To close it out, click the **✓** on the card (it moves into the **Done** dialog), or have the agent do it:
 
 ```jsonc
 update_todo({ "id": "<id>", "status": "done" })   // or "todo" to reopen
