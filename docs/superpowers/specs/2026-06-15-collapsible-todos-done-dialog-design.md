@@ -1,7 +1,7 @@
 # Collapsible to-do list + Done behind a dialog
 
 **Date:** 2026-06-15
-**Status:** Approved design — ready for implementation plan
+**Status:** Implemented (2026-06-15) — built subagent-driven on branch `feat/collapsible-todos-done-dialog`. Plan: `docs/superpowers/plans/2026-06-15-collapsible-todos-done-dialog.md`. Web-only (rebuild `dist/web`, reload the tab — no server restart). 35 web tests + typecheck + build green.
 **Scope:** `src/web/` only (plus removing the `@dnd-kit` dependency from `package.json`). No server, DB, API, or hook changes — `/api/state` already returns all todos with timestamps.
 
 ## Motivation
