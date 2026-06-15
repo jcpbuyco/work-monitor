@@ -96,6 +96,21 @@ describe("Store sessions", () => {
     migrate(db); // second run must not throw or duplicate
     expect(has()).toBe(1);
   });
+
+  it("idempotently creates the usage table and sessions.usage_offset column", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const hasTable = () =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='usage'").all() as unknown[]).length;
+    const hasOffset = () =>
+      (db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).filter((c) => c.name === "usage_offset").length;
+    expect(hasTable()).toBe(1);
+    expect(hasOffset()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable()).toBe(1);
+    expect(hasOffset()).toBe(1);
+  });
 });
 
 describe("Store todos", () => {
