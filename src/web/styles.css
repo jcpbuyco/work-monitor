@@ -45,27 +45,51 @@ body {
 }
 
 /* --- motion / "flare" --- */
+/* a soft, springy ease-out used across entrances */
 @keyframes wm-row-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes wm-flash {
   from { background-color: hsl(var(--primary) / 0.16); }
   to { background-color: transparent; }
 }
 @keyframes wm-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+@keyframes wm-pop {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wm-count {
+  0% { transform: scale(1.22); }
+  55% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+}
+@keyframes wm-backdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 @keyframes wm-shimmer {
   from { transform: translateX(-100%); }
   to { transform: translateX(100%); }
 }
 
-/* a freshly-arrived activity row slides down + briefly flashes */
-.wm-row-in { animation: wm-row-in 0.28s ease-out, wm-flash 1.4s ease-out; }
-/* cards ease in on mount */
-.wm-fade-in { animation: wm-fade-in 0.35s ease-out both; }
+/* a freshly-arrived activity card springs in + briefly flashes */
+.wm-row-in {
+  animation:
+    wm-row-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both,
+    wm-flash 1.4s ease-out;
+}
+/* cards ease up on mount */
+.wm-fade-in { animation: wm-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* a count chip pops when its value changes (remounted via key) */
+.wm-count { animation: wm-count 0.4s ease-out; }
+
+/* native <dialog> pop + backdrop fade on open */
+dialog[open] { animation: wm-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+dialog[open]::backdrop { animation: wm-backdrop 0.25s ease-out; }
 
 /* an indeterminate "actively working" sweep */
 .wm-shimmer { position: relative; overflow: hidden; }
@@ -79,6 +103,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .wm-row-in,
-  .wm-fade-in { animation: none; }
+  .wm-fade-in,
+  .wm-count,
+  dialog[open],
+  dialog[open]::backdrop { animation: none; }
   .wm-shimmer::after { animation: none; opacity: 0; }
 }

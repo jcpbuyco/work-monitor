@@ -5,7 +5,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
   return (
     <div
       onClick={() => onOpen?.(t)}
-      className="mb-2 cursor-pointer rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      className="wm-fade-in mb-2 cursor-pointer rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">

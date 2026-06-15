@@ -30,9 +30,10 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
           </div>
         ) : (
           <ul className="space-y-2">
-            {rows.map((a) => (
+            {rows.map((a, i) => (
               <li
                 key={a.id}
+                style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}
                 className="wm-row-in rounded-lg border border-border bg-card/60 px-3 py-2 font-mono text-2xs shadow-card transition hover:bg-card-hover"
               >
                 <div className="flex items-center gap-2">
