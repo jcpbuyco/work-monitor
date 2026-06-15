@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Store } from "./store.ts";
-import { costOf, type Tokens } from "./pricing.ts";
+import { costOf, canonicalModel, type Tokens } from "./pricing.ts";
 
 export interface ParsedUsage {
   uuid: string;
@@ -66,7 +66,9 @@ export function tailUsage(
     const ok = store.recordUsage({
       uuid: parsed.uuid,
       sessionId: session.id,
-      model: parsed.model,
+      // Store the canonical id so per-model rollups group cleanly (a
+      // date-snapshotted id and its bare form are the same model).
+      model: canonicalModel(parsed.model),
       tokens: parsed.tokens,
       at: parsed.at,
       cost: costOf(parsed.model, parsed.tokens),

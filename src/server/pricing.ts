@@ -24,6 +24,25 @@ const RATES: Record<string, Rate> = {
   "claude-mythos-5": { input: 10, output: 50 },
 };
 
+// Bare family aliases that transcripts sometimes emit (e.g. from subagents),
+// mapped to a current canonical id of the right pricing tier.
+const FAMILY_ALIAS: Record<string, string> = {
+  opus: "claude-opus-4-8",
+  sonnet: "claude-sonnet-4-6",
+  haiku: "claude-haiku-4-5",
+  fable: "claude-fable-5",
+  mythos: "claude-mythos-5",
+};
+
+/** Normalize a transcript model id to a `RATES` key. Real transcripts emit
+ *  date-snapshotted ids (`claude-haiku-4-5-20251001`) and bare aliases
+ *  (`sonnet`/`haiku`); strip the trailing `-YYYYMMDD` and map aliases so they
+ *  price at the right tier instead of silently costing $0. */
+export function canonicalModel(model: string): string {
+  const stripped = model.replace(/-\d{8}$/, "");
+  return FAMILY_ALIAS[stripped] ?? stripped;
+}
+
 const CACHE_READ_MULT = 0.1;
 const CACHE_CREATE_5M_MULT = 1.25;
 const CACHE_CREATE_1H_MULT = 2.0;
@@ -32,7 +51,7 @@ const warned = new Set<string>();
 
 /** USD cost of one message's token usage. Unknown model → 0 (warned once). */
 export function costOf(model: string, t: Tokens): number {
-  const rate = RATES[model];
+  const rate = RATES[canonicalModel(model)];
   if (!rate) {
     if (!warned.has(model)) {
       console.warn(`[pricing] unknown model, costing $0: ${model}`);

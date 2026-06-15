@@ -25,4 +25,7 @@ describe("prettyModel", () => {
     expect(prettyModel("claude-haiku-4-5")).toBe("Haiku 4.5");
     expect(prettyModel("claude-fable-5")).toBe("Fable 5");
   });
+  it("strips a trailing date snapshot suffix", () => {
+    expect(prettyModel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+  });
 });
