@@ -37,4 +37,12 @@ describe("CostBreakdown", () => {
     const { container } = render(<CostBreakdown cost={{ ...base, byProject: [], byBranch: [] }} />);
     expect(container.firstChild).toBeNull();
   });
+
+  it("does not crash when an older server omits byProject/byBranch", () => {
+    // A live dashboard can receive state from a server that predates these
+    // fields (e.g. not yet restarted). A missing field must not white-screen.
+    const legacy = { perSession: {}, liveTotalUsd: 1, todayUsd: 1, byModelToday: [] } as unknown as Cost;
+    const { container } = render(<CostBreakdown cost={legacy} />);
+    expect(container.firstChild).toBeNull();
+  });
 });
