@@ -45,11 +45,39 @@ describe("Store sessions", () => {
     expect(store.listSessions({ includeEnded: true }).length).toBe(1);
   });
 
-  it("sweepStale moves stale working sessions to idle", () => {
+  const STALE = 10 * 60 * 1000;
+  const DEAD = 30 * 60 * 1000;
+
+  it("sweepStale moves quiet working sessions (stale < silence < dead) to idle", () => {
     store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
-    const affected = store.sweepStale(1000 + 11 * 60 * 1000, 10 * 60 * 1000);
+    const affected = store.sweepStale(1000 + 11 * 60 * 1000, STALE, DEAD);
     expect(affected).toContain("s1");
     expect(store.getSession("s1")!.status).toBe("idle");
+  });
+
+  it("sweepStale retires long-silent sessions of ANY status to ended (hidden from the board)", () => {
+    // working, idle, and needs_you all past the dead threshold → ended.
+    store.applyEvent("w", reduceEvent({ wm_event_type: "session_start", session_id: "w", cwd: "/x/b" }, 1000).patch, 1000);
+    store.applyEvent("i", reduceEvent({ wm_event_type: "session_start", session_id: "i", cwd: "/x/b" }, 1000).patch, 1000);
+    store.applyEvent("i", reduceEvent({ wm_event_type: "stop", session_id: "i" }, 1000).patch, 1000);
+    store.applyEvent("n", reduceEvent({ wm_event_type: "session_start", session_id: "n", cwd: "/x/b" }, 1000).patch, 1000);
+    store.applyEvent("n", reduceEvent({ wm_event_type: "notification", session_id: "n", message: "needs you" }, 1000).patch, 1000);
+
+    const now = 1000 + 31 * 60 * 1000;
+    const affected = store.sweepStale(now, STALE, DEAD);
+    expect(affected).toEqual(expect.arrayContaining(["w", "i", "n"]));
+    for (const id of ["w", "i", "n"]) {
+      expect(store.getSession(id)!.status).toBe("ended");
+      expect(store.getSession(id)!.ended_at).toBe(now);
+    }
+    expect(store.listSessions().length).toBe(0);
+  });
+
+  it("sweepStale leaves recently-active sessions untouched", () => {
+    store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
+    const affected = store.sweepStale(1000 + 5 * 60 * 1000, STALE, DEAD);
+    expect(affected).toEqual([]);
+    expect(store.getSession("s1")!.status).toBe("working");
   });
 
   it("stores and updates the session branch", () => {

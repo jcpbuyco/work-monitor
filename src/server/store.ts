@@ -172,17 +172,36 @@ export class Store {
     }
   }
 
-  sweepStale(now: number, thresholdMs: number): string[] {
-    const rows = this.db
-      .query(
-        `SELECT id FROM sessions WHERE status = 'working' AND last_activity_at < $cutoff`
-      )
-      .all({ $cutoff: now - thresholdMs }) as { id: string }[];
-    const ids = rows.map((r) => r.id);
-    for (const id of ids) {
-      this.db.query(`UPDATE sessions SET status = 'idle' WHERE id = $id`).run({ $id: id });
+  /** Two-tier staleness sweep. Returns ids whose status changed.
+   *  - A *working* session quiet for `staleMs` is marked `idle` (still on the board).
+   *  - ANY non-ended session silent for the longer `deadMs` is retired to `ended`
+   *    (hidden from the board) — a session emits no events while waiting, so this
+   *    prolonged silence is the only signal that a terminal was closed or crashed. */
+  sweepStale(now: number, staleMs: number, deadMs: number): string[] {
+    const affected: string[] = [];
+
+    // Retire long-silent sessions first so a working session past `deadMs` goes
+    // straight to ended rather than being relabeled idle below.
+    const dead = this.db
+      .query(`SELECT id FROM sessions WHERE status != 'ended' AND last_activity_at < $cutoff`)
+      .all({ $cutoff: now - deadMs }) as { id: string }[];
+    for (const { id } of dead) {
+      this.db
+        .query(`UPDATE sessions SET status = 'ended', ended_at = $now WHERE id = $id`)
+        .run({ $now: now, $id: id });
+      affected.push(id);
     }
-    return ids;
+
+    // Mark still-living but quiet working sessions idle.
+    const idle = this.db
+      .query(`SELECT id FROM sessions WHERE status = 'working' AND last_activity_at < $cutoff`)
+      .all({ $cutoff: now - staleMs }) as { id: string }[];
+    for (const { id } of idle) {
+      this.db.query(`UPDATE sessions SET status = 'idle' WHERE id = $id`).run({ $id: id });
+      affected.push(id);
+    }
+
+    return affected;
   }
 
   createTodo(input: CreateTodoInput, now: number): Todo {

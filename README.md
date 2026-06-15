@@ -44,7 +44,7 @@ One long-running Bun process (`am-server`, on `127.0.0.1:4317`) exposes:
 - an **MCP endpoint** at `/mcp` (Streamable HTTP) with tools `add_todo`, `list_todos`, `update_todo`;
 - the built **dashboard** (React + Vite + Tailwind).
 
-State lives in SQLite (`~/.local/share/agent-monitor/agent-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events: a tool-use heartbeat (`PostToolUse`) keeps actively-working sessions marked **working**, and a staleness sweep retires ones that go silent for 10 minutes (e.g. a closed terminal).
+State lives in SQLite (`~/.local/share/agent-monitor/agent-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events: a tool-use heartbeat (`PostToolUse`) keeps actively-working sessions marked **working**. A two-tier staleness sweep handles sessions that quiet down: a **working** session silent for 10 minutes drops to **idle** (still shown), and **any** session silent for 30 minutes is retired and removed from the board (a closed terminal or crash sends no `session_end`, so prolonged silence is the only tell). A clean exit (`SessionEnd`) removes a session immediately.
 
 ## Install / activate
 

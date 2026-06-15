@@ -6,7 +6,7 @@ import { openDb } from "./db.ts";
 import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { createApp, type AppDeps } from "./http.ts";
-import { PORT, HOST, DB_PATH, STALE_MS, SWEEP_INTERVAL_MS } from "./config.ts";
+import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS } from "./config.ts";
 
 const store = new Store(openDb(DB_PATH));
 const sse = new SseHub();
@@ -50,7 +50,7 @@ const server = createServer(async (req, res) => {
 });
 
 setInterval(() => {
-  const affected = store.sweepStale(Date.now(), STALE_MS);
+  const affected = store.sweepStale(Date.now(), STALE_MS, DEAD_MS);
   if (affected.length > 0) onChange();
 }, SWEEP_INTERVAL_MS);
 
