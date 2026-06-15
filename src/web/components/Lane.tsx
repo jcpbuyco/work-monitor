@@ -1,27 +1,18 @@
-import { useDroppable } from "@dnd-kit/core";
 import type { ReactNode } from "react";
 
 export function Column({
-  id,
   title,
   count,
   dot,
-  droppable,
   children,
 }: {
-  id: string;
   title: string;
   count: number;
   dot: string;
-  droppable?: boolean;
   children: ReactNode;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable });
   return (
-    <div
-      ref={droppable ? setNodeRef : undefined}
-      className={`rounded-xl border border-border bg-card/50 p-2.5 transition ${isOver ? "ring-2 ring-primary" : ""}`}
-    >
+    <div className="rounded-xl border border-border bg-card/50 p-2.5">
       <div className="mb-2 flex items-center justify-between px-1 py-0.5">
         <span className="inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
           <span className={`h-2 w-2 rounded-full ${dot}`} />

@@ -23,5 +23,6 @@ describe("Board", () => {
     expect(screen.getByText("⚠ Run migration?")).toBeDefined();
     expect(screen.getByText("Hand off spec")).toBeDefined();
     expect(screen.getByText("→ Maria")).toBeDefined();
+    expect(screen.getByText(/Done \(0\)/)).toBeDefined();
   });
 });
