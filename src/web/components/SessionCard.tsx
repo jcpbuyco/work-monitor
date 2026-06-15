@@ -1,4 +1,5 @@
 import type { Session } from "../types.ts";
+import { ago } from "../time.ts";
 
 const STATUS: Record<string, { accent: string; label: string; dot: string; pulse?: boolean }> = {
   working: { accent: "var(--working)", label: "Working", dot: "bg-working", pulse: true },
@@ -6,13 +7,6 @@ const STATUS: Record<string, { accent: string; label: string; dot: string; pulse
   idle: { accent: "var(--idle)", label: "Idle", dot: "bg-idle" },
   ended: { accent: "var(--idle)", label: "Ended", dot: "bg-idle" },
 };
-
-function ago(ts: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  return `${Math.round(s / 3600)}h ago`;
-}
 
 export function SessionCard({ s }: { s: Session }) {
   const st = STATUS[s.status] ?? STATUS.idle;
