@@ -1,11 +1,13 @@
-import { DndContext, type DragEndEvent } from "@dnd-kit/core";
-import type { State, Session, TodoStatus } from "../types.ts";
+import { useState } from "react";
+import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import type { State, Session, TodoStatus, Todo } from "../types.ts";
 import { patchTodo } from "../api.ts";
 import { resolveDrop } from "../drag.ts";
 import { Lane, Column } from "./Lane.tsx";
 import { TodoCard } from "./TodoCard.tsx";
 import { SessionCard } from "./SessionCard.tsx";
 import { AppBar } from "./AppBar.tsx";
+import { TodoModal } from "./TodoModal.tsx";
 
 const TODO_COLS: { id: TodoStatus; title: string; dot: string }[] = [
   { id: "todo", title: "To do", dot: "bg-attention" },
@@ -19,6 +21,9 @@ const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
 ];
 
 export function Board({ state }: { state: State }) {
+  const [selected, setSelected] = useState<Todo | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
   const byTodo = (s: TodoStatus) => state.todos.filter((t) => t.status === s);
   const bySession = (s: Session["status"]) => state.sessions.filter((x) => x.status === s);
 
@@ -31,14 +36,14 @@ export function Board({ state }: { state: State }) {
     <div className="mx-auto max-w-6xl px-4 pb-12">
       <AppBar state={state} />
 
-      <DndContext onDragEnd={onDragEnd}>
+      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <Lane label="★ Todos" hint="manual — drag cards as you deal with them">
           {TODO_COLS.map((c) => {
             const items = byTodo(c.id);
             return (
               <Column key={c.id} id={c.id} title={c.title} dot={c.dot} count={items.length} droppable>
                 {items.map((t) => (
-                  <TodoCard key={t.id} t={t} />
+                  <TodoCard key={t.id} t={t} onOpen={setSelected} />
                 ))}
               </Column>
             );
@@ -58,6 +63,8 @@ export function Board({ state }: { state: State }) {
           );
         })}
       </Lane>
+
+      <TodoModal todo={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }
