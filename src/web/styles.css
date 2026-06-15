@@ -76,24 +76,28 @@ body {
   to { transform: translateX(100%); }
 }
 
+/* All motion is gated behind `html.wm-anim` (the Motion toggle, default on),
+   which intentionally overrides the OS prefers-reduced-motion setting for this
+   single-user dashboard. Toggle it off to disable everything below. */
+
 /* a freshly-arrived activity card springs in + briefly flashes */
-.wm-row-in {
+.wm-anim .wm-row-in {
   animation:
     wm-row-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both,
     wm-flash 1.4s ease-out;
 }
 /* cards ease up on mount */
-.wm-fade-in { animation: wm-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.wm-anim .wm-fade-in { animation: wm-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
 /* a count chip pops when its value changes (remounted via key) */
-.wm-count { animation: wm-count 0.4s ease-out; }
+.wm-anim .wm-count { animation: wm-count 0.4s ease-out; }
 
 /* native <dialog> pop + backdrop fade on open */
-dialog[open] { animation: wm-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
-dialog[open]::backdrop { animation: wm-backdrop 0.25s ease-out; }
+.wm-anim dialog[open] { animation: wm-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+.wm-anim dialog[open]::backdrop { animation: wm-backdrop 0.25s ease-out; }
 
 /* an indeterminate "actively working" sweep */
 .wm-shimmer { position: relative; overflow: hidden; }
-.wm-shimmer::after {
+.wm-anim .wm-shimmer::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -101,11 +105,12 @@ dialog[open]::backdrop { animation: wm-backdrop 0.25s ease-out; }
   animation: wm-shimmer 1.6s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .wm-row-in,
-  .wm-fade-in,
-  .wm-count,
-  dialog[open],
-  dialog[open]::backdrop { animation: none; }
-  .wm-shimmer::after { animation: none; opacity: 0; }
+/* View Transitions: glide session/feed cards between positions (incl. across
+   status columns) instead of jumping. Don't cross-fade the whole page. (These
+   only ever run when a transition is started, which is gated on wm-anim in JS.) */
+::view-transition-group(*) {
+  animation-duration: 0.34s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; }

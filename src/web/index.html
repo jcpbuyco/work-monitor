@@ -25,6 +25,16 @@
         } catch (e) {}
       })();
     </script>
+    <script>
+      (function () {
+        // Motion is ON by default for this dashboard; only off when explicitly disabled.
+        try {
+          if (localStorage.getItem('wm-motion') !== 'off') document.documentElement.classList.add('wm-anim');
+        } catch (e) {
+          document.documentElement.classList.add('wm-anim');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

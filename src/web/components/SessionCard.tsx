@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { Session } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool } from "../tools.ts";
@@ -20,10 +21,13 @@ export function SessionCard({
 }) {
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
+  // Stable name so a status change (column move) tweens between positions.
+  const cardStyle: CSSProperties = { borderLeft: `3px solid hsl(${st.accent})` };
+  (cardStyle as Record<string, string>).viewTransitionName = `vt-s-${s.id}`;
   return (
     <div
       className="wm-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
-      style={{ borderLeft: `3px solid hsl(${st.accent})` }}
+      style={cardStyle}
     >
       <div className="font-medium text-foreground">{s.project}</div>
       <div

@@ -30,10 +30,17 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
           </div>
         ) : (
           <ul className="space-y-2">
-            {rows.map((a, i) => (
+            {rows.map((a, i) => {
+              // animationDelay → staggered cascade on load; viewTransitionName →
+              // existing rows slide down when a newer call is inserted on top.
+              const liStyle: Record<string, string> = {
+                animationDelay: `${Math.min(i, 10) * 30}ms`,
+                viewTransitionName: `vt-a-${a.id}`,
+              };
+              return (
               <li
                 key={a.id}
-                style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}
+                style={liStyle}
                 className="wm-row-in rounded-lg border border-border bg-card/60 px-3 py-2 font-mono text-2xs shadow-card transition hover:bg-card-hover"
               >
                 <div className="flex items-center gap-2">
@@ -49,7 +56,8 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                   <span className="shrink-0 text-muted-foreground/45">{projectFor(a.session_id)}</span>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>

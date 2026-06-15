@@ -1,6 +1,7 @@
 import type { State } from "../types.ts";
 import { useTheme } from "../useTheme.ts";
 import { useTextSize } from "../useTextSize.ts";
+import { useMotion } from "../useMotion.ts";
 
 function Count({ dotClass, label, n }: { dotClass: string; label: string; n: number }) {
   return (
@@ -14,6 +15,7 @@ function Count({ dotClass, label, n }: { dotClass: string; label: string; n: num
 export function AppBar({ state }: { state: State }) {
   const { theme, toggle } = useTheme();
   const { inc, dec, canInc, canDec } = useTextSize();
+  const { on: motionOn, toggle: toggleMotion } = useMotion();
   const working = state.sessions.filter((s) => s.status === "working").length;
   const needsYou = state.sessions.filter((s) => s.status === "needs_you").length;
   const todoCount = state.todos.filter((t) => t.status === "todo").length;
@@ -54,6 +56,19 @@ export function AppBar({ state }: { state: State }) {
             A+
           </button>
         </div>
+        <button
+          type="button"
+          onClick={toggleMotion}
+          aria-label="Toggle motion"
+          aria-pressed={motionOn}
+          title={motionOn ? "Animations on" : "Animations off"}
+          className={`inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none transition hover:text-foreground ${
+            motionOn ? "text-foreground" : "text-muted-foreground"
+          }`}
+        >
+          <span aria-hidden="true">{motionOn ? "✨" : "⊘"}</span>
+          <span>Motion</span>
+        </button>
         <button
           type="button"
           onClick={toggle}
