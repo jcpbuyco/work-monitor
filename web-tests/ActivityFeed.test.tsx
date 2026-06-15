@@ -8,9 +8,9 @@ const session = (id: string, project: string): Session => ({
   attention_reason: null, active_tool: null, branch: null, started_at: 0, last_activity_at: 0,
 });
 
-const act = (id: number, session_id: string, tool: string, detail: string | null = null): Activity => ({
-  id, session_id, tool, detail, at: Date.now(),
-});
+const act = (
+  id: number, session_id: string, tool: string, detail: string | null = null, dur: number | null = null
+): Activity => ({ id, session_id, tool, detail, dur, at: Date.now() });
 
 describe("ActivityFeed", () => {
   it("lists tool calls with their session's project", () => {
@@ -43,6 +43,11 @@ describe("ActivityFeed", () => {
       />
     );
     expect(screen.getByText("navigate_page")).toBeDefined();
+  });
+
+  it("shows a formatted call duration", () => {
+    render(<ActivityFeed activity={[act(1, "s1", "Bash", null, 1234)]} sessions={[session("s1", "p")]} />);
+    expect(screen.getByText("1.2s")).toBeDefined();
   });
 
   it("shows an empty state when there is no activity", () => {

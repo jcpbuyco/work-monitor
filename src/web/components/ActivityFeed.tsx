@@ -1,6 +1,6 @@
 import type { Activity, Session } from "../types.ts";
 import { ago } from "../time.ts";
-import { prettyTool, toolDot } from "../tools.ts";
+import { prettyTool, toolDot, formatDur } from "../tools.ts";
 
 const MAX_ROWS = 24;
 
@@ -39,6 +39,9 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                 <div className="flex items-center gap-2">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(a.tool)}`} />
                   <span className="shrink-0 font-semibold text-foreground">{prettyTool(a.tool)}</span>
+                  {a.dur != null && (
+                    <span className="shrink-0 tabular-nums text-muted-foreground/45">{formatDur(a.dur)}</span>
+                  )}
                   <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/55">{ago(a.at)}</span>
                 </div>
                 <div className="mt-0.5 flex items-baseline gap-2 pl-3.5">

@@ -32,6 +32,7 @@ export interface Activity {
   session_id: string;
   tool: string;
   detail: string | null;
+  dur: number | null;
   at: number;
 }
 

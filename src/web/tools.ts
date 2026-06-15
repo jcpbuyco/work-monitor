@@ -9,6 +9,14 @@ export function prettyTool(name: string): string {
   return m ? m[1] : name;
 }
 
+/** Compact human duration for a tool call's `duration_ms`. */
+export function formatDur(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.round(ms / 60000)}m`;
+}
+
 /** A Tailwind background class for the tool's category dot. */
 export function toolDot(name: string): string {
   if (name === "Bash") return "bg-working";

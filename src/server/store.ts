@@ -110,24 +110,29 @@ export class Store {
 
   /** Most recent tool-call activity across all sessions, newest first.
    *  Parses `tool_name` out of stored `activity` event payloads. */
-  recentActivity(limit: number): { id: number; session_id: string; tool: string; detail: string | null; at: number }[] {
+  recentActivity(
+    limit: number
+  ): { id: number; session_id: string; tool: string; detail: string | null; dur: number | null; at: number }[] {
     const rows = this.db
       .query(
         `SELECT id, session_id, payload, at FROM events WHERE type = 'activity' ORDER BY at DESC LIMIT $limit`
       )
       .all({ $limit: limit }) as { id: number; session_id: string; payload: string | null; at: number }[];
-    const out: { id: number; session_id: string; tool: string; detail: string | null; at: number }[] = [];
+    const out: { id: number; session_id: string; tool: string; detail: string | null; dur: number | null; at: number }[] =
+      [];
     for (const r of rows) {
       let tool: string | null = null;
       let detail: string | null = null;
+      let dur: number | null = null;
       try {
         if (r.payload) {
-          const p = JSON.parse(r.payload) as { tool_name?: string; tool_input?: unknown };
+          const p = JSON.parse(r.payload) as { tool_name?: string; tool_input?: unknown; duration_ms?: unknown };
           tool = p.tool_name ?? null;
           detail = summarizeTool(tool, p.tool_input);
+          dur = typeof p.duration_ms === "number" ? p.duration_ms : null;
         }
       } catch {}
-      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, detail, at: r.at });
+      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, detail, dur, at: r.at });
     }
     return out;
   }

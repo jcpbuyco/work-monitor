@@ -57,7 +57,7 @@ describe("POST /events", () => {
       });
     await post("session_start", { session_id: "sa", cwd: "/x/repo" });
     await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Read", tool_input: { file_path: "/x/repo/src/web/Board.tsx" } });
-    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash", tool_input: { description: "run tests", command: "bun test" } });
+    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash", tool_input: { description: "run tests", command: "bun test" }, duration_ms: 1500 });
     await post("activity", { session_id: "sa", cwd: "/x/repo" }); // no tool_name — excluded
     const state = (await (await fetch(`${base}/api/state`)).json()) as any;
     expect(Array.isArray(state.activity)).toBe(true);
@@ -68,6 +68,9 @@ describe("POST /events", () => {
     // detail: bash prefers its description, file tools show the basename
     expect(state.activity[0].detail).toBe("run tests");
     expect(state.activity.find((a: any) => a.tool === "Read").detail).toBe("Board.tsx");
+    // duration is surfaced when present
+    expect(state.activity[0].dur).toBe(1500);
+    expect(state.activity.find((a: any) => a.tool === "Read").dur).toBeNull();
   });
 
   it("tool_start sets active_tool; a completed tool clears it", async () => {
