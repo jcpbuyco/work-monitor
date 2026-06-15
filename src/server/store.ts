@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTodoInput } from "./types.ts";
 
 const SESSION_COLS =
-  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, started_at, last_activity_at, ended_at";
+  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, branch, started_at, last_activity_at, ended_at";
 
 const TODO_COLS =
   "id, title, note, for_who, status, origin_session_id, origin_project, branch, links, position, created_at, updated_at";
@@ -23,8 +23,8 @@ export class Store {
     if (!existing) {
       this.db
         .query(
-          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, started_at, last_activity_at, ended_at)
-           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $started_at, $last_activity_at, $ended_at)`
+          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, branch, started_at, last_activity_at, ended_at)
+           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $branch, $started_at, $last_activity_at, $ended_at)`
         )
         .run({
           $id: sessionId,
@@ -35,6 +35,7 @@ export class Store {
           $current_task: patch.current_task ?? null,
           $current_intent: patch.current_intent ?? null,
           $attention_reason: patch.attention_reason ?? null,
+          $branch: patch.branch ?? null,
           $started_at: now,
           $last_activity_at: patch.last_activity_at ?? now,
           $ended_at: patch.ended_at ?? null,
@@ -52,6 +53,7 @@ export class Store {
       "current_task",
       "current_intent",
       "attention_reason",
+      "branch",
       "last_activity_at",
       "ended_at",
     ] as const) {

@@ -36,6 +36,7 @@ describe("POST /events", () => {
     expect(state.sessions.length).toBe(1);
     expect(state.sessions[0].project).toBe("browns");
     expect(state.sessions[0].status).toBe("working");
+    expect(state.sessions[0].branch).toBeNull();
   });
 
   it("ignores events with no session_id (204, no crash)", async () => {

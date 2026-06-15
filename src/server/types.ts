@@ -9,6 +9,7 @@ export interface Session {
   current_task: string | null;
   current_intent: string | null;
   attention_reason: string | null;
+  branch: string | null;
   started_at: number;
   last_activity_at: number;
   ended_at: number | null;
@@ -45,6 +46,7 @@ export interface SessionPatch {
   current_task?: string | null;
   current_intent?: string | null;
   attention_reason?: string | null;
+  branch?: string | null;
   last_activity_at?: number;
   ended_at?: number | null;
 }

@@ -84,9 +84,13 @@ export function createApp(deps: AppDeps) {
         }
         const t = now();
         const { sessionId, patch } = reduceEvent(event, t);
-        // Refine the project name from git so a worktree reports its repo, not the
+        // Refine project + branch from git so a worktree reports its repo, not the
         // branch directory the cwd basename gives (reduceEvent stays pure).
-        if (event.cwd) patch.project = (await resolveRepoInfo(event.cwd)).project;
+        if (event.cwd) {
+          const info = await resolveRepoInfo(event.cwd);
+          patch.project = info.project;
+          patch.branch = info.branch;
+        }
         store.applyEvent(sessionId, patch, t);
         store.db
           .query(`INSERT INTO events (session_id, type, payload, at) VALUES ($s, $t, $p, $a)`)

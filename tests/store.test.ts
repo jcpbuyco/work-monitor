@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
+import { Database } from "bun:sqlite";
 import { openDb, migrate } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import { reduceEvent } from "../src/server/events.ts";
@@ -49,6 +50,23 @@ describe("Store sessions", () => {
     const affected = store.sweepStale(1000 + 11 * 60 * 1000, 10 * 60 * 1000);
     expect(affected).toContain("s1");
     expect(store.getSession("s1")!.status).toBe("idle");
+  });
+
+  it("stores and updates the session branch", () => {
+    store.applyEvent("s1", { project: "p", cwd: "/x", status: "working", last_activity_at: 1000 }, 1000);
+    expect(store.getSession("s1")!.branch).toBeNull();
+    store.applyEvent("s1", { branch: "feat/x", last_activity_at: 2000 }, 2000);
+    expect(store.getSession("s1")!.branch).toBe("feat/x");
+  });
+
+  it("idempotently adds the sessions.branch column to a pre-existing table", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const has = () => (db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).filter((c) => c.name === "branch").length;
+    expect(has()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has()).toBe(1);
   });
 });
 
