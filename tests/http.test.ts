@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { openDb } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import { SseHub } from "../src/server/sse.ts";
-import { createApp } from "../src/server/http.ts";
+import { createApp, buildState } from "../src/server/http.ts";
 
 let server: Server;
 let base: string;
@@ -148,6 +148,18 @@ describe("todos REST", () => {
     expect(del.status).toBe(204);
     const state = await (await fetch(`${base}/api/state`)).json() as any;
     expect(state.todos.length).toBe(0);
+  });
+});
+
+describe("buildState", () => {
+  it("includes a cost block with the expected shape", () => {
+    const s = new Store(openDb(":memory:"));
+    const state = buildState(s);
+    expect(state.cost).toBeDefined();
+    expect(state.cost.perSession).toEqual({});
+    expect(state.cost.liveTotalUsd).toBe(0);
+    expect(state.cost.todayUsd).toBe(0);
+    expect(state.cost.byModelToday).toEqual([]);
   });
 });
 
