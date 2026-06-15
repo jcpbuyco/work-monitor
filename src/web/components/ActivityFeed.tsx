@@ -22,7 +22,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
           value={limit}
           onChange={(e) => setLimit(Number(e.target.value))}
           aria-label="Number of tool calls to show"
-          className="rounded-full border border-border bg-chip px-2 py-0.5 text-2xs text-muted-foreground transition hover:text-foreground"
+          className="rounded-full border border-border bg-chip px-3 py-1 pr-2.5 text-2xs text-muted-foreground transition hover:text-foreground"
         >
           {options.map((n) => (
             <option key={n} value={n}>last {n}</option>
