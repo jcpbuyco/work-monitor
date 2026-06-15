@@ -20,12 +20,13 @@ export function TodoModal({ todo, onClose }: { todo: Todo | null; onClose: () =>
       onClick={(e) => {
         if (e.target === ref.current) onClose();
       }}
+      aria-labelledby="todo-modal-title"
       className="m-auto w-[min(40rem,92vw)] rounded-xl border border-border bg-card p-0 text-foreground shadow-card backdrop:bg-black/50"
     >
       {todo && (
         <div className="p-5">
           <div className="flex items-start justify-between gap-3">
-            <h2 className="text-lg font-semibold">{todo.title}</h2>
+            <h2 id="todo-modal-title" className="text-lg font-semibold">{todo.title}</h2>
             <button
               type="button"
               onClick={onClose}
