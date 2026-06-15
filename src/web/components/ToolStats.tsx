@@ -21,7 +21,7 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
         className="mb-3 inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition hover:text-foreground"
       >
         <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-        📊 Tool usage ({total})
+        <span aria-hidden="true">Σ</span> Tool usage ({total})
       </button>
 
       {!collapsed && (
