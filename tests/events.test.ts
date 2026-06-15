@@ -61,6 +61,19 @@ describe("reduceEvent", () => {
     expect(patch.status).toBe("idle");
   });
 
+  it("tool_start -> working and sets active_tool to the running tool", () => {
+    const { patch } = reduceEvent(base({ wm_event_type: "tool_start", tool_name: "Bash" }), NOW);
+    expect(patch.status).toBe("working");
+    expect(patch.active_tool).toBe("Bash");
+    expect(patch.attention_reason).toBeNull();
+  });
+
+  it("a completed tool (activity) and other events clear active_tool", () => {
+    expect(reduceEvent(base({ wm_event_type: "activity" }), NOW).patch.active_tool).toBeNull();
+    expect(reduceEvent(base({ wm_event_type: "stop" }), NOW).patch.active_tool).toBeNull();
+    expect(reduceEvent(base({ wm_event_type: "prompt" }), NOW).patch.active_tool).toBeNull();
+  });
+
   it("activity -> working and clears attention (tool-use heartbeat)", () => {
     const { sessionId, patch } = reduceEvent(
       base({ wm_event_type: "activity", cwd: "/x/browns" }),

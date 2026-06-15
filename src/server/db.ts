@@ -22,6 +22,7 @@ export function migrate(db: Database): void {
       current_task TEXT,
       current_intent TEXT,
       attention_reason TEXT,
+      active_tool TEXT,
       branch TEXT,
       started_at INTEGER NOT NULL,
       last_activity_at INTEGER NOT NULL,
@@ -50,10 +51,13 @@ export function migrate(db: Database): void {
       updated_at INTEGER NOT NULL
     );
   `);
-  // Idempotent: add the sessions.branch column to pre-existing DBs.
+  // Idempotent: add columns added after the initial schema to pre-existing DBs.
   const sessionCols = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
   if (!sessionCols.some((c) => c.name === "branch")) {
     db.exec("ALTER TABLE sessions ADD COLUMN branch TEXT;");
+  }
+  if (!sessionCols.some((c) => c.name === "active_tool")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN active_tool TEXT;");
   }
   // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
   db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);

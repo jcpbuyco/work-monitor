@@ -5,7 +5,7 @@ import type { Activity, Session } from "../src/web/types.ts";
 
 const session = (id: string, project: string): Session => ({
   id, project, status: "working", current_task: null, current_intent: null,
-  attention_reason: null, branch: null, started_at: 0, last_activity_at: 0,
+  attention_reason: null, active_tool: null, branch: null, started_at: 0, last_activity_at: 0,
 });
 
 const act = (id: number, session_id: string, tool: string, detail: string | null = null): Activity => ({

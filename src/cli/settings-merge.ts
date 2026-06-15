@@ -2,6 +2,8 @@
 export const HOOK_EVENTS: [string, string, string][] = [
   ["SessionStart", "session_start", ""],
   ["UserPromptSubmit", "prompt", ""],
+  // Fires BEFORE a tool runs → marks the session's currently-active tool.
+  ["PreToolUse", "tool_start", ""],
   ["PostToolUse", "todo_update", "TodoWrite"],
   // Heartbeat on every tool use so a session actively working (Bash/Edit/Agent/…)
   // keeps reporting "working" and isn't swept to idle. Keep AFTER the TodoWrite

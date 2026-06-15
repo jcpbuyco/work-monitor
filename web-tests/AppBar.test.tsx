@@ -5,8 +5,8 @@ import type { State } from "../src/web/types.ts";
 
 const state: State = {
   sessions: [
-    { id: "s1", project: "a", status: "working", current_task: null, current_intent: null, attention_reason: null, branch: null, started_at: 0, last_activity_at: 0 },
-    { id: "s2", project: "b", status: "needs_you", current_task: null, current_intent: null, attention_reason: "x", branch: null, started_at: 0, last_activity_at: 0 },
+    { id: "s1", project: "a", status: "working", current_task: null, current_intent: null, attention_reason: null, active_tool: null, branch: null, started_at: 0, last_activity_at: 0 },
+    { id: "s2", project: "b", status: "needs_you", current_task: null, current_intent: null, attention_reason: "x", active_tool: null, branch: null, started_at: 0, last_activity_at: 0 },
   ],
   todos: [
     { id: "t1", title: "t", note: "", for_who: null, status: "todo", origin_project: null, branch: null, links: null, position: 0, updated_at: 0 },

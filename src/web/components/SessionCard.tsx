@@ -36,15 +36,20 @@ export function SessionCard({
       <div className="mt-1.5 text-xs text-muted-foreground">
         {s.current_task ?? s.current_intent ?? "—"}
       </div>
-      {isWorking && latestTool && (
+      {isWorking && s.active_tool ? (
         <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working">
+          <span className="inline-block animate-spin" aria-hidden="true">⟳</span>
+          <span className="truncate">{prettyTool(s.active_tool)}…</span>
+        </div>
+      ) : isWorking && latestTool ? (
+        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working/80">
           <span aria-hidden="true">▸</span>
           <span className="truncate">
             {prettyTool(latestTool)}
-            {latestDetail ? <span className="text-working/70"> · {latestDetail}</span> : null}
+            {latestDetail ? <span className="text-working/60"> · {latestDetail}</span> : null}
           </span>
         </div>
-      )}
+      ) : null}
       {s.attention_reason && s.status === "needs_you" && (
         <div className="mt-2 rounded-md border border-attention/25 bg-attention/10 px-2 py-1.5 text-xs text-attention">
           ⚠ {s.attention_reason}

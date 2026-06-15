@@ -5,7 +5,9 @@ export function reduceEvent(
   event: HookEvent,
   now: number
 ): { sessionId: string; patch: SessionPatch } {
-  const patch: SessionPatch = { last_activity_at: now };
+  // Default: no tool is mid-run. Only a tool_start (PreToolUse) sets one; every
+  // other event means the previous tool has finished or we're between turns.
+  const patch: SessionPatch = { last_activity_at: now, active_tool: null };
 
   if (event.cwd) {
     patch.cwd = event.cwd;
@@ -23,6 +25,13 @@ export function reduceEvent(
       if (typeof event.prompt === "string") {
         patch.current_intent = truncate(event.prompt);
       }
+      break;
+    case "tool_start":
+      // Fired by PreToolUse, before the tool runs: the session is working and
+      // this is the tool currently executing.
+      patch.status = "working";
+      patch.attention_reason = null;
+      patch.active_tool = typeof event.tool_name === "string" ? event.tool_name : null;
       break;
     case "todo_update": {
       patch.status = "working";

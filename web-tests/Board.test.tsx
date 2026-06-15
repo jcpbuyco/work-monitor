@@ -7,8 +7,8 @@ vi.mock("../src/web/api.ts", () => ({ patchTodo: vi.fn(), deleteTodo: vi.fn() })
 
 const state: State = {
   sessions: [
-    { id: "s1", project: "browns", status: "working", current_task: "Refactor (1/3 done)", current_intent: null, attention_reason: null, branch: null, started_at: Date.now(), last_activity_at: Date.now() },
-    { id: "s2", project: "love-island", status: "needs_you", current_task: null, current_intent: "tests", attention_reason: "Run migration?", branch: null, started_at: Date.now(), last_activity_at: Date.now() },
+    { id: "s1", project: "browns", status: "working", current_task: "Refactor (1/3 done)", current_intent: null, attention_reason: null, active_tool: null, branch: null, started_at: Date.now(), last_activity_at: Date.now() },
+    { id: "s2", project: "love-island", status: "needs_you", current_task: null, current_intent: "tests", attention_reason: "Run migration?", active_tool: null, branch: null, started_at: Date.now(), last_activity_at: Date.now() },
   ],
   todos: [
     { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "todo", origin_project: "bov", branch: "feat/pay", links: null, position: 0, updated_at: Date.now() },

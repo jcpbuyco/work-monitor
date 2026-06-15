@@ -70,6 +70,22 @@ describe("POST /events", () => {
     expect(state.activity.find((a: any) => a.tool === "Read").detail).toBe("Board.tsx");
   });
 
+  it("tool_start sets active_tool; a completed tool clears it", async () => {
+    const post = (type: string, body: object) =>
+      fetch(`${base}/events?type=${type}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    await post("session_start", { session_id: "sb", cwd: "/x/repo" });
+    await post("tool_start", { session_id: "sb", cwd: "/x/repo", tool_name: "Bash" });
+    let state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "sb").active_tool).toBe("Bash");
+    await post("activity", { session_id: "sb", cwd: "/x/repo", tool_name: "Bash" });
+    state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "sb").active_tool).toBeNull();
+  });
+
   it("an activity heartbeat brings an idle session back to working", async () => {
     const post = (type: string, body: object) =>
       fetch(`${base}/events?type=${type}`, {

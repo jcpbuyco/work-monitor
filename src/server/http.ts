@@ -16,6 +16,7 @@ export interface AppDeps {
 const EVENT_TYPES = new Set<EventType>([
   "session_start",
   "prompt",
+  "tool_start",
   "todo_update",
   "activity",
   "notification",
