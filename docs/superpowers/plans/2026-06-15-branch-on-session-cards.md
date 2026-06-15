@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Implemented — merged to `main` (2026-06-15)
+
 **Goal:** Surface each session's git branch on its card so two worktrees of the same repo are distinguishable.
 
 **Architecture:** Extend the server's cwd→repo resolver to also return the branch (one git call, 60s-TTL cache), add a `branch` column threaded through `Session`/`store`/`http`, and render a `⎇ {branch}` chip on `SessionCard`. Server and web have separate `Session` types so the change splits cleanly; `reduceEvent` stays pure (resolution happens in the HTTP layer).

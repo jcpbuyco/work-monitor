@@ -1,7 +1,7 @@
 # Branch on session cards
 
 **Date:** 2026-06-15
-**Status:** Approved design — ready for implementation plan
+**Status:** Implemented — merged to `main` (2026-06-15)
 **Scope:** Server session derivation + data model + the `SessionCard`. No change to todos, hooks, or the MCP surface.
 
 ## Motivation
