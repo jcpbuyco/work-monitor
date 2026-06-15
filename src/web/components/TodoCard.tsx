@@ -19,6 +19,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
       <div className="flex justify-between gap-2">
         <div className="font-medium text-foreground line-clamp-2">{t.title}</div>
         <button
+          type="button"
           className="text-xs text-muted-foreground/40 transition hover:text-red-400 focus-visible:text-red-400"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
