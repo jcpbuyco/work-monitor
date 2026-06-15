@@ -43,9 +43,27 @@ export interface ToolStat {
   avgMs: number | null;
 }
 
+export interface SessionCost {
+  costUsd: number;
+  tokens: number;
+}
+
+export interface ModelCost {
+  model: string;
+  costUsd: number;
+}
+
+export interface Cost {
+  perSession: Record<string, SessionCost>;
+  liveTotalUsd: number;
+  todayUsd: number;
+  byModelToday: ModelCost[];
+}
+
 export interface State {
   sessions: Session[];
   todos: Todo[];
   activity: Activity[];
   stats: ToolStat[];
+  cost: Cost;
 }
