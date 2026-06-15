@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
 import { SessionCard } from "../src/web/components/SessionCard.tsx";
 import type { Session } from "../src/web/types.ts";
 
@@ -25,5 +25,19 @@ describe("SessionCard", () => {
   it("falls back to the last completed tool when no tool is active", () => {
     render(<SessionCard s={base} latestTool="Read" latestDetail="db.ts" />);
     expect(screen.getByText(/Read/)).toBeDefined();
+  });
+});
+
+describe("SessionCard cost line", () => {
+  afterEach(cleanup);
+
+  it("shows cost + tokens when provided", () => {
+    render(<SessionCard s={base} cost={{ costUsd: 1.24, tokens: 312_000 }} />);
+    expect(screen.getByText("$1.24 · 312K tok")).toBeTruthy();
+  });
+
+  it("omits the cost line when no cost is provided", () => {
+    const { container } = render(<SessionCard s={base} />);
+    expect(container.textContent).not.toContain("tok");
   });
 });

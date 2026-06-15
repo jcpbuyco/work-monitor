@@ -5,6 +5,8 @@ import { reduceEvent } from "./events.ts";
 import { resolveRepoInfo } from "./resolve-project.ts";
 import type { EventType, HookEvent, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
+import { tailUsage } from "./usage.ts";
+import type { Store as StoreType } from "./store.ts";
 
 export interface AppDeps {
   store: Store;
@@ -51,21 +53,28 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 const ACTIVITY_LIMIT = 50;
 
+function startOfLocalDay(nowMs: number): number {
+  const d = new Date(nowMs);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+export function buildState(store: StoreType) {
+  return {
+    sessions: store.listSessions(),
+    todos: store.listTodos(),
+    activity: store.recentActivity(ACTIVITY_LIMIT),
+    stats: store.toolStats(),
+    cost: store.costSummary(startOfLocalDay(Date.now())),
+  };
+}
+
 export function createApp(deps: AppDeps) {
   const now = deps.now ?? (() => Date.now());
   const { store, sse } = deps;
 
-  function buildState() {
-    return {
-      sessions: store.listSessions(),
-      todos: store.listTodos(),
-      activity: store.recentActivity(ACTIVITY_LIMIT),
-      stats: store.toolStats(),
-    };
-  }
-
   function pushState(): void {
-    sse.broadcast("state", buildState());
+    sse.broadcast("state", buildState(store));
   }
 
   return async function app(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -107,6 +116,12 @@ export function createApp(deps: AppDeps) {
         store.db
           .query(`INSERT INTO events (session_id, type, payload, at) VALUES ($s, $t, $p, $a)`)
           .run({ $s: sessionId, $t: type, $p: raw.slice(0, 8000), $a: t });
+        if (type === "stop" || type === "session_end") {
+          const info = store.getTailInfo(sessionId);
+          if (info) {
+            tailUsage(store, { id: sessionId, transcript_path: info.transcript_path, usage_offset: info.usage_offset });
+          }
+        }
         pushState();
         res.writeHead(204).end();
         return;
@@ -114,7 +129,7 @@ export function createApp(deps: AppDeps) {
 
       // --- full state snapshot ---
       if (method === "GET" && path === "/api/state") {
-        json(res, 200, buildState());
+        json(res, 200, buildState(store));
         return;
       }
 
@@ -125,7 +140,7 @@ export function createApp(deps: AppDeps) {
           "cache-control": "no-cache",
           connection: "keep-alive",
         });
-        res.write(`event: state\ndata: ${JSON.stringify(buildState())}\n\n`);
+        res.write(`event: state\ndata: ${JSON.stringify(buildState(store))}\n\n`);
         sse.add(res);
         return;
       }

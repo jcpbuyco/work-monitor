@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
-import type { Session } from "../types.ts";
+import type { Session, SessionCost } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool } from "../tools.ts";
+import { formatUsd, formatTokens } from "../cost.ts";
 
 const STATUS: Record<string, { accent: string; label: string; dot: string; pulse?: boolean }> = {
   working: { accent: "var(--working)", label: "Working", dot: "bg-working", pulse: true },
@@ -14,10 +15,12 @@ export function SessionCard({
   s,
   latestTool,
   latestDetail,
+  cost,
 }: {
   s: Session;
   latestTool?: string;
   latestDetail?: string | null;
+  cost?: SessionCost;
 }) {
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
@@ -40,6 +43,11 @@ export function SessionCard({
       <div className="mt-1.5 text-xs text-muted-foreground">
         {s.current_task ?? s.current_intent ?? "—"}
       </div>
+      {cost && (
+        <div className="mt-1.5 font-mono text-2xs text-muted-foreground/70">
+          {formatUsd(cost.costUsd)} · {formatTokens(cost.tokens)} tok
+        </div>
+      )}
       {isWorking && s.active_tool ? (
         <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working">
           <span className="inline-block animate-spin" aria-hidden="true">⟳</span>
