@@ -1,12 +1,12 @@
 import type { Activity, Session } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool, toolDot, formatDur } from "../tools.ts";
-
-const MAX_ROWS = 24;
+import { useFeedLimit } from "../useFeedLimit.ts";
 
 export function ActivityFeed({ activity, sessions }: { activity: Activity[]; sessions: Session[] }) {
+  const { limit, setLimit, options } = useFeedLimit();
   const projectFor = (id: string) => sessions.find((s) => s.id === id)?.project ?? "—";
-  const rows = activity.slice(0, MAX_ROWS);
+  const rows = activity.slice(0, limit);
 
   return (
     <section className="mt-7">
@@ -18,9 +18,16 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
           </span>
           ⚡ Live activity
         </span>
-        <span className="rounded-full border border-border bg-chip px-2 py-0.5 text-2xs text-muted-foreground">
-          tool calls · newest first
-        </span>
+        <select
+          value={limit}
+          onChange={(e) => setLimit(Number(e.target.value))}
+          aria-label="Number of tool calls to show"
+          className="rounded-full border border-border bg-chip px-2 py-0.5 text-2xs text-muted-foreground transition hover:text-foreground"
+        >
+          {options.map((n) => (
+            <option key={n} value={n}>last {n}</option>
+          ))}
+        </select>
       </div>
 
       <div className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5">

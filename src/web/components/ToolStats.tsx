@@ -39,12 +39,10 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
               />
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(s.tool)}`} />
               <span className="min-w-0 flex-1 truncate font-semibold text-foreground">{prettyTool(s.tool)}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{s.calls}</span>
-              {s.avgMs != null && (
-                <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground/50">
-                  avg {formatDur(s.avgMs)}
-                </span>
-              )}
+              <span className="w-9 shrink-0 text-right tabular-nums text-muted-foreground">{s.calls}</span>
+              <span className="w-16 shrink-0 whitespace-nowrap text-right tabular-nums text-muted-foreground/50">
+                {s.avgMs != null ? `avg ${formatDur(s.avgMs)}` : ""}
+              </span>
             </li>
           ))}
         </ul>

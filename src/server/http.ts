@@ -49,7 +49,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(s);
 }
 
-const ACTIVITY_LIMIT = 24;
+const ACTIVITY_LIMIT = 50;
 
 export function createApp(deps: AppDeps) {
   const now = deps.now ?? (() => Date.now());
