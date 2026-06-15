@@ -34,4 +34,36 @@ describe("Store usage rows", () => {
     const ids = store.sessionsToTail().map((s) => s.id).sort();
     expect(ids).toEqual(["live"]);
   });
+
+  it("aggregates per-session, live (non-ended), today, and per-model", () => {
+    const MIDNIGHT = 2_000_000;
+    // sessions: a = working (live), b = ended
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    store.applyEvent("b", { status: "ended", last_activity_at: 1 }, 1);
+    // a: opus, one row before midnight + one after
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: MIDNIGHT - 1, cost: 1.0 });
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: MIDNIGHT + 1, cost: 2.0 });
+    // b (ended): haiku, after midnight
+    store.recordUsage({ uuid: "b1", sessionId: "b", model: "claude-haiku-4-5", tokens: tok(0), at: MIDNIGHT + 1, cost: 4.0 });
+
+    const s = store.costSummary(MIDNIGHT);
+    expect(s.perSession.a.costUsd).toBeCloseTo(3.0, 6); // 1.0 + 2.0 lifetime
+    expect(s.perSession.b.costUsd).toBeCloseTo(4.0, 6);
+    expect(s.liveTotalUsd).toBeCloseTo(3.0, 6); // only session a (b is ended)
+    expect(s.todayUsd).toBeCloseTo(6.0, 6); // 2.0 (a2) + 4.0 (b1), excludes a1 (before midnight)
+    expect(s.byModelToday).toEqual([
+      { model: "claude-haiku-4-5", costUsd: 4.0 },
+      { model: "claude-opus-4-8", costUsd: 2.0 },
+    ]);
+  });
+
+  it("sums all token types into perSession.tokens", () => {
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({
+      uuid: "a1", sessionId: "a", model: "claude-opus-4-8",
+      tokens: { input: 10, output: 20, cache_read: 30, cache_create_5m: 5, cache_create_1h: 5 },
+      at: 1, cost: 0,
+    });
+    expect(store.costSummary(0).perSession.a.tokens).toBe(70);
+  });
 });
