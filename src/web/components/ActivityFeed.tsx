@@ -2,7 +2,7 @@ import type { Activity, Session } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool, toolDot } from "../tools.ts";
 
-const MAX_ROWS = 14;
+const MAX_ROWS = 24;
 
 export function ActivityFeed({ activity, sessions }: { activity: Activity[]; sessions: Session[] }) {
   const projectFor = (id: string) => sessions.find((s) => s.id === id)?.project ?? "—";
@@ -23,7 +23,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card/50">
+      <div className="max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl border border-border bg-card/50">
         {rows.length === 0 ? (
           <div className="px-3 py-6 text-center text-2xs text-muted-foreground">Waiting for tool activity…</div>
         ) : (

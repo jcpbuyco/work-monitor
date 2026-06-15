@@ -25,25 +25,31 @@ export function Board({ state }: { state: State }) {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-12">
+    <div className="mx-auto max-w-7xl px-4 pb-12">
       <AppBar state={state} />
 
-      <TodosSection todos={state.todos} />
+      <div className="mt-2 flex flex-col gap-6 lg:flex-row lg:items-start">
+        <main className="min-w-0 flex-1">
+          <TodosSection todos={state.todos} />
 
-      <Lane label="Sessions" hint="auto — moves itself from agent hook events">
-        {SESSION_COLS.map((c) => {
-          const items = bySession(c.id);
-          return (
-            <Column key={c.id} title={c.title} dot={c.dot} count={items.length}>
-              {items.map((s) => (
-                <SessionCard key={s.id} s={s} latestTool={latestTool.get(s.id)} />
-              ))}
-            </Column>
-          );
-        })}
-      </Lane>
+          <Lane label="Sessions" hint="auto — moves itself from agent hook events">
+            {SESSION_COLS.map((c) => {
+              const items = bySession(c.id);
+              return (
+                <Column key={c.id} title={c.title} dot={c.dot} count={items.length}>
+                  {items.map((s) => (
+                    <SessionCard key={s.id} s={s} latestTool={latestTool.get(s.id)} />
+                  ))}
+                </Column>
+              );
+            })}
+          </Lane>
+        </main>
 
-      <ActivityFeed activity={state.activity} sessions={state.sessions} />
+        <aside className="lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
+          <ActivityFeed activity={state.activity} sessions={state.sessions} />
+        </aside>
+      </div>
     </div>
   );
 }
