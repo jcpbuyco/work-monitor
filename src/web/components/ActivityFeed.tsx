@@ -18,16 +18,25 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
           </span>
           ⚡ Live activity
         </span>
-        <select
-          value={limit}
-          onChange={(e) => setLimit(Number(e.target.value))}
-          aria-label="Number of tool calls to show"
-          className="rounded-full border border-border bg-chip px-3 py-1 pr-2.5 text-2xs text-muted-foreground transition hover:text-foreground"
-        >
-          {options.map((n) => (
-            <option key={n} value={n}>last {n}</option>
-          ))}
-        </select>
+        <div className="group relative inline-flex items-center">
+          <select
+            value={limit}
+            onChange={(e) => setLimit(Number(e.target.value))}
+            aria-label="Number of tool calls to show"
+            className="cursor-pointer appearance-none rounded-full border border-border bg-chip py-1 pl-3 pr-7 text-2xs text-muted-foreground transition hover:text-foreground"
+          >
+            {options.map((n) => (
+              <option key={n} value={n}>last {n}</option>
+            ))}
+          </select>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 12 12"
+            className="pointer-events-none absolute right-2.5 h-2.5 w-2.5 text-muted-foreground/70 transition group-hover:text-foreground"
+          >
+            <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
       </div>
 
       <div className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5">
