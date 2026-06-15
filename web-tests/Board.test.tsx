@@ -15,6 +15,7 @@ const state: State = {
   ],
   activity: [],
   stats: [],
+  cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [] },
 };
 
 describe("Board", () => {

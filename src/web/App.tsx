@@ -5,7 +5,13 @@ import { runViewTransition } from "./viewTransition.ts";
 import { Board } from "./components/Board.tsx";
 
 export default function App() {
-  const [state, setState] = useState<State>({ sessions: [], todos: [], activity: [], stats: [] });
+  const [state, setState] = useState<State>({
+    sessions: [],
+    todos: [],
+    activity: [],
+    stats: [],
+    cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [] },
+  });
   const ready = useRef(false);
 
   useEffect(() => {
