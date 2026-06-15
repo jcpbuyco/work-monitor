@@ -33,13 +33,13 @@ export function AppBar({ state }: { state: State }) {
         <Count dotClass="bg-attention" label="to do" n={todoCount} />
       </div>
       <div className="ml-auto flex items-center gap-2">
-        <div className="inline-flex items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
+        <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
           <button
             type="button"
             onClick={dec}
             disabled={!canDec}
             aria-label="Decrease text size"
-            className="px-2.5 py-1.5 text-sm transition hover:text-foreground disabled:opacity-40"
+            className="flex h-full items-center px-2.5 text-sm leading-none transition hover:text-foreground disabled:opacity-40"
           >
             A−
           </button>
@@ -49,7 +49,7 @@ export function AppBar({ state }: { state: State }) {
             onClick={inc}
             disabled={!canInc}
             aria-label="Increase text size"
-            className="px-2.5 py-1.5 text-base transition hover:text-foreground disabled:opacity-40"
+            className="flex h-full items-center px-2.5 text-base leading-none transition hover:text-foreground disabled:opacity-40"
           >
             A+
           </button>
@@ -58,7 +58,7 @@ export function AppBar({ state }: { state: State }) {
           type="button"
           onClick={toggle}
           aria-label="Toggle theme"
-          className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
         >
           <span aria-hidden="true">{theme === "dark" ? "☾" : "☀"}</span>
           <span>{theme === "dark" ? "Dark" : "Light"}</span>
