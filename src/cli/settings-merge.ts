@@ -22,16 +22,32 @@ function command(hookPath: string, type: string): string {
   return `${hookPath} ${type}`;
 }
 
+/** A command is one of ours — a hook script under `src/hooks/` (the current
+ *  `am-hook.sh` or a pre-rename `wm-hook.sh`). Matching lets us prune stale
+ *  entries on re-merge instead of only ever appending. */
+const OUR_HOOK_RE = /[/\\]src[/\\]hooks[/\\][\w.-]*-hook\.sh(\s|$)/;
+
 export function mergeHooks(settings: Settings, hookPath: string): Settings & { hooks: Record<string, HookGroup[]> } {
   const out: Settings & { hooks: Record<string, HookGroup[]> } = {
     ...settings,
     hooks: { ...(settings.hooks ?? {}) },
   };
+
+  // Prune our own hook entries first (including stale ones from a renamed
+  // script), so re-running setup supersedes a previous install instead of
+  // piling duplicate/dead entries on. Unrelated user hooks are left untouched.
+  for (const event of Object.keys(out.hooks)) {
+    const kept = (out.hooks[event] ?? [])
+      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !OUR_HOOK_RE.test(h.command)) }))
+      .filter((g) => g.hooks.length > 0);
+    if (kept.length > 0) out.hooks[event] = kept;
+    else delete out.hooks[event];
+  }
+
+  // (Re-)add the current hook entries.
   for (const [event, type, matcher] of HOOK_EVENTS) {
     const cmd = command(hookPath, type);
     const groups = [...(out.hooks[event] ?? [])];
-    // Dedupe by exact command so re-running setup is idempotent, while still
-    // allowing several am-hook entries on one event (e.g. two PostToolUse hooks).
     const already = groups.some((g) => g.hooks?.some((h) => h.command === cmd));
     if (!already) {
       groups.push({ matcher, hooks: [{ type: "command", command: cmd }] });

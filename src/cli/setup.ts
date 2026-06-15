@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,8 +63,30 @@ function registerMcp() {
   }
 }
 
+/** One-time migration: supersede a pre-rename work-monitor install. Stale
+ *  hook entries are pruned automatically by mergeHooks; here we drop the old
+ *  systemd unit + MCP registration so a single `bun run setup` fully cleans up.
+ *  All best-effort — fresh installs have nothing to remove. */
+function cleanupLegacy() {
+  try {
+    execFileSync("systemctl", ["--user", "disable", "--now", "wm-server.service"], { stdio: "ignore" });
+  } catch {}
+  const oldUnit = join(homedir(), ".config", "systemd", "user", "wm-server.service");
+  if (existsSync(oldUnit)) {
+    try {
+      rmSync(oldUnit);
+      step("Removed legacy wm-server.service");
+    } catch {}
+  }
+  try {
+    execFileSync("claude", ["mcp", "remove", "work-monitor", "--scope", "user"], { stdio: "ignore" });
+    step("Removed legacy work-monitor MCP registration");
+  } catch {}
+}
+
 function main() {
   console.log("Setting up agent-monitor...\n");
+  cleanupLegacy();
   installService();
   mergeSettings();
   registerMcp();

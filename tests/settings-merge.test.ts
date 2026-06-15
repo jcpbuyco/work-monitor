@@ -51,4 +51,21 @@ describe("mergeHooks", () => {
       .filter((h: any) => h.command.includes("am-hook.sh"));
     expect(wm.length).toBe(2);
   });
+
+  it("prunes stale entries from a renamed hook script (e.g. wm-hook.sh)", () => {
+    const stale = {
+      hooks: {
+        PostToolUse: [{ matcher: "", hooks: [{ type: "command" as const, command: "/old/path/src/hooks/wm-hook.sh activity" }] }],
+        Stop: [
+          { matcher: "", hooks: [{ type: "command" as const, command: "/old/path/src/hooks/wm-hook.sh stop" }] },
+          { matcher: "", hooks: [{ type: "command" as const, command: "keep-me.sh" }] },
+        ],
+      },
+    };
+    const out = mergeHooks(stale, HOOK);
+    const all = Object.values(out.hooks).flatMap((gs: any) => gs.flatMap((g: any) => g.hooks.map((h: any) => h.command)));
+    expect(all.some((c: string) => c.includes("wm-hook.sh"))).toBe(false); // stale gone
+    expect(all.some((c: string) => c.includes("am-hook.sh"))).toBe(true); // current present
+    expect(all).toContain("keep-me.sh"); // unrelated hook preserved
+  });
 });
