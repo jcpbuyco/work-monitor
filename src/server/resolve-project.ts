@@ -5,10 +5,16 @@ import { projectFromCwd } from "./derive.ts";
 
 const execFileP = promisify(execFile);
 
-// cwd → resolved project name. A given path's repo never changes, so memoize
-// permanently — this keeps git off the hot path (one resolution per session cwd,
-// even though the activity heartbeat fires an event on every tool use).
-const cache = new Map<string, string>();
+export interface RepoInfo {
+  project: string;
+  branch: string | null;
+}
+
+const TTL_MS = 60_000;
+// cwd → resolved info. The repo is immutable per path but the branch can change via
+// `git checkout`, so entries expire after the TTL — keeping git off the per-event hot
+// path (the activity heartbeat hits the cache) while staying reasonably fresh.
+const cache = new Map<string, { info: RepoInfo; at: number }>();
 
 /** Derive the repo name from git's common dir, handling worktrees / bare layouts. */
 export function repoNameFromGitDir(commonDir: string): string {
@@ -22,29 +28,42 @@ export function repoNameFromGitDir(commonDir: string): string {
 }
 
 /**
- * Resolve the project name for a working directory. Uses `git --git-common-dir`
- * so a git **worktree** reports its repo (e.g. `oxygenrx-frontend`) rather than the
- * branch directory the cwd basename would give. Falls back to the path basename
- * when the path isn't a git repo (or git is unavailable / the path is gone).
+ * Resolve a working directory to its repo name and current branch via git, so a git
+ * worktree reports its repo (e.g. `oxygenrx-frontend`) rather than the branch directory
+ * the cwd basename gives, plus the checked-out branch. Falls back to `{ basename, null }`
+ * for non-git paths (or when git is unavailable / the path is gone).
  */
-export async function resolveProjectName(cwd: string): Promise<string> {
-  if (!cwd) return "unknown";
-  const cached = cache.get(cwd);
-  if (cached !== undefined) return cached;
+export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
+  if (!cwd) return { project: "unknown", branch: null };
+  const hit = cache.get(cwd);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.info;
 
-  let name = projectFromCwd(cwd);
+  let info: RepoInfo = { project: projectFromCwd(cwd), branch: null };
   try {
     const { stdout } = await execFileP(
       "git",
-      ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD"],
       { timeout: 1000 }
     );
-    const repo = repoNameFromGitDir(stdout.trim());
-    if (repo) name = repo;
+    const [commonDir = "", abbrevRef = ""] = stdout.split("\n").map((l) => l.trim());
+    const project = repoNameFromGitDir(commonDir) || info.project;
+    let branch: string | null = null;
+    if (abbrevRef && abbrevRef !== "HEAD") {
+      branch = abbrevRef;
+    } else if (abbrevRef === "HEAD") {
+      // detached HEAD — fall back to the short SHA
+      try {
+        const { stdout: sha } = await execFileP("git", ["-C", cwd, "rev-parse", "--short", "HEAD"], { timeout: 1000 });
+        branch = sha.trim() || null;
+      } catch {
+        branch = null;
+      }
+    }
+    info = { project, branch };
   } catch {
     // not a git repo, git missing, or the path is gone — keep the basename fallback
   }
 
-  cache.set(cwd, name);
-  return name;
+  cache.set(cwd, { info, at: Date.now() });
+  return info;
 }
