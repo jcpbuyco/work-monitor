@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Todo } from "../types.ts";
 import { ago } from "../time.ts";
+import { runViewTransition } from "../viewTransition.ts";
+
+const listStyle: Record<string, string> = { viewTransitionName: "vt-donelist" };
 
 const PAGE_SIZE = 10;
 
@@ -63,7 +66,7 @@ export function DoneDialog({
             <div className="mt-4 text-sm text-muted-foreground">No completed todos yet.</div>
           ) : (
             <>
-              <ul className="mt-4 divide-y divide-border">
+              <ul className="mt-4 divide-y divide-border" style={listStyle}>
                 {rows.map((t) => (
                   <li key={t.id} className="py-2">
                     <div className="text-sm font-medium text-foreground line-clamp-1">{t.title}</div>
@@ -79,7 +82,7 @@ export function DoneDialog({
               <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  onClick={() => runViewTransition(() => setPage((p) => Math.max(0, p - 1)))}
                   disabled={clamped === 0}
                   className="rounded-md border border-border px-2 py-1 transition hover:text-foreground disabled:opacity-40"
                 >
@@ -88,7 +91,7 @@ export function DoneDialog({
                 <span>{start + 1}–{start + rows.length} of {sorted.length}</span>
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  onClick={() => runViewTransition(() => setPage((p) => Math.min(pageCount - 1, p + 1)))}
                   disabled={clamped >= pageCount - 1}
                   className="rounded-md border border-border px-2 py-1 transition hover:text-foreground disabled:opacity-40"
                 >

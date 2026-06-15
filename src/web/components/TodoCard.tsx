@@ -2,9 +2,12 @@ import type { Todo } from "../types.ts";
 import { patchTodo, deleteTodo } from "../api.ts";
 
 export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void }) {
+  // Stable name so marking done / deleting / adding tweens the list.
+  const cardStyle: Record<string, string> = { viewTransitionName: `vt-t-${t.id}` };
   return (
     <div
       onClick={() => onOpen?.(t)}
+      style={cardStyle}
       className="wm-fade-in mb-2 cursor-pointer rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
     >
       <div className="flex items-start justify-between gap-2">
