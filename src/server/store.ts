@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTodoInput } from "./types.ts";
+import type { Tokens } from "./pricing.ts";
 
 const SESSION_COLS =
   "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at";
@@ -202,6 +203,97 @@ export class Store {
     }
 
     return affected;
+  }
+
+  recordUsage(u: {
+    uuid: string;
+    sessionId: string;
+    model: string;
+    tokens: Tokens;
+    at: number;
+    cost: number;
+  }): boolean {
+    const res = this.db
+      .query(
+        `INSERT OR IGNORE INTO usage
+           (message_uuid, session_id, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, at)
+         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost, $at)`
+      )
+      .run({
+        $u: u.uuid,
+        $s: u.sessionId,
+        $m: u.model,
+        $in: u.tokens.input,
+        $out: u.tokens.output,
+        $cr: u.tokens.cache_read,
+        $c5: u.tokens.cache_create_5m,
+        $c1: u.tokens.cache_create_1h,
+        $cost: u.cost,
+        $at: u.at,
+      });
+    return res.changes > 0;
+  }
+
+  setUsageOffset(id: string, offset: number): void {
+    this.db.query(`UPDATE sessions SET usage_offset = $o WHERE id = $id`).run({ $o: offset, $id: id });
+  }
+
+  getTailInfo(id: string): { transcript_path: string | null; usage_offset: number } | null {
+    const row = this.db
+      .query(`SELECT transcript_path, usage_offset FROM sessions WHERE id = $id`)
+      .get({ $id: id });
+    return (row as { transcript_path: string | null; usage_offset: number }) ?? null;
+  }
+
+  sessionsToTail(): { id: string; transcript_path: string | null; usage_offset: number }[] {
+    return this.db
+      .query(
+        `SELECT id, transcript_path, usage_offset FROM sessions
+         WHERE status != 'ended' AND transcript_path IS NOT NULL`
+      )
+      .all() as { id: string; transcript_path: string | null; usage_offset: number }[];
+  }
+
+  costSummary(midnightMs: number): {
+    perSession: Record<string, { costUsd: number; tokens: number }>;
+    liveTotalUsd: number;
+    todayUsd: number;
+    byModelToday: { model: string; costUsd: number }[];
+  } {
+    const TOKENS =
+      "(input_tokens + output_tokens + cache_read_tokens + cache_create_5m_tokens + cache_create_1h_tokens)";
+
+    const per = this.db
+      .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKENS} AS tokens FROM usage GROUP BY session_id`)
+      .all() as { session_id: string; cost: number; tokens: number }[];
+    const perSession: Record<string, { costUsd: number; tokens: number }> = {};
+    for (const r of per) perSession[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
+
+    const live = this.db
+      .query(
+        `SELECT COALESCE(SUM(u.cost_usd), 0) AS c FROM usage u
+         JOIN sessions s ON s.id = u.session_id WHERE s.status != 'ended'`
+      )
+      .get() as { c: number };
+
+    const today = this.db
+      .query(`SELECT COALESCE(SUM(cost_usd), 0) AS c FROM usage WHERE at >= $m`)
+      .get({ $m: midnightMs }) as { c: number };
+
+    const byModel = this.db
+      .query(
+        `SELECT model, SUM(cost_usd) AS c FROM usage WHERE at >= $m
+         GROUP BY model HAVING c > 0 ORDER BY c DESC`
+      )
+      .all({ $m: midnightMs }) as { model: string; c: number }[];
+
+    return {
+      perSession,
+      liveTotalUsd: live.c,
+      todayUsd: today.c,
+      byModelToday: byModel.map((r) => ({ model: r.model, costUsd: r.c })),
+    };
   }
 
   createTodo(input: CreateTodoInput, now: number): Todo {
