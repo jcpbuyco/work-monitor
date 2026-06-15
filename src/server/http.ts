@@ -60,6 +60,7 @@ export function createApp(deps: AppDeps) {
       sessions: store.listSessions(),
       todos: store.listTodos(),
       activity: store.recentActivity(ACTIVITY_LIMIT),
+      stats: store.toolStats(),
     };
   }
 

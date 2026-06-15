@@ -73,6 +73,25 @@ describe("POST /events", () => {
     expect(state.activity.find((a: any) => a.tool === "Read").dur).toBeNull();
   });
 
+  it("aggregates per-tool usage stats (calls + avg) in /api/state", async () => {
+    const post = (type: string, body: object) =>
+      fetch(`${base}/events?type=${type}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    await post("session_start", { session_id: "sc", cwd: "/x/repo" });
+    await post("activity", { session_id: "sc", tool_name: "Bash", duration_ms: 100 });
+    await post("activity", { session_id: "sc", tool_name: "Bash", duration_ms: 300 });
+    await post("activity", { session_id: "sc", tool_name: "Read", duration_ms: 6 });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(Array.isArray(state.stats)).toBe(true);
+    const bash = state.stats.find((s: any) => s.tool === "Bash");
+    expect(bash.calls).toBe(2);
+    expect(bash.avgMs).toBe(200); // (100 + 300) / 2
+    expect(state.stats[0].tool).toBe("Bash"); // busiest first
+  });
+
   it("tool_start sets active_tool; a completed tool clears it", async () => {
     const post = (type: string, body: object) =>
       fetch(`${base}/events?type=${type}`, {

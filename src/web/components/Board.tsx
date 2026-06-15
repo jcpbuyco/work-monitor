@@ -5,6 +5,7 @@ import { SessionCard } from "./SessionCard.tsx";
 import { AppBar } from "./AppBar.tsx";
 import { TodosSection } from "./TodosSection.tsx";
 import { ActivityFeed } from "./ActivityFeed.tsx";
+import { ToolStats } from "./ToolStats.tsx";
 
 const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
   { id: "working", title: "Working", dot: "bg-working" },
@@ -52,6 +53,7 @@ export function Board({ state }: { state: State }) {
         </main>
 
         <aside className="lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
+          <ToolStats stats={state.stats} />
           <ActivityFeed activity={state.activity} sessions={state.sessions} />
         </aside>
       </div>

@@ -137,6 +137,41 @@ export class Store {
     return out;
   }
 
+  /** Per-tool usage aggregated across all stored tool calls, busiest first.
+   *  The inner query filters with json_valid first because some payloads were
+   *  truncated to invalid JSON at ingestion (>8000 chars); json_extract would
+   *  otherwise throw on the first malformed row and abort the whole GROUP BY.
+   *  Wrapped in try/catch so stats can never break the rest of /api/state. */
+  toolStats(): { tool: string; calls: number; totalMs: number; avgMs: number | null }[] {
+    try {
+      const rows = this.db
+        .query(
+          `SELECT tool,
+                  COUNT(*) AS calls,
+                  COALESCE(SUM(dur), 0) AS total_ms,
+                  SUM(CASE WHEN dur IS NOT NULL THEN 1 ELSE 0 END) AS timed
+           FROM (
+             SELECT json_extract(payload, '$.tool_name') AS tool,
+                    json_extract(payload, '$.duration_ms') AS dur
+             FROM events
+             WHERE type = 'activity' AND json_valid(payload)
+           )
+           WHERE tool IS NOT NULL
+           GROUP BY tool
+           ORDER BY calls DESC`
+        )
+        .all() as { tool: string; calls: number; total_ms: number; timed: number }[];
+      return rows.map((r) => ({
+        tool: r.tool,
+        calls: r.calls,
+        totalMs: r.total_ms,
+        avgMs: r.timed > 0 ? Math.round(r.total_ms / r.timed) : null,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   sweepStale(now: number, thresholdMs: number): string[] {
     const rows = this.db
       .query(

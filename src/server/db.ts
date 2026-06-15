@@ -36,6 +36,7 @@ export function migrate(db: Database): void {
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+    CREATE INDEX IF NOT EXISTS idx_events_type_at ON events(type, at);
     CREATE TABLE IF NOT EXISTS todos (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,

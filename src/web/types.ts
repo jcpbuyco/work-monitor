@@ -36,8 +36,16 @@ export interface Activity {
   at: number;
 }
 
+export interface ToolStat {
+  tool: string;
+  calls: number;
+  totalMs: number;
+  avgMs: number | null;
+}
+
 export interface State {
   sessions: Session[];
   todos: Todo[];
   activity: Activity[];
+  stats: ToolStat[];
 }

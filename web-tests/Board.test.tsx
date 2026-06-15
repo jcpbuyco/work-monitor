@@ -14,6 +14,7 @@ const state: State = {
     { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "todo", origin_project: "bov", branch: "feat/pay", links: null, position: 0, updated_at: Date.now() },
   ],
   activity: [],
+  stats: [],
 };
 
 describe("Board", () => {
