@@ -61,10 +61,13 @@ export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
       }
     }
     info = { project, branch };
+    // Cache only successful resolutions — a transient git failure must not pin the
+    // degraded basename fallback (re-introducing the worktree bug) for the whole TTL.
+    cache.set(cwd, { info, at: Date.now() });
   } catch {
-    // not a git repo, git missing, or the path is gone — keep the basename fallback
+    // not a git repo, git missing, or the path is gone — return the basename fallback
+    // WITHOUT caching, so a transient failure just retries on the next event.
   }
 
-  cache.set(cwd, { info, at: Date.now() });
   return info;
 }
