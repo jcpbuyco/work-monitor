@@ -48,6 +48,25 @@ describe("POST /events", () => {
     expect(res.status).toBe(204);
   });
 
+  it("surfaces recent tool calls (newest first) in /api/state activity", async () => {
+    const post = (type: string, body: object) =>
+      fetch(`${base}/events?type=${type}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    await post("session_start", { session_id: "sa", cwd: "/x/repo" });
+    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Read" });
+    await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash" });
+    await post("activity", { session_id: "sa", cwd: "/x/repo" }); // no tool_name — excluded
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(Array.isArray(state.activity)).toBe(true);
+    const tools = state.activity.map((a: any) => a.tool);
+    expect(tools).toEqual(["Bash", "Read"]); // newest first, untagged event dropped
+    expect(state.activity[0]).toHaveProperty("id");
+    expect(state.activity[0].session_id).toBe("sa");
+  });
+
   it("an activity heartbeat brings an idle session back to working", async () => {
     const post = (type: string, body: object) =>
       fetch(`${base}/events?type=${type}`, {

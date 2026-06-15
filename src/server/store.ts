@@ -81,6 +81,25 @@ export class Store {
       .all() as Session[];
   }
 
+  /** Most recent tool-call activity across all sessions, newest first.
+   *  Parses `tool_name` out of stored `activity` event payloads. */
+  recentActivity(limit: number): { id: number; session_id: string; tool: string; at: number }[] {
+    const rows = this.db
+      .query(
+        `SELECT id, session_id, payload, at FROM events WHERE type = 'activity' ORDER BY at DESC LIMIT $limit`
+      )
+      .all({ $limit: limit }) as { id: number; session_id: string; payload: string | null; at: number }[];
+    const out: { id: number; session_id: string; tool: string; at: number }[] = [];
+    for (const r of rows) {
+      let tool: string | null = null;
+      try {
+        tool = r.payload ? ((JSON.parse(r.payload) as { tool_name?: string }).tool_name ?? null) : null;
+      } catch {}
+      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, at: r.at });
+    }
+    return out;
+  }
+
   sweepStale(now: number, thresholdMs: number): string[] {
     const rows = this.db
       .query(

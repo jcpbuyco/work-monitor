@@ -11,6 +11,7 @@ const state: State = {
   todos: [
     { id: "t1", title: "t", note: "", for_who: null, status: "todo", origin_project: null, branch: null, links: null, position: 0, updated_at: 0 },
   ],
+  activity: [],
 };
 
 beforeEach(() => {

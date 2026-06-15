@@ -48,12 +48,22 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(s);
 }
 
+const ACTIVITY_LIMIT = 24;
+
 export function createApp(deps: AppDeps) {
   const now = deps.now ?? (() => Date.now());
   const { store, sse } = deps;
 
+  function buildState() {
+    return {
+      sessions: store.listSessions(),
+      todos: store.listTodos(),
+      activity: store.recentActivity(ACTIVITY_LIMIT),
+    };
+  }
+
   function pushState(): void {
-    sse.broadcast("state", { sessions: store.listSessions(), todos: store.listTodos() });
+    sse.broadcast("state", buildState());
   }
 
   return async function app(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -102,7 +112,7 @@ export function createApp(deps: AppDeps) {
 
       // --- full state snapshot ---
       if (method === "GET" && path === "/api/state") {
-        json(res, 200, { sessions: store.listSessions(), todos: store.listTodos() });
+        json(res, 200, buildState());
         return;
       }
 
@@ -113,7 +123,7 @@ export function createApp(deps: AppDeps) {
           "cache-control": "no-cache",
           connection: "keep-alive",
         });
-        res.write(`event: state\ndata: ${JSON.stringify({ sessions: store.listSessions(), todos: store.listTodos() })}\n\n`);
+        res.write(`event: state\ndata: ${JSON.stringify(buildState())}\n\n`);
         sse.add(res);
         return;
       }

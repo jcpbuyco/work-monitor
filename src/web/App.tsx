@@ -4,7 +4,7 @@ import type { State } from "./types.ts";
 import { Board } from "./components/Board.tsx";
 
 export default function App() {
-  const [state, setState] = useState<State>({ sessions: [], todos: [] });
+  const [state, setState] = useState<State>({ sessions: [], todos: [], activity: [] });
 
   useEffect(() => {
     fetchState().then(setState).catch(() => {});

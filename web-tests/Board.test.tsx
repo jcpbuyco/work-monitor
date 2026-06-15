@@ -13,6 +13,7 @@ const state: State = {
   todos: [
     { id: "t1", title: "Hand off spec", note: "branch feat/pay", for_who: "Maria", status: "todo", origin_project: "bov", branch: "feat/pay", links: null, position: 0, updated_at: Date.now() },
   ],
+  activity: [],
 };
 
 describe("Board", () => {
@@ -24,5 +25,13 @@ describe("Board", () => {
     expect(screen.getByText("Hand off spec")).toBeDefined();
     expect(screen.getByText("→ Maria")).toBeDefined();
     expect(screen.getByText(/Done \(0\)/)).toBeDefined();
+  });
+
+  it("renders the live activity feed with recent tool calls", () => {
+    const withActivity: State = { ...state, activity: [{ id: 1, session_id: "s1", tool: "Bash", at: Date.now() }] };
+    render(<Board state={withActivity} />);
+    expect(screen.getByText("⚡ Live activity")).toBeDefined();
+    // the Bash call shows in the feed and as the working session's current tool
+    expect(screen.getAllByText("Bash").length).toBeGreaterThan(0);
   });
 });

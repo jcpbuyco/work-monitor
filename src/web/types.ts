@@ -26,7 +26,15 @@ export interface Todo {
   updated_at: number;
 }
 
+export interface Activity {
+  id: number;
+  session_id: string;
+  tool: string;
+  at: number;
+}
+
 export interface State {
   sessions: Session[];
   todos: Todo[];
+  activity: Activity[];
 }
