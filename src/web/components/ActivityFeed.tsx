@@ -23,13 +23,18 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
         </span>
       </div>
 
-      <div className="max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl border border-border bg-card/50">
+      <div className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5">
         {rows.length === 0 ? (
-          <div className="px-3 py-6 text-center text-2xs text-muted-foreground">Waiting for tool activity…</div>
+          <div className="rounded-xl border border-border bg-card/50 px-3 py-6 text-center text-2xs text-muted-foreground">
+            Waiting for tool activity…
+          </div>
         ) : (
-          <ul className="divide-y divide-border/60">
+          <ul className="space-y-2">
             {rows.map((a) => (
-              <li key={a.id} className="wm-row-in px-3 py-2 font-mono text-2xs">
+              <li
+                key={a.id}
+                className="wm-row-in rounded-lg border border-border bg-card/60 px-3 py-2 font-mono text-2xs shadow-card transition hover:bg-card-hover"
+              >
                 <div className="flex items-center gap-2">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(a.tool)}`} />
                   <span className="shrink-0 font-semibold text-foreground">{prettyTool(a.tool)}</span>
