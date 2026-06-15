@@ -55,5 +55,5 @@ setInterval(() => {
 }, SWEEP_INTERVAL_MS);
 
 server.listen(PORT, HOST, () => {
-  console.log(`wm-server listening on http://${HOST}:${PORT}`);
+  console.log(`am-server listening on http://${HOST}:${PORT}`);
 });

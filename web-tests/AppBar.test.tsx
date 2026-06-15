@@ -29,7 +29,7 @@ describe("AppBar", () => {
   });
 
   it("toggles the dark class when the theme button is clicked", () => {
-    localStorage.setItem("wm-theme", "light");
+    localStorage.setItem("am-theme", "light");
     render(<AppBar state={state} />);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     fireEvent.click(screen.getByLabelText("Toggle theme"));

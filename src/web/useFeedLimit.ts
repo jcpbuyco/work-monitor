@@ -5,7 +5,7 @@ const DEFAULT = 10;
 
 function resolve(): number {
   try {
-    const n = Number(localStorage.getItem("wm-feed-limit"));
+    const n = Number(localStorage.getItem("am-feed-limit"));
     if ((FEED_LIMITS as readonly number[]).includes(n)) return n;
   } catch {}
   return DEFAULT;
@@ -18,7 +18,7 @@ export function useFeedLimit() {
   const setLimit = useCallback((n: number) => {
     setLimitState(n);
     try {
-      localStorage.setItem("wm-feed-limit", String(n));
+      localStorage.setItem("am-feed-limit", String(n));
     } catch {}
   }, []);
 

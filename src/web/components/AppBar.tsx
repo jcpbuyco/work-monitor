@@ -5,7 +5,7 @@ import { useMotion } from "../useMotion.ts";
 
 function Count({ dotClass, label, n }: { dotClass: string; label: string; n: number }) {
   return (
-    <span className="wm-count inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground">
+    <span className="am-count inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground">
       <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
       <span>{n} {label}</span>
     </span>
@@ -27,7 +27,7 @@ export function AppBar({ state }: { state: State }) {
           className="h-2.5 w-2.5 rounded-[3px] bg-primary"
           style={{ boxShadow: "0 0 0 3px hsl(var(--primary) / 0.18)" }}
         />
-        work-monitor
+        agent-monitor
       </div>
       <div className="flex flex-wrap gap-1.5">
         <Count key={`w-${working}`} dotClass="bg-working" label="working" n={working} />

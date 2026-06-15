@@ -5,7 +5,7 @@ const DEFAULT = 16;
 
 function resolveSize(): number {
   try {
-    const s = Number(localStorage.getItem("wm-text-size"));
+    const s = Number(localStorage.getItem("am-text-size"));
     if (SIZES.includes(s)) return s;
   } catch {}
   return DEFAULT;
@@ -24,7 +24,7 @@ export function useTextSize() {
       const from = i < 0 ? SIZES.indexOf(DEFAULT) : i;
       const next = SIZES[Math.min(SIZES.length - 1, Math.max(0, from + dir))];
       try {
-        localStorage.setItem("wm-text-size", String(next));
+        localStorage.setItem("am-text-size", String(next));
       } catch {}
       return next;
     });

@@ -1,4 +1,4 @@
-# work-monitor
+# agent-monitor
 
 Live dashboard for parallel Claude Code sessions + agent-authored todos.
 
@@ -39,12 +39,12 @@ An agent can call `list_todos()` (optionally `list_todos({ "status": "todo" })`)
 
 ## Architecture
 
-One long-running Bun process (`wm-server`, on `127.0.0.1:4317`) exposes:
+One long-running Bun process (`am-server`, on `127.0.0.1:4317`) exposes:
 - a **REST API** — `POST /events` (hook ingestion), `GET /api/state`, `GET /api/stream` (SSE), `/api/todos` CRUD;
 - an **MCP endpoint** at `/mcp` (Streamable HTTP) with tools `add_todo`, `list_todos`, `update_todo`;
 - the built **dashboard** (React + Vite + Tailwind).
 
-State lives in SQLite (`~/.local/share/work-monitor/work-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events: a tool-use heartbeat (`PostToolUse`) keeps actively-working sessions marked **working**, and a staleness sweep retires ones that go silent for 10 minutes (e.g. a closed terminal).
+State lives in SQLite (`~/.local/share/agent-monitor/agent-monitor.sqlite`, WAL mode). Session status is driven by a small state machine over hook events: a tool-use heartbeat (`PostToolUse`) keeps actively-working sessions marked **working**, and a staleness sweep retires ones that go silent for 10 minutes (e.g. a closed terminal).
 
 ## Install / activate
 
@@ -56,8 +56,8 @@ bun run setup     # installs systemd user service, merges hooks, registers MCP
 
 `bun run setup` will:
 - install + start a `systemd --user` service running the server on `127.0.0.1:4317`,
-- merge hook entries into `~/.claude/settings.json` (it backs the file up to `settings.json.wm-backup` first, and is idempotent — safe to re-run),
-- register the `work-monitor` MCP server at user scope.
+- merge hook entries into `~/.claude/settings.json` (it backs the file up to `settings.json.am-backup` first, and is idempotent — safe to re-run),
+- register the `agent-monitor` MCP server at user scope.
 
 Then open **http://127.0.0.1:4317** and pin the tab. **Restart any open Claude Code sessions** so they pick up the new hooks + MCP.
 
@@ -69,18 +69,18 @@ Then open **http://127.0.0.1:4317** and pin the tab. **Restart any open Claude C
 
 ## Config
 
-- `WM_PORT` (default `4317`)
-- `WM_DB_PATH` (default `~/.local/share/work-monitor/work-monitor.sqlite`)
+- `AM_PORT` (default `4317`)
+- `AM_DB_PATH` (default `~/.local/share/agent-monitor/agent-monitor.sqlite`)
 
 ## Uninstall
 
 ```bash
-systemctl --user disable --now wm-server.service
-claude mcp remove work-monitor --scope user
-# then restore ~/.claude/settings.json from settings.json.wm-backup
-# (or remove the work-monitor hook entries by hand)
+systemctl --user disable --now am-server.service
+claude mcp remove agent-monitor --scope user
+# then restore ~/.claude/settings.json from settings.json.am-backup
+# (or remove the agent-monitor hook entries by hand)
 ```
 
 ## Roadmap (v2)
 
-The server is already fully HTTP (REST + HTTP-transport MCP) and the dashboard is responsive, so the planned cloud/phone access is mostly "host the server + add a bearer token + login" — not a rewrite. See `docs/superpowers/specs/2026-06-14-work-monitor-design.md`.
+The server is already fully HTTP (REST + HTTP-transport MCP) and the dashboard is responsive, so the planned cloud/phone access is mostly "host the server + add a bearer token + login" — not a rewrite. See `docs/superpowers/specs/2026-06-14-agent-monitor-design.md`.

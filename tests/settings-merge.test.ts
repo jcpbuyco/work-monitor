@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { mergeHooks, HOOK_EVENTS } from "../src/cli/settings-merge.ts";
 
-const HOOK = "/abs/src/hooks/wm-hook.sh";
+const HOOK = "/abs/src/hooks/am-hook.sh";
 
 describe("mergeHooks", () => {
   it("creates a hooks key when absent, one entry per event", () => {
@@ -9,7 +9,7 @@ describe("mergeHooks", () => {
     for (const [evt] of HOOK_EVENTS) {
       expect(out.hooks[evt]).toBeDefined();
       const cmd = out.hooks[evt][0].hooks[0].command;
-      expect(cmd).toContain("wm-hook.sh");
+      expect(cmd).toContain("am-hook.sh");
     }
   });
 
@@ -20,14 +20,14 @@ describe("mergeHooks", () => {
     const out = mergeHooks(existing, HOOK);
     const stopCmds = out.hooks.Stop.flatMap((g: any) => g.hooks.map((h: any) => h.command));
     expect(stopCmds).toContain("other.sh");
-    expect(stopCmds.some((c: string) => c.includes("wm-hook.sh"))).toBe(true);
+    expect(stopCmds.some((c: string) => c.includes("am-hook.sh"))).toBe(true);
   });
 
   it("is idempotent — re-merging does not duplicate our entries", () => {
     const once = mergeHooks({}, HOOK);
     const twice = mergeHooks(once, HOOK);
     const stopWm = twice.hooks.Stop.flatMap((g: any) => g.hooks)
-      .filter((h: any) => h.command.includes("wm-hook.sh"));
+      .filter((h: any) => h.command.includes("am-hook.sh"));
     expect(stopWm.length).toBe(1);
   });
 
@@ -48,7 +48,7 @@ describe("mergeHooks", () => {
     const twice = mergeHooks(mergeHooks({}, HOOK), HOOK);
     const wm = twice.hooks.PostToolUse
       .flatMap((g: any) => g.hooks)
-      .filter((h: any) => h.command.includes("wm-hook.sh"));
+      .filter((h: any) => h.command.includes("am-hook.sh"));
     expect(wm.length).toBe(2);
   });
 });

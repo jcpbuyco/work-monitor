@@ -6,7 +6,7 @@ import { TodoModal } from "./TodoModal.tsx";
 import { DoneDialog } from "./DoneDialog.tsx";
 
 export function TodosSection({ todos }: { todos: Todo[] }) {
-  const [collapsed, toggleCollapsed] = usePersistedToggle("wm-todos-collapsed");
+  const [collapsed, toggleCollapsed] = usePersistedToggle("am-todos-collapsed");
   const [doneOpen, setDoneOpen] = useState(false);
   const [selected, setSelected] = useState<Todo | null>(null);
 
@@ -31,7 +31,7 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
       </div>
 
       {!collapsed && (
-        <div className="wm-fade-in grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
+        <div className="am-fade-in grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
           <div className="sm:col-span-2">
             {open.length === 0 ? (
               <div className="rounded-xl border border-border bg-card/50 p-4 text-2xs text-muted-foreground">

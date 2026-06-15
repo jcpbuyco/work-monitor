@@ -5,7 +5,7 @@ import { prettyTool, toolDot, formatDur } from "../tools.ts";
 const TOP = 8;
 
 export function ToolStats({ stats }: { stats: ToolStat[] }) {
-  const [collapsed, toggle] = usePersistedToggle("wm-stats-collapsed");
+  const [collapsed, toggle] = usePersistedToggle("am-stats-collapsed");
   const total = stats.reduce((n, s) => n + s.calls, 0);
   if (total === 0) return null;
 

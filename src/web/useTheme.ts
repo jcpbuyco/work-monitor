@@ -4,7 +4,7 @@ export type Theme = "light" | "dark";
 
 function resolveTheme(): Theme {
   try {
-    const stored = localStorage.getItem("wm-theme");
+    const stored = localStorage.getItem("am-theme");
     if (stored === "light" || stored === "dark") return stored;
   } catch {}
   try {
@@ -26,7 +26,7 @@ export function useTheme() {
     setTheme((prev) => {
       const next: Theme = prev === "dark" ? "light" : "dark";
       try {
-        localStorage.setItem("wm-theme", next);
+        localStorage.setItem("am-theme", next);
       } catch {}
       return next;
     });

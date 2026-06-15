@@ -26,7 +26,7 @@ export function SessionCard({
   (cardStyle as Record<string, string>).viewTransitionName = `vt-s-${s.id}`;
   return (
     <div
-      className="wm-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
       style={cardStyle}
     >
       <div className="font-medium text-foreground">{s.project}</div>
@@ -60,7 +60,7 @@ export function SessionCard({
         </div>
       )}
       {s.branch && <div className="mt-2 text-2xs text-muted-foreground/70">⎇ {s.branch}</div>}
-      {isWorking && <div className="wm-shimmer mt-2 h-0.5 w-full rounded-full bg-working/15" />}
+      {isWorking && <div className="am-shimmer mt-2 h-0.5 w-full rounded-full bg-working/15" />}
       <div className="mt-2 text-2xs text-muted-foreground/70">{ago(s.last_activity_at)}</div>
     </div>
   );

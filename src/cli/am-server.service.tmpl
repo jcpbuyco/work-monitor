@@ -1,12 +1,12 @@
 [Unit]
-Description=work-monitor server
+Description=agent-monitor server
 After=default.target
 
 [Service]
 Type=simple
 ExecStart=__BUN__ run __PROJECT__/src/server/index.ts
 Restart=on-failure
-Environment=WM_PORT=__PORT__
+Environment=AM_PORT=__PORT__
 
 [Install]
 WantedBy=default.target

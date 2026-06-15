@@ -55,14 +55,14 @@ export function makeTools(deps: McpDeps) {
 }
 
 function buildServer(deps: McpDeps): McpServer {
-  const server = new McpServer({ name: "work-monitor", version: "0.1.0" });
+  const server = new McpServer({ name: "agent-monitor", version: "0.1.0" });
   const tools = makeTools(deps);
 
   server.registerTool(
     "add_todo",
     {
       description:
-        "Record a todo on the work-monitor dashboard — any task, reminder, or hand-off worth not forgetting, for yourself or someone else (not limited to engineer hand-offs). Use whenever you or the user want something tracked on the board. Put any useful context in note.",
+        "Record a todo on the agent-monitor dashboard — any task, reminder, or hand-off worth not forgetting, for yourself or someone else (not limited to engineer hand-offs). Use whenever you or the user want something tracked on the board. Put any useful context in note.",
       inputSchema: {
         title: z.string().describe("Short title, e.g. 'Run bun run setup' or 'Hand off payments spec'"),
         note: z.string().optional().describe("Optional context — what's done, what's left, paths"),
@@ -81,7 +81,7 @@ function buildServer(deps: McpDeps): McpServer {
     "list_todos",
     {
       description:
-        "List todos on the work-monitor dashboard (optionally filtered by status) — e.g. to avoid creating duplicates or to check what's still open.",
+        "List todos on the agent-monitor dashboard (optionally filtered by status) — e.g. to avoid creating duplicates or to check what's still open.",
       inputSchema: { status: z.enum(["todo", "done"]).optional() },
     },
     async (args) => ({
@@ -93,7 +93,7 @@ function buildServer(deps: McpDeps): McpServer {
     "update_todo",
     {
       description:
-        "Update a todo on the work-monitor dashboard — mark it done (or back to todo), or amend its note.",
+        "Update a todo on the agent-monitor dashboard — mark it done (or back to todo), or amend its note.",
       inputSchema: {
         id: z.string(),
         status: z.enum(["todo", "done"]).optional(),

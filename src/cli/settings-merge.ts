@@ -31,7 +31,7 @@ export function mergeHooks(settings: Settings, hookPath: string): Settings & { h
     const cmd = command(hookPath, type);
     const groups = [...(out.hooks[event] ?? [])];
     // Dedupe by exact command so re-running setup is idempotent, while still
-    // allowing several wm-hook entries on one event (e.g. two PostToolUse hooks).
+    // allowing several am-hook entries on one event (e.g. two PostToolUse hooks).
     const already = groups.some((g) => g.hooks?.some((h) => h.command === cmd));
     if (!already) {
       groups.push({ matcher, hooks: [{ type: "command", command: cmd }] });

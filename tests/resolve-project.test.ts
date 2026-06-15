@@ -10,7 +10,7 @@ describe("repoNameFromGitDir", () => {
     expect(repoNameFromGitDir("/home/x/projects/oxygenrx-frontend")).toBe("oxygenrx-frontend");
   });
   it("uses the parent when the common dir is a .git subdir (normal repo)", () => {
-    expect(repoNameFromGitDir("/home/x/projects/work-monitor/.git")).toBe("work-monitor");
+    expect(repoNameFromGitDir("/home/x/projects/agent-monitor/.git")).toBe("agent-monitor");
   });
   it("uses the parent when the common dir is a .bare subdir", () => {
     expect(repoNameFromGitDir("/home/x/projects/myrepo/.bare")).toBe("myrepo");
@@ -30,7 +30,7 @@ describe("resolveRepoInfo", () => {
   let detached: string;
 
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "wm-wt-"));
+    dir = mkdtempSync(join(tmpdir(), "am-wt-"));
     repo = join(dir, "myproj");
     const G = (...args: string[]) =>
       execFileSync("git", args, { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });

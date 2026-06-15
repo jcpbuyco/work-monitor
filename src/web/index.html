@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>work-monitor</title>
+    <title>agent-monitor</title>
     <script>
       (function () {
         try {
-          var t = localStorage.getItem('wm-theme');
+          var t = localStorage.getItem('am-theme');
           if (t !== 'light' && t !== 'dark') {
             t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
               ? 'light'
@@ -20,7 +20,7 @@
     <script>
       (function () {
         try {
-          var s = Number(localStorage.getItem('wm-text-size'));
+          var s = Number(localStorage.getItem('am-text-size'));
           if ([14, 16, 18, 20, 22].indexOf(s) !== -1) document.documentElement.style.fontSize = s + 'px';
         } catch (e) {}
       })();
@@ -29,9 +29,9 @@
       (function () {
         // Motion is ON by default for this dashboard; only off when explicitly disabled.
         try {
-          if (localStorage.getItem('wm-motion') !== 'off') document.documentElement.classList.add('wm-anim');
+          if (localStorage.getItem('am-motion') !== 'off') document.documentElement.classList.add('am-anim');
         } catch (e) {
-          document.documentElement.classList.add('wm-anim');
+          document.documentElement.classList.add('am-anim');
         }
       })();
     </script>

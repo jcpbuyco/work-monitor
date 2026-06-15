@@ -3,13 +3,13 @@ import { flushSync } from "react-dom";
 type DocWithVT = Document & { startViewTransition?: (cb: () => void) => unknown };
 
 /** View transitions are used only when supported AND motion is enabled (the
- *  `html.wm-anim` class set by the Motion toggle, which overrides the OS
+ *  `html.am-anim` class set by the Motion toggle, which overrides the OS
  *  prefers-reduced-motion setting for this dashboard). */
 export function canViewTransition(): boolean {
   return (
     typeof document !== "undefined" &&
     typeof (document as DocWithVT).startViewTransition === "function" &&
-    document.documentElement.classList.contains("wm-anim")
+    document.documentElement.classList.contains("am-anim")
   );
 }
 
