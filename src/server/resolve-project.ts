@@ -45,6 +45,7 @@ export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
       ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD"],
       { timeout: 1000 }
     );
+    // git rev-parse prints one line per flag, in argument order: [git-common-dir, abbrev-ref HEAD]
     const [commonDir = "", abbrevRef = ""] = stdout.split("\n").map((l) => l.trim());
     const project = repoNameFromGitDir(commonDir) || info.project;
     let branch: string | null = null;

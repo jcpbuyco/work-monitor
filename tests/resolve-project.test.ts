@@ -27,6 +27,7 @@ describe("resolveRepoInfo", () => {
   let dir: string;
   let repo: string;
   let worktree: string;
+  let detached: string;
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "wm-wt-"));
@@ -37,6 +38,8 @@ describe("resolveRepoInfo", () => {
     G("-C", repo, "commit", "-q", "--allow-empty", "-m", "init");
     worktree = join(repo, "feature", "my-branch");
     G("-C", repo, "worktree", "add", "-q", "-b", "feature/my-branch", worktree);
+    detached = join(repo, "detached");
+    G("-C", repo, "worktree", "add", "-q", "--detach", detached);
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -51,5 +54,10 @@ describe("resolveRepoInfo", () => {
   });
   it("falls back to { basename, null } for a non-git path", async () => {
     expect(await resolveRepoInfo("/no/such/dir/foobar")).toEqual({ project: "foobar", branch: null });
+  });
+  it("uses the short SHA as the branch for a detached HEAD", async () => {
+    const info = await resolveRepoInfo(detached);
+    expect(info.project).toBe("myproj");
+    expect(info.branch).toMatch(/^[0-9a-f]{7,40}$/);
   });
 });
