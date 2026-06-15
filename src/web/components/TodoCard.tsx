@@ -11,7 +11,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
         <div className="flex min-w-0 items-center gap-2.5">
           <button
             type="button"
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-sm leading-none text-muted-foreground transition hover:border-done/40 hover:bg-done/10 hover:text-done focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-done/50"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs leading-none text-muted-foreground transition hover:border-done/40 hover:bg-done/10 hover:text-done focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-done/50"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -26,7 +26,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
         </div>
         <button
           type="button"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-sm leading-none text-muted-foreground transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs leading-none text-muted-foreground transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
