@@ -37,6 +37,7 @@ export function SessionCard({ s }: { s: Session }) {
           ⚠ {s.attention_reason}
         </div>
       )}
+      {s.branch && <div className="mt-2 text-2xs text-muted-foreground/70">⎇ {s.branch}</div>}
       <div className="mt-2 text-2xs text-muted-foreground/70">{ago(s.last_activity_at)}</div>
     </div>
   );
