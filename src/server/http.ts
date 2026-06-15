@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { reduceEvent } from "./events.ts";
+import { resolveProjectName } from "./resolve-project.ts";
 import type { EventType, HookEvent, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 
@@ -83,6 +84,9 @@ export function createApp(deps: AppDeps) {
         }
         const t = now();
         const { sessionId, patch } = reduceEvent(event, t);
+        // Refine the project name from git so a worktree reports its repo, not the
+        // branch directory the cwd basename gives (reduceEvent stays pure).
+        if (event.cwd) patch.project = await resolveProjectName(event.cwd);
         store.applyEvent(sessionId, patch, t);
         store.db
           .query(`INSERT INTO events (session_id, type, payload, at) VALUES ($s, $t, $p, $a)`)
