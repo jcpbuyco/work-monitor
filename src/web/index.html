@@ -17,6 +17,14 @@
         } catch (e) {}
       })();
     </script>
+    <script>
+      (function () {
+        try {
+          var s = Number(localStorage.getItem('wm-text-size'));
+          if ([14, 16, 18, 20, 22].indexOf(s) !== -1) document.documentElement.style.fontSize = s + 'px';
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

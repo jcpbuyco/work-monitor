@@ -22,6 +22,9 @@ export default {
           foreground: "hsl(var(--muted-foreground) / <alpha-value>)",
         },
       },
+      fontSize: {
+        "2xs": "0.6875rem",
+      },
       boxShadow: {
         card: "0 1px 2px hsl(var(--shadow) / var(--shadow-a))",
         "card-hover": "0 4px 14px hsl(var(--shadow) / var(--shadow-a))",

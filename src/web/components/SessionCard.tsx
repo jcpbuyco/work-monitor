@@ -23,7 +23,7 @@ export function SessionCard({ s }: { s: Session }) {
     >
       <div className="font-medium text-foreground">{s.project}</div>
       <div
-        className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold"
+        className="mt-0.5 inline-flex items-center gap-1.5 text-2xs font-semibold"
         style={{ color: `hsl(${st.accent})` }}
       >
         <span className={`h-1.5 w-1.5 rounded-full ${st.dot}${st.pulse ? " animate-pulse" : ""}`} />
@@ -37,7 +37,7 @@ export function SessionCard({ s }: { s: Session }) {
           ⚠ {s.attention_reason}
         </div>
       )}
-      <div className="mt-2 text-[11px] text-muted-foreground/70">{ago(s.last_activity_at)}</div>
+      <div className="mt-2 text-2xs text-muted-foreground/70">{ago(s.last_activity_at)}</div>
     </div>
   );
 }
