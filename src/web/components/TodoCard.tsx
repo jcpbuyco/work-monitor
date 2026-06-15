@@ -12,25 +12,27 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            className="text-xs text-muted-foreground/40 transition hover:text-done focus-visible:text-done"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-muted text-sm leading-none text-muted-foreground transition hover:border-done/40 hover:bg-done/10 hover:text-done focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-done/50"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               patchTodo(t.id, { status: "done" });
             }}
             aria-label="Mark done"
+            title="Mark done"
           >
             ✓
           </button>
           <button
             type="button"
-            className="text-xs text-muted-foreground/40 transition hover:text-red-400 focus-visible:text-red-400"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-muted text-sm leading-none text-muted-foreground transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               deleteTodo(t.id);
             }}
             aria-label="Delete"
+            title="Delete"
           >
             ✕
           </button>
