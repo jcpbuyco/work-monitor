@@ -61,6 +61,8 @@ export function migrate(db: Database): void {
       cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
       cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0,
       cost_usd REAL NOT NULL,
+      project TEXT,
+      branch TEXT,
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id);
@@ -76,6 +78,14 @@ export function migrate(db: Database): void {
   }
   if (!sessionCols.some((c) => c.name === "usage_offset")) {
     db.exec("ALTER TABLE sessions ADD COLUMN usage_offset INTEGER NOT NULL DEFAULT 0;");
+  }
+  // Idempotent: stamp project/branch onto usage rows for historical attribution.
+  const usageCols = db.query("PRAGMA table_info(usage)").all() as { name: string }[];
+  if (!usageCols.some((c) => c.name === "project")) {
+    db.exec("ALTER TABLE usage ADD COLUMN project TEXT;");
+  }
+  if (!usageCols.some((c) => c.name === "branch")) {
+    db.exec("ALTER TABLE usage ADD COLUMN branch TEXT;");
   }
   // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
   db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);

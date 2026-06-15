@@ -213,12 +213,17 @@ export class Store {
     at: number;
     cost: number;
   }): boolean {
+    // Stamp the session's then-current project/branch so historical cost can be
+    // attributed without a join (and survives the session row being mutated later).
+    // Idempotent via the message_uuid key: the stamp is captured at first ingestion.
     const res = this.db
       .query(
         `INSERT OR IGNORE INTO usage
            (message_uuid, session_id, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, at)
-         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost, $at)`
+            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at)
+         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
+                 (SELECT project FROM sessions WHERE id = $s),
+                 (SELECT branch FROM sessions WHERE id = $s), $at)`
       )
       .run({
         $u: u.uuid,

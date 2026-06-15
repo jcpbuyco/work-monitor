@@ -57,6 +57,20 @@ describe("Store usage rows", () => {
     ]);
   });
 
+  it("stamps the session's current project and branch onto the usage row", () => {
+    store.applyEvent("s1", { status: "working", project: "acme", branch: "feat/x", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-opus-4-8", tokens: tok(10), at: 1000, cost: 0.5 });
+    const row = store.db.query("SELECT project, branch FROM usage WHERE message_uuid = 'm1'").get();
+    expect(row).toEqual({ project: "acme", branch: "feat/x" });
+  });
+
+  it("stamps a null branch when the session is on no branch", () => {
+    store.applyEvent("s2", { status: "working", project: "acme", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "m2", sessionId: "s2", model: "claude-opus-4-8", tokens: tok(10), at: 1000, cost: 0.5 });
+    const row = store.db.query("SELECT project, branch FROM usage WHERE message_uuid = 'm2'").get();
+    expect(row).toEqual({ project: "acme", branch: null });
+  });
+
   it("sums all token types into perSession.tokens", () => {
     store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
     store.recordUsage({
