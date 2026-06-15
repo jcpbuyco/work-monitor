@@ -27,8 +27,11 @@ function installService() {
   step(`Wrote systemd unit to ${join(unitDir, "am-server.service")}`);
   try {
     execFileSync("systemctl", ["--user", "daemon-reload"]);
-    execFileSync("systemctl", ["--user", "enable", "--now", "am-server.service"]);
-    step("Enabled + started am-server.service");
+    execFileSync("systemctl", ["--user", "enable", "am-server.service"]);
+    // restart (not `enable --now`) so a re-run picks up a changed unit/path
+    // even when the service is already running.
+    execFileSync("systemctl", ["--user", "restart", "am-server.service"]);
+    step("Enabled + (re)started am-server.service");
   } catch (e) {
     console.warn("Could not enable service automatically:", String(e));
     console.warn("Run: systemctl --user enable --now am-server.service");
