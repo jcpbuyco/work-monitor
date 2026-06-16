@@ -349,6 +349,26 @@ export class Store {
     return rows.map((r) => ({ project: r.project, branch: r.branch, costUsd: r.cost, tokens: r.tokens }));
   }
 
+  /** Cost + tokens grouped by (project, branch, local day "YYYY-MM-DD"), newest
+   *  day first. `range` filters on the message timestamp (since inclusive, until
+   *  exclusive); omit for all-time. Unattributed usage buckets under 'unknown';
+   *  branch stays null when absent. Client re-sorts as needed — this order is a
+   *  stable baseline. */
+  costDaily(
+    range: { since?: number; until?: number } = {}
+  ): { project: string; branch: string | null; day: string; costUsd: number; tokens: number }[] {
+    const { where, params } = rangeClause(range);
+    const rows = this.db
+      .query(
+        `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
+                strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime') AS day,
+                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+         FROM usage ${where} GROUP BY usage.project, usage.branch, day ORDER BY day DESC, cost DESC`
+      )
+      .all(params) as { project: string; branch: string | null; day: string; cost: number; tokens: number }[];
+    return rows.map((r) => ({ project: r.project, branch: r.branch, day: r.day, costUsd: r.cost, tokens: r.tokens }));
+  }
+
   createTodo(input: CreateTodoInput, now: number): Todo {
     const id = randomUUID();
     const nextPos =

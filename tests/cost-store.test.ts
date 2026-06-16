@@ -123,4 +123,46 @@ describe("Store usage rows", () => {
     });
     expect(store.costSummary(0).perSession.a.tokens).toBe(70);
   });
+
+  it("groups cost + tokens by (project, branch, local day)", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    // two rows on the SAME instant (same day) + one 26h later (a different
+    // calendar day in ANY timezone, DST included).
+    store.recordUsage({ uuid: "d1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: T, cost: 1.0 });
+    store.recordUsage({ uuid: "d2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 2.0 });
+    store.recordUsage({ uuid: "d3", sessionId: "a", model: "claude-opus-4-8", tokens: tok(5), at: T + 26 * 3600 * 1000, cost: 4.0 });
+
+    const rows = store.costDaily();
+    expect(rows.length).toBe(2); // two distinct local days for alpha·main
+    for (const r of rows) {
+      expect(r.project).toBe("alpha");
+      expect(r.branch).toBe("main");
+      expect(r.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    const days = new Set(rows.map((r) => r.day));
+    expect(days.size).toBe(2); // the two days differ
+    const sameDay = rows.find((r) => r.costUsd === 3.0); // 1.0 + 2.0 merged
+    expect(sameDay).toBeTruthy();
+    expect(sameDay!.tokens).toBe(10);
+  });
+
+  it("costDaily filters by time range (since inclusive, until exclusive)", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "r1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 1.0 });
+    store.recordUsage({ uuid: "r2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T + 26 * 3600 * 1000, cost: 2.0 });
+    const rows = store.costDaily({ since: T + 1 }); // excludes r1
+    expect(rows.length).toBe(1);
+    expect(rows[0].costUsd).toBeCloseTo(2.0, 6);
+  });
+
+  it("costDaily buckets unattributed usage under 'unknown' and keeps null branch", () => {
+    // usage for a session row that doesn't exist → project/branch stamp NULL
+    store.recordUsage({ uuid: "g1", sessionId: "ghost", model: "claude-opus-4-8", tokens: tok(0), at: 1_700_000_000_000, cost: 1.0 });
+    const rows = store.costDaily();
+    expect(rows.length).toBe(1);
+    expect(rows[0].project).toBe("unknown");
+    expect(rows[0].branch).toBeNull();
+  });
 });

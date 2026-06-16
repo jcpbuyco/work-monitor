@@ -138,6 +138,20 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
+      // --- daily cost breakdown (project/branch/day); pull, not streamed ---
+      if (method === "GET" && path === "/api/cost/daily") {
+        const num = (v: string | null): number | undefined => {
+          const n = v == null ? NaN : Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const rows = store.costDaily({
+          since: num(url.searchParams.get("since")),
+          until: num(url.searchParams.get("until")),
+        });
+        json(res, 200, { rows });
+        return;
+      }
+
       // --- SSE ---
       if (method === "GET" && path === "/api/stream") {
         res.writeHead(200, {

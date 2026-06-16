@@ -18,3 +18,24 @@ export function prettyModel(id: string): string {
   const ver = parts.slice(1).join(".");
   return ver ? `${name} ${ver}` : name;
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-06-16" → "Jun 16". Returns the input unchanged if it isn't an ISO day. */
+export function formatDay(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!m) return day;
+  return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
+}
+
+export type CostWindow = 7 | 14 | 30 | "all";
+
+/** `since` epoch-ms for a window: local midnight (N-1) days before `nowMs`.
+ *  "all" → no lower bound. `until` is always left open (up to now). */
+export function costDailyRange(window: CostWindow, nowMs: number): { since?: number } {
+  if (window === "all") return {};
+  const d = new Date(nowMs);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (window - 1));
+  return { since: d.getTime() };
+}
