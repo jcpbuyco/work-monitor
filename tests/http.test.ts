@@ -172,6 +172,32 @@ describe("MCP route without deps", () => {
   });
 });
 
+describe("GET /api/cost/daily", () => {
+  it("returns per-project/branch/day rows and respects since", async () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    const z = { input: 0, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 };
+    store.recordUsage({ uuid: "u1", sessionId: "a", model: "claude-opus-4-8", tokens: z, at: T, cost: 1.0 });
+    store.recordUsage({ uuid: "u2", sessionId: "a", model: "claude-opus-4-8", tokens: z, at: T + 26 * 3600 * 1000, cost: 2.0 });
+
+    const all = (await (await fetch(`${base}/api/cost/daily`)).json()) as any;
+    expect(all.rows.length).toBe(2);
+    expect(all.rows[0]).toHaveProperty("day");
+    expect(all.rows[0]).toHaveProperty("costUsd");
+
+    const ranged = (await (await fetch(`${base}/api/cost/daily?since=${T + 1}`)).json()) as any;
+    expect(ranged.rows.length).toBe(1);
+    expect(ranged.rows[0].costUsd).toBeCloseTo(2.0, 6);
+  });
+
+  it("ignores malformed since/until rather than erroring", async () => {
+    const res = await fetch(`${base}/api/cost/daily?since=abc&until=xyz`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(Array.isArray(body.rows)).toBe(true);
+  });
+});
+
 describe("todo input validation", () => {
   it("rejects malformed JSON on POST with 400", async () => {
     const res = await fetch(`${base}/api/todos`, {
