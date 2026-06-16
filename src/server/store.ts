@@ -9,6 +9,25 @@ const SESSION_COLS =
 const TODO_COLS =
   "id, title, note, for_who, status, origin_session_id, origin_project, branch, links, position, created_at, updated_at";
 
+/** SQL expression summing every token type on a `usage` row. */
+const TOKEN_SUM =
+  "(input_tokens + output_tokens + cache_read_tokens + cache_create_5m_tokens + cache_create_1h_tokens)";
+
+/** Build an optional `usage.at` time filter: `since` inclusive, `until` exclusive. */
+function rangeClause(range: { since?: number; until?: number }): { where: string; params: Record<string, number> } {
+  const conds: string[] = [];
+  const params: Record<string, number> = {};
+  if (range.since !== undefined) {
+    conds.push("at >= $since");
+    params.$since = range.since;
+  }
+  if (range.until !== undefined) {
+    conds.push("at < $until");
+    params.$until = range.until;
+  }
+  return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
+}
+
 function rowToTodo(row: Record<string, unknown>): Todo {
   return {
     ...(row as unknown as Todo),
@@ -213,12 +232,17 @@ export class Store {
     at: number;
     cost: number;
   }): boolean {
+    // Stamp the session's then-current project/branch so historical cost can be
+    // attributed without a join (and survives the session row being mutated later).
+    // Idempotent via the message_uuid key: the stamp is captured at first ingestion.
     const res = this.db
       .query(
         `INSERT OR IGNORE INTO usage
            (message_uuid, session_id, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, at)
-         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost, $at)`
+            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at)
+         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
+                 (SELECT project FROM sessions WHERE id = $s),
+                 (SELECT branch FROM sessions WHERE id = $s), $at)`
       )
       .run({
         $u: u.uuid,
@@ -261,11 +285,8 @@ export class Store {
     todayUsd: number;
     byModelToday: { model: string; costUsd: number }[];
   } {
-    const TOKENS =
-      "(input_tokens + output_tokens + cache_read_tokens + cache_create_5m_tokens + cache_create_1h_tokens)";
-
     const per = this.db
-      .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKENS} AS tokens FROM usage GROUP BY session_id`)
+      .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens FROM usage GROUP BY session_id`)
       .all() as { session_id: string; cost: number; tokens: number }[];
     const perSession: Record<string, { costUsd: number; tokens: number }> = {};
     for (const r of per) perSession[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
@@ -294,6 +315,38 @@ export class Store {
       todayUsd: today.c,
       byModelToday: byModel.map((r) => ({ model: r.model, costUsd: r.c })),
     };
+  }
+
+  /** Lifetime (or ranged) cost + tokens grouped by project, highest spend first.
+   *  Usage with no resolvable project (e.g. pre-attribution rows) buckets under
+   *  'unknown'. `range` filters on the message timestamp (since inclusive, until
+   *  exclusive); omit it for all-time. */
+  costByProject(range: { since?: number; until?: number } = {}): { project: string; costUsd: number; tokens: number }[] {
+    const { where, params } = rangeClause(range);
+    const rows = this.db
+      .query(
+        `SELECT COALESCE(usage.project, 'unknown') AS project, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+         FROM usage ${where} GROUP BY usage.project ORDER BY cost DESC, usage.project`
+      )
+      .all(params) as { project: string; cost: number; tokens: number }[];
+    return rows.map((r) => ({ project: r.project, costUsd: r.cost, tokens: r.tokens }));
+  }
+
+  /** Lifetime (or ranged) cost + tokens grouped by (project, branch), highest
+   *  spend first. Grouping by project too keeps same-named branches (e.g. `main`)
+   *  from merging across repos; `branch` stays null when the session had none. */
+  costByBranch(
+    range: { since?: number; until?: number } = {}
+  ): { project: string; branch: string | null; costUsd: number; tokens: number }[] {
+    const { where, params } = rangeClause(range);
+    const rows = this.db
+      .query(
+        `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
+                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+         FROM usage ${where} GROUP BY usage.project, usage.branch ORDER BY cost DESC, usage.project, usage.branch`
+      )
+      .all(params) as { project: string; branch: string | null; cost: number; tokens: number }[];
+    return rows.map((r) => ({ project: r.project, branch: r.branch, costUsd: r.cost, tokens: r.tokens }));
   }
 
   createTodo(input: CreateTodoInput, now: number): Todo {

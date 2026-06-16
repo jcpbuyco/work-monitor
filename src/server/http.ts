@@ -65,7 +65,12 @@ export function buildState(store: StoreType) {
     todos: store.listTodos(),
     activity: store.recentActivity(ACTIVITY_LIMIT),
     stats: store.toolStats(),
-    cost: store.costSummary(startOfLocalDay(Date.now())),
+    cost: {
+      ...store.costSummary(startOfLocalDay(Date.now())),
+      // All-time attribution for the historical breakdown panel.
+      byProject: store.costByProject(),
+      byBranch: store.costByBranch(),
+    },
   };
 }
 

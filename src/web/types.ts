@@ -53,11 +53,26 @@ export interface ModelCost {
   costUsd: number;
 }
 
+export interface ProjectCost {
+  project: string;
+  costUsd: number;
+  tokens: number;
+}
+
+export interface BranchCost {
+  project: string;
+  branch: string | null;
+  costUsd: number;
+  tokens: number;
+}
+
 export interface Cost {
   perSession: Record<string, SessionCost>;
   liveTotalUsd: number;
   todayUsd: number;
   byModelToday: ModelCost[];
+  byProject: ProjectCost[];
+  byBranch: BranchCost[];
 }
 
 export interface State {

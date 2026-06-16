@@ -57,6 +57,63 @@ describe("Store usage rows", () => {
     ]);
   });
 
+  it("stamps the session's current project and branch onto the usage row", () => {
+    store.applyEvent("s1", { status: "working", project: "acme", branch: "feat/x", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-opus-4-8", tokens: tok(10), at: 1000, cost: 0.5 });
+    const row = store.db.query("SELECT project, branch FROM usage WHERE message_uuid = 'm1'").get();
+    expect(row).toEqual({ project: "acme", branch: "feat/x" });
+  });
+
+  it("stamps a null branch when the session is on no branch", () => {
+    store.applyEvent("s2", { status: "working", project: "acme", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "m2", sessionId: "s2", model: "claude-opus-4-8", tokens: tok(10), at: 1000, cost: 0.5 });
+    const row = store.db.query("SELECT project, branch FROM usage WHERE message_uuid = 'm2'").get();
+    expect(row).toEqual({ project: "acme", branch: null });
+  });
+
+  it("aggregates cost and tokens by project, highest first", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.applyEvent("b", { status: "working", project: "beta", branch: "main", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 100, cost: 1.0 });
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 200, cost: 2.0 });
+    store.recordUsage({ uuid: "b1", sessionId: "b", model: "claude-opus-4-8", tokens: tok(5), at: 100, cost: 0.5 });
+    expect(store.costByProject()).toEqual([
+      { project: "alpha", costUsd: 3.0, tokens: 20 },
+      { project: "beta", costUsd: 0.5, tokens: 5 },
+    ]);
+  });
+
+  it("filters costByProject by time range (since inclusive, until exclusive)", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 200, cost: 2.0 });
+    store.recordUsage({ uuid: "a3", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 300, cost: 4.0 });
+    expect(store.costByProject({ since: 200, until: 300 })).toEqual([{ project: "alpha", costUsd: 2.0, tokens: 0 }]);
+  });
+
+  it("buckets usage with no resolvable project under 'unknown'", () => {
+    // usage for a session row that doesn't exist → project stamps NULL
+    store.recordUsage({ uuid: "x1", sessionId: "ghost", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 1.0, tokens: 0 }]);
+  });
+
+  it("aggregates costByBranch by (project, branch) so same-named branches don't merge across repos", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.applyEvent("b", { status: "working", project: "beta", branch: "main", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 100, cost: 1.0 });
+    store.recordUsage({ uuid: "b1", sessionId: "b", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 2.0 });
+    expect(store.costByBranch()).toEqual([
+      { project: "beta", branch: "main", costUsd: 2.0, tokens: 0 },
+      { project: "alpha", branch: "main", costUsd: 1.0, tokens: 10 },
+    ]);
+  });
+
+  it("preserves a null branch in costByBranch", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1); // no branch
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    expect(store.costByBranch()).toEqual([{ project: "alpha", branch: null, costUsd: 1.0, tokens: 0 }]);
+  });
+
   it("sums all token types into perSession.tokens", () => {
     store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
     store.recordUsage({

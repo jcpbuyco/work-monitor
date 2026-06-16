@@ -111,6 +111,20 @@ describe("Store sessions", () => {
     expect(hasTable()).toBe(1);
     expect(hasOffset()).toBe(1);
   });
+
+  it("idempotently adds usage.project and usage.branch to a pre-existing usage table", () => {
+    const db = new Database(":memory:");
+    // A usage table predating the project/branch columns.
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    migrate(db);
+    const has = (col: string) =>
+      (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
+    expect(has("project")).toBe(1);
+    expect(has("branch")).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has("project")).toBe(1);
+    expect(has("branch")).toBe(1);
+  });
 });
 
 describe("Store todos", () => {

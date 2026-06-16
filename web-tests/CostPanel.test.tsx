@@ -13,6 +13,8 @@ const cost: Cost = {
     { model: "claude-opus-4-8", costUsd: 10.9 },
     { model: "claude-haiku-4-5", costUsd: 1.5 },
   ],
+  byProject: [],
+  byBranch: [],
 };
 
 describe("CostPanel", () => {
@@ -28,7 +30,7 @@ describe("CostPanel", () => {
 
   it("renders nothing when there is no cost yet", () => {
     const { container } = render(
-      <CostPanel cost={{ perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [] }} />
+      <CostPanel cost={{ perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [], byProject: [], byBranch: [] }} />
     );
     expect(container.firstChild).toBeNull();
   });
