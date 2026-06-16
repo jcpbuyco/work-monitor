@@ -35,6 +35,13 @@ export function AppBar({ state }: { state: State }) {
         <Count key={`t-${todoCount}`} dotClass="bg-attention" label="to do" n={todoCount} />
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <a
+          href="#/cost"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
+        >
+          <span aria-hidden="true">$</span>
+          <span>Cost</span>
+        </a>
         <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
           <button
             type="button"

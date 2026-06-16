@@ -3,6 +3,8 @@ import { fetchState, subscribe } from "./api.ts";
 import type { State } from "./types.ts";
 import { runViewTransition } from "./viewTransition.ts";
 import { Board } from "./components/Board.tsx";
+import { useHashRoute } from "./useHashRoute.ts";
+import { CostDailyPage } from "./components/CostDailyPage.tsx";
 
 export default function App() {
   const [state, setState] = useState<State>({
@@ -27,5 +29,6 @@ export default function App() {
     return unsub;
   }, []);
 
-  return <Board state={state} />;
+  const route = useHashRoute();
+  return route === "#/cost" ? <CostDailyPage /> : <Board state={state} />;
 }
