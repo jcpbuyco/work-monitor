@@ -20,7 +20,7 @@ const COLS: { key: SortKey; label: string; numeric: boolean }[] = [
 ];
 
 export function CostDailyPage() {
-  const [window, setWindow] = useState<CostWindow>(14);
+  const [range, setRange] = useState<CostWindow>(14);
   const [rows, setRows] = useState<Row[]>([]);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "day", dir: "desc" });
@@ -28,7 +28,7 @@ export function CostDailyPage() {
   useEffect(() => {
     let cancelled = false;
     setStatus("loading");
-    const { since } = costDailyRange(window, Date.now());
+    const { since } = costDailyRange(range, Date.now());
     const qs = since != null ? `?since=${since}` : "";
     fetch(`/api/cost/daily${qs}`)
       .then((r) => r.json())
@@ -43,7 +43,7 @@ export function CostDailyPage() {
     return () => {
       cancelled = true;
     };
-  }, [window]);
+  }, [range]);
 
   const sorted = useMemo(() => {
     const copy = [...rows];
@@ -78,9 +78,9 @@ export function CostDailyPage() {
             <button
               key={String(w)}
               type="button"
-              onClick={() => setWindow(w)}
+              onClick={() => setRange(w)}
               className={`flex h-full items-center px-3 leading-none transition hover:text-foreground ${
-                window === w ? "bg-chip text-foreground" : ""
+                range === w ? "bg-chip text-foreground" : ""
               }`}
             >
               {w === "all" ? "All" : `${w}d`}
@@ -91,7 +91,9 @@ export function CostDailyPage() {
 
       {status === "error" ? (
         <p className="px-2 py-8 text-center text-sm text-muted-foreground">Couldn't load cost data.</p>
-      ) : status === "ok" && sorted.length === 0 ? (
+      ) : status === "loading" ? (
+        <p className="px-2 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+      ) : sorted.length === 0 ? (
         <p className="px-2 py-8 text-center text-sm text-muted-foreground">No usage in this window.</p>
       ) : (
         <table className="w-full border-collapse font-mono text-2xs">
@@ -116,8 +118,8 @@ export function CostDailyPage() {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r, i) => (
-              <tr key={`${r.project}/${r.branch}/${r.day}/${i}`} className="border-b border-border/50">
+            {sorted.map((r) => (
+              <tr key={`${r.project}/${r.branch ?? ""}/${r.day}`} className="border-b border-border/50">
                 <td className="px-2 py-1 font-semibold text-foreground">{r.project}</td>
                 <td className="px-2 py-1 text-muted-foreground">{r.branch ?? "—"}</td>
                 <td className="px-2 py-1 text-muted-foreground">{formatDay(r.day)}</td>
