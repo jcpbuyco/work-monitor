@@ -23,6 +23,13 @@ describe("TodosSection", () => {
     expect(screen.getByText(/Done \(1\)/)).toBeDefined();
   });
 
+  it("caps the open list height with an inner scroll so the board stays visible", () => {
+    render(<TodosSection todos={todos} />);
+    const scroller = screen.getByText("open1").closest('[class*="overflow-y-auto"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller!.className).toContain("max-h-[40vh]");
+  });
+
   it("collapsing hides the open list", () => {
     render(<TodosSection todos={todos} />);
     fireEvent.click(screen.getByRole("button", { name: /Todos/ }));

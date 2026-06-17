@@ -37,10 +37,12 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
               Nothing open. 🎉
             </div>
           ) : (
-            <div className="columns-1 gap-2 sm:columns-2 xl:columns-3">
-              {open.map((t) => (
-                <TodoCard key={t.id} t={t} onOpen={setSelected} />
-              ))}
+            <div className="max-h-[40vh] overflow-y-auto pr-1">
+              <div className="columns-1 gap-2 sm:columns-2 xl:columns-3">
+                {open.map((t) => (
+                  <TodoCard key={t.id} t={t} onOpen={setSelected} />
+                ))}
+              </div>
             </div>
           )}
           <button
