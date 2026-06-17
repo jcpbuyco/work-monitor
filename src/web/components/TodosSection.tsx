@@ -31,23 +31,25 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
       </div>
 
       {!collapsed && (
-        <div className="am-fade-in grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
-          <div className="sm:col-span-2">
-            {open.length === 0 ? (
-              <div className="rounded-xl border border-border bg-card/50 p-4 text-2xs text-muted-foreground">
-                Nothing open. 🎉
-              </div>
-            ) : (
-              open.map((t) => <TodoCard key={t.id} t={t} onOpen={setSelected} />)
-            )}
-            <button
-              type="button"
-              onClick={() => setDoneOpen(true)}
-              className="mt-1 text-2xs font-semibold text-muted-foreground transition hover:text-foreground"
-            >
-              ✓ Done ({done.length}) →
-            </button>
-          </div>
+        <div className="am-fade-in">
+          {open.length === 0 ? (
+            <div className="rounded-xl border border-border bg-card/50 p-4 text-2xs text-muted-foreground">
+              Nothing open. 🎉
+            </div>
+          ) : (
+            <div className="columns-1 gap-2 sm:columns-2 xl:columns-3">
+              {open.map((t) => (
+                <TodoCard key={t.id} t={t} onOpen={setSelected} />
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setDoneOpen(true)}
+            className="mt-1 text-2xs font-semibold text-muted-foreground transition hover:text-foreground"
+          >
+            ✓ Done ({done.length}) →
+          </button>
         </div>
       )}
 
