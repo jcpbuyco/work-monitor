@@ -8,7 +8,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
     <div
       onClick={() => onOpen?.(t)}
       style={cardStyle}
-      className="am-fade-in mb-2 cursor-pointer rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      className="am-fade-in mb-2 break-inside-avoid cursor-pointer rounded-lg border border-border bg-card p-2.5 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -41,7 +41,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
           ✕
         </button>
       </div>
-      {t.note && <div className="mt-1 line-clamp-4 text-xs text-muted-foreground">{t.note}</div>}
+      {t.note && <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{t.note}</div>}
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs">
         {t.for_who && <span className="font-semibold text-attention">→ {t.for_who}</span>}
         {t.branch && <span className="text-muted-foreground">⎇ {t.branch}</span>}
