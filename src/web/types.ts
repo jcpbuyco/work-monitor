@@ -82,3 +82,48 @@ export interface State {
   stats: ToolStat[];
   cost: Cost;
 }
+
+export interface WorkflowAgentView {
+  agent_id: string;
+  label: string | null;
+  phase_index: number | null;
+  phase_title: string | null;
+  idx: number | null;
+  model: string | null;
+  state: string | null;
+  attempt: number | null;
+  last_tool: string | null;
+  last_tool_summary: string | null;
+  prompt_preview: string | null;
+  started_at: number | null;
+  ended_at: number | null;
+  duration_ms: number | null;
+  tool_calls: number | null;
+  tokens: number;
+  costUsd: number;
+}
+
+export interface WorkflowRun {
+  run_id: string;
+  session_id: string;
+  project: string;
+  branch: string | null;
+  name: string | null;
+  summary: string | null;
+  status: string | null;
+  /** Derived liveness: "running" | "settled" | "orphaned". Typed as string
+   *  because the server never validates Claude Code's vocabulary. */
+  state: string;
+  error: string | null;
+  started_at: number | null;
+  ended_at: number | null;
+  duration_ms: number | null;
+  agent_count: number | null;
+  phases: { title: string; detail: string | null }[];
+  cc_version: string | null;
+  schema_ok: boolean;
+  total_tokens_reported: number | null;
+  costUsd: number;
+  tokens: number;
+  agents: WorkflowAgentView[];
+}
