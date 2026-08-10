@@ -51,6 +51,10 @@ export function migrate(db: Database): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
     CREATE TABLE IF NOT EXISTS usage (
       message_uuid TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,

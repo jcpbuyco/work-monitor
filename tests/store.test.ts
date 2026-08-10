@@ -153,6 +153,25 @@ describe("Store sessions", () => {
     expect(has("project")).toBe(1);
     expect(has("branch")).toBe(1);
   });
+
+  it("round-trips app_meta values and overwrites on repeat set", () => {
+    expect(store.getMeta("nope")).toBeNull();
+    store.setMeta("marker", "123");
+    expect(store.getMeta("marker")).toBe("123");
+    store.setMeta("marker", "456");
+    expect(store.getMeta("marker")).toBe("456");
+  });
+
+  it("idempotently creates app_meta on a pre-existing DB", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const has = () =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='app_meta'").all() as unknown[]).length;
+    expect(has()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has()).toBe(1);
+  });
 });
 
 describe("Store todos", () => {
