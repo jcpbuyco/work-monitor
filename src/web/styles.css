@@ -2,115 +2,202 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root {                          /* LIGHT */
   color-scheme: light;
-  --background: 210 30% 98%;
-  --card: 0 0% 100%;
-  --card-hover: 214 32% 97%;
-  --muted: 214 24% 94%;
-  --muted-foreground: 220 12% 42%;
-  --foreground: 222 34% 12%;
-  --border: 214 22% 86%;
-  --chip: 214 24% 92%;
-  --shadow: 220 40% 30%;
-  --shadow-a: 0.08;
-  --primary: 258 82% 56%;
-  --working: 213 88% 50%;
-  --attention: 35 92% 46%;
-  --done: 152 55% 38%;
-  --idle: 220 10% 55%;
+
+  /* surfaces — 4 steps, each a few L* apart */
+  --surface-0: 0 0% 100%;        /* #ffffff  canvas */
+  --surface-1: 220 24% 98.5%;    /* #fbfcfe  panel: dialogs, totals row, expanded rows */
+  --surface-2: 220 20% 96%;      /* #f2f4f8  hover / selected */
+  --surface-3: 220 18% 93%;      /* #e9ecf2  chips, controls, meter bars */
+
+  /* lines */
+  --border-1:      220 16% 88%;  /* #dce0e8  default edge */
+  --border-weak:   220 18% 93%;  /* #e9ecf2  dividers inside a panel */
+  --border-strong: 220 14% 80%;  /* #c5cad4  control edges */
+
+  /* ink — 4 steps: title / body / meta / disabled */
+  --text-1: 222 32% 11%;         /* #131826 */
+  --text-2: 220 18% 26%;         /* #373e4b */
+  --text-3: 220 10% 40%;         /* #5c6470 */
+  --text-4: 220 10% 50%;         /* #727a86 */
+
+  /* accent — one, restrained */
+  --accent:       264 72% 54%;   /* #6d3ee0 */
+  --accent-hover: 264 72% 46%;
+  --accent-tint:  264 70% 96%;   /* reserved for a future selected/flash surface;
+                                    `am-flash` uses hsl(var(--accent)/.10) directly */
+
+  /* semantic status */
+  --working:   212 88% 44%;      /* #0d69d3 */
+  --attention:  30 92% 36%;      /* #b05e07 */
+  --done:      154 62% 30%;      /* #1d7b4f */
+  --idle:      220 10% 58%;
+  --danger:    358 68% 48%;      /* #cf2a3a — closes the raw red-400 gap */
+
+  --shadow: 222 32% 28%;
+  --shadow-a: 0.10;
 }
 
-html.dark {
+html.dark {                      /* DARK — the reference design */
   color-scheme: dark;
-  --background: 222 26% 5%;
-  --card: 222 20% 8.5%;
-  --card-hover: 222 18% 11%;
-  --muted: 222 16% 15%;
-  --muted-foreground: 220 12% 60%;
-  --foreground: 210 22% 95%;
-  --border: 222 16% 16%;
-  --chip: 222 16% 16%;
+
+  --surface-0: 220 14% 4%;       /* #08090b */
+  --surface-1: 220 12% 6.5%;     /* #0e1013 */
+  --surface-2: 220 11% 9.5%;     /* #14171b */
+  --surface-3: 220 10% 13%;      /* #1d2026 */
+
+  --border-1:      220 10% 17%;  /* #272b31 */
+  --border-weak:   220 10% 12%;  /* #1b1e22 */
+  --border-strong: 220  9% 25%;  /* #3a3f47 */
+
+  --text-1: 210 20% 97%;         /* #f5f7f9 — never pure white */
+  --text-2: 214 15% 84%;         /* #ced4dc */
+  --text-3: 218 10% 60%;         /* #8e949e */
+  --text-4: 220  9% 42%;         /* #626873 */
+
+  --accent:       265 78% 68%;   /* #9d84f6 */
+  --accent-hover: 265 92% 78%;   /* #b9a4ff */
+  --accent-tint:  265 40% 12%;   /* #191430 */
+
+  --working:   211 92% 64%;      /* #4da2fa */
+  --attention:  35 96% 62%;      /* #fcac3d */
+  --done:      152 62% 50%;      /* #31cd83 */
+  --idle:      220  9% 44%;
+  --danger:    358 78% 66%;      /* #f4626c */
+
   --shadow: 0 0% 0%;
-  --shadow-a: 0.35;
-  --primary: 258 90% 67%;
-  --working: 213 90% 62%;
-  --attention: 38 94% 58%;
-  --done: 152 58% 48%;
-  --idle: 220 10% 55%;
+  --shadow-a: 0.55;
 }
+
+/* Alias layer — PERMANENT, not a migration scaffold. `toolDot()` returns
+   `bg-primary` (K17) and `body { @apply bg-background text-foreground }` stays,
+   so these names have live consumers forever. Both `:root` and `html.dark`
+   select <html>; the aliases never set the same property as a theme block, so
+   cascade order is irrelevant — this sits after both for readability. */
+:root, html.dark {
+  --background:       var(--surface-0);
+  --card:             var(--surface-1);
+  --card-hover:       var(--surface-2);
+  --muted:            var(--surface-3);
+  --chip:             var(--surface-3);
+  --foreground:       var(--text-1);
+  --muted-foreground: var(--text-3);
+  --border:           var(--border-1);
+  --primary:          var(--accent);
+
+  --bar:        var(--surface-3);
+  --focus-ring: var(--accent);
+}
+
+:root {
+  --font-sans: "Inter Variable","Inter",ui-sans-serif,system-ui,-apple-system,
+               "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono: "Berkeley Mono",ui-monospace,"SF Mono","JetBrains Mono",
+               "Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+
+  --rail: 1.25rem;        /* THE glyph rail — every list's leading slot */
+  --glyph: 0.875rem;      /* 14px status glyph — documents the value behind
+                             StatusGlyph's `h-3.5 w-3.5` and its 14×14 fallback
+                             width/height attributes */
+  --hairline: 1px;
+
+  --ease:      cubic-bezier(.25,.46,.45,.94);  /* ease-out-quad — the workhorse */
+  --ease-move: cubic-bezier(.16,1,.3,1);       /* view transitions only */
+  --t-quick: 100ms;  /* hover: bg/border/color */
+  --t-base:  160ms;  /* controls, press, entrances */
+  --t-pop:   175ms;  /* dialogs, menus */
+  --t-move:  280ms;  /* view transitions */
+}
+@media (min-resolution: 2dppx) { :root { --hairline: 0.5px; } }
+
+:root { font-family: var(--font-sans); font-feature-settings: "cv01","ss03"; }
 
 body {
   @apply bg-background text-foreground antialiased;
 }
 
-/* --- motion / "flare" --- */
-/* a soft, springy ease-out used across entrances */
-@keyframes am-row-in {
-  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+/* One global ring, replacing the two ad-hoc focus-visible rings in TodoCard.
+   No `border-radius` here: setting one would visibly re-shape rounded-full
+   pills on focus, and both Chromium and Firefox already draw `outline`
+   following the element's own border-radius. */
+:where(a,button,select,summary,input,[tabindex]):focus-visible {
+  outline: 2px solid hsl(var(--focus-ring) / .75);
+  outline-offset: 2px;
 }
-@keyframes am-flash {
-  from { background-color: hsl(var(--primary) / 0.16); }
-  to { background-color: transparent; }
+
+/* thumb-only scrollbars for the three inner scrollers */
+* { scrollbar-width: thin; scrollbar-color: hsl(var(--text-4)/.30) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--text-4)/.28); border-radius: 999px;
+  border: 2px solid transparent; background-clip: content-box;
 }
-@keyframes am-fade-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes am-pop {
-  from { opacity: 0; transform: scale(0.96) translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes am-count {
-  0% { transform: scale(1.22); }
-  55% { transform: scale(0.96); }
-  100% { transform: scale(1); }
-}
-@keyframes am-backdrop {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes am-shimmer {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100%); }
-}
+::-webkit-scrollbar-thumb:hover { background-color: hsl(var(--text-4)/.5); }
+
+/* Theme-aware dialog backdrop (replaces the `backdrop:bg-black/50` utility). */
+dialog::backdrop { background: hsl(var(--surface-0) / .6); backdrop-filter: blur(3px); }
+
+/* The <StatusGlyph kind="todo"> check reveals on hover/focus of its button.
+   One rule, no per-component plumbing. */
+.am-check [data-glyph-check] { transition: opacity var(--t-quick) var(--ease); }
+.am-check:hover [data-glyph-check],
+.am-check:focus-visible [data-glyph-check] { opacity: 1; }
+
+/* --- motion --- */
+@keyframes am-row-in  { from { opacity:0; transform:translateY(-4px) } to { opacity:1; transform:none } }
+@keyframes am-flash   { from { background-color: hsl(var(--accent)/.10) } to { background-color: transparent } }
+@keyframes am-fade-in { from { opacity:0; transform:translateY(4px) }  to { opacity:1; transform:none } }
+@keyframes am-pop     { from { opacity:0; transform:scale(.96) }       to { opacity:1; transform:none } }
+@keyframes am-backdrop{ from { opacity:0 } to { opacity:1 } }
+@keyframes am-count   { 0% { transform:scale(1.06) } 100% { transform:scale(1) } }
+@keyframes am-shimmer { from { transform:translateX(-100%) } to { transform:translateX(100%) } }
+@keyframes am-spin    { to { transform: rotate(360deg) } }
+@keyframes am-pulse   { 0%,100% { opacity:1 } 50% { opacity:.45 } }
+@keyframes am-ping    { from { transform:scale(1); opacity:1 } to { transform:scale(2.2); opacity:0 } }
 
 /* All motion is gated behind `html.am-anim` (the Motion toggle, default on),
    which intentionally overrides the OS prefers-reduced-motion setting for this
    single-user dashboard. Toggle it off to disable everything below. */
 
-/* a freshly-arrived activity card springs in + briefly flashes */
-.am-anim .am-row-in {
-  animation:
-    am-row-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both,
-    am-flash 1.4s ease-out;
-}
-/* cards ease up on mount */
-.am-anim .am-fade-in { animation: am-fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
-/* a count chip pops when its value changes (remounted via key) */
-.am-anim .am-count { animation: am-count 0.4s ease-out; }
+.am-anim .am-row-in  { animation: am-row-in var(--t-base) var(--ease) both,
+                                  am-flash .6s var(--ease); }
+.am-anim .am-fade-in { animation: am-fade-in var(--t-base) var(--ease) both; }
+.am-anim .am-count   { animation: am-count var(--t-base) var(--ease); }
 
-/* native <dialog> pop + backdrop fade on open */
-.am-anim dialog[open] { animation: am-pop 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
-.am-anim dialog[open]::backdrop { animation: am-backdrop 0.25s ease-out; }
+.am-anim dialog[open]           { animation: am-pop var(--t-pop) var(--ease); }
+.am-anim dialog[open]::backdrop { animation: am-backdrop var(--t-pop) var(--ease); }
 
-/* an indeterminate "actively working" sweep */
-.am-shimmer { position: relative; overflow: hidden; }
+/* These three replace Tailwind's animate-spin / animate-pulse / animate-ping,
+   which carry NO `.am-anim` ancestor requirement and therefore ignored the
+   Motion toggle entirely. */
+.am-anim .am-spin  { animation: am-spin 1.4s linear infinite; }
+.am-anim .am-pulse { animation: am-pulse 2s var(--ease) infinite; }
+.am-anim .am-ping  { animation: am-ping 1.8s var(--ease) infinite; }
+
+/* NB: no `position: relative` here. The shimmer element is itself `absolute`
+   (so it is already a containing block for ::after), and this file's plain
+   rules are emitted *after* `@tailwind utilities` — at equal specificity a bare
+   `.am-shimmer { position: relative }` would beat Tailwind's `.absolute` and
+   pull the underline out of the row's bottom edge. */
+.am-shimmer { overflow: hidden; }
 .am-anim .am-shimmer::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, hsl(var(--working) / 0.65), transparent);
-  animation: am-shimmer 1.6s ease-in-out infinite;
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, hsl(var(--working)/.45), transparent);
+  animation: am-shimmer 2s ease-in-out infinite;
 }
 
-/* View Transitions: glide session/feed cards between positions (incl. across
-   status columns) instead of jumping. Don't cross-fade the whole page. (These
-   only ever run when a transition is started, which is gated on am-anim in JS.) */
-::view-transition-group(*) {
-  animation-duration: 0.34s;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+.am-anim [data-press]:active {
+  transform: scale(.97); filter: brightness(.98);
+  transition: transform var(--t-base) var(--ease), filter var(--t-base) var(--ease);
 }
-::view-transition-old(root),
-::view-transition-new(root) { animation: none; }
+
+/* View Transitions: glide rows between positions instead of jumping. Don't
+   cross-fade the whole page. (These only ever run when a transition is
+   started, which is gated on am-anim in JS.) */
+::view-transition-group(*) {
+  animation-duration: var(--t-move);
+  animation-timing-function: var(--ease-move);
+}
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
