@@ -18,11 +18,11 @@ export function CostPanel({ cost }: { cost: Cost }) {
       <ul className="space-y-1 font-mono text-2xs">
         <li className="flex items-center gap-2 px-2 py-1">
           <span className="min-w-0 flex-1 text-foreground">live total</span>
-          <span className="tabular-nums text-muted-foreground">{formatUsd(cost.liveTotalUsd)}</span>
+          <span data-testid="cost-live-total" className="tabular-nums text-muted-foreground">{formatUsd(cost.liveTotalUsd)}</span>
         </li>
         <li className="flex items-center gap-2 px-2 py-1">
           <span className="min-w-0 flex-1 text-foreground">today</span>
-          <span className="tabular-nums text-muted-foreground">{formatUsd(cost.todayUsd)}</span>
+          <span data-testid="cost-today" className="tabular-nums text-muted-foreground">{formatUsd(cost.todayUsd)}</span>
         </li>
         {cost.byModelToday.map((m) => (
           <li key={m.model} className="flex items-center gap-2 px-2 py-1 text-muted-foreground/70">

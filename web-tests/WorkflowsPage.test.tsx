@@ -73,8 +73,8 @@ describe("WorkflowsPage", () => {
     render(<WorkflowsPage />);
     await screen.findByText("research");
     fireEvent.click(screen.getByRole("button", { name: /cost/i }));
-    const rows = screen.getAllByRole("row");
-    expect(within(rows[1]).getByText("$9.00")).toBeTruthy(); // wf_b (9.0) first
+    const rows = screen.getAllByTestId("wf-row");
+    expect(within(rows[0]).getByText("$9.00")).toBeTruthy(); // wf_b (9.0) first
   });
 
   it("refetches with the window's since param when the range changes", async () => {

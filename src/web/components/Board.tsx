@@ -10,10 +10,10 @@ import { CostPanel } from "./CostPanel.tsx";
 import { CostBreakdown } from "./CostBreakdown.tsx";
 import { WorkflowsSection } from "./WorkflowsSection.tsx";
 
-const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
-  { id: "working", title: "Working", dot: "bg-working" },
-  { id: "needs_you", title: "Needs you", dot: "bg-attention" },
-  { id: "idle", title: "Idle / done", dot: "bg-idle" },
+const SESSION_COLS: { id: Session["status"]; title: string }[] = [
+  { id: "working", title: "Working" },
+  { id: "needs_you", title: "Needs you" },
+  { id: "idle", title: "Idle / done" },
 ];
 
 export function Board({ state, workflows = [] }: { state: State; workflows?: LiveWorkflow[] }) {
@@ -51,7 +51,7 @@ export function Board({ state, workflows = [] }: { state: State; workflows?: Liv
             {SESSION_COLS.map((c) => {
               const items = bySession(c.id);
               return (
-                <Column key={c.id} title={c.title} dot={c.dot} count={items.length}>
+                <Column key={c.id} title={c.title} dot={c.id} count={items.length}>
                   {items.map((s) => (
                     <SessionCard
                       key={s.id}

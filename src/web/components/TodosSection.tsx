@@ -37,7 +37,7 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
               Nothing open. 🎉
             </div>
           ) : (
-            <div className="max-h-[40vh] overflow-y-auto pr-1">
+            <div data-testid="todos-scroller" className="max-h-[40vh] overflow-y-auto pr-1">
               <div className="columns-1 gap-2 sm:columns-2 xl:columns-3">
                 {open.map((t) => (
                   <TodoCard key={t.id} t={t} onOpen={setSelected} />
@@ -47,6 +47,7 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
           )}
           <button
             type="button"
+            data-testid="todos-done-link"
             onClick={() => setDoneOpen(true)}
             className="mt-1 text-2xs font-semibold text-muted-foreground transition hover:text-foreground"
           >

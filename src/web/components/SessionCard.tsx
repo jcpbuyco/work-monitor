@@ -31,6 +31,8 @@ export function SessionCard({
   (cardStyle as Record<string, string>).viewTransitionName = `vt-s-${s.id}`;
   return (
     <div
+      data-testid="session-row"
+      data-status={s.status}
       className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
       style={cardStyle}
     >
@@ -38,6 +40,7 @@ export function SessionCard({
         {s.project}
         {wf && (
           <span
+            data-testid="wf-badge"
             title="owns a live workflow run"
             className="rounded-full border border-border bg-chip px-1.5 py-0.5 font-mono text-2xs text-working"
           >

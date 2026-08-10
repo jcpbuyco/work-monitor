@@ -32,8 +32,8 @@ describe("CostDailyPage", () => {
     render(<CostDailyPage />);
     await screen.findByText("alpha");
     fireEvent.click(screen.getByRole("button", { name: /cost/i }));
-    const rows = screen.getAllByRole("row"); // [header, ...data]
-    expect(within(rows[1]).getByText("$9.00")).toBeTruthy(); // beta (9.0) now first
+    const rows = screen.getAllByTestId("cost-row"); // data rows only, no header
+    expect(within(rows[0]).getByText("$9.00")).toBeTruthy(); // beta (9.0) now first
   });
 
   it("refetches with the window's since param when the range changes", async () => {

@@ -180,6 +180,7 @@ export function WorkflowsPage() {
               return [
                 <tr
                   key={r.run_id}
+                  data-testid="wf-row"
                   onClick={() => toggleOpen(r.run_id)}
                   className="cursor-pointer border-b border-border/50 hover:bg-card-hover"
                 >

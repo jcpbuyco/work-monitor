@@ -41,7 +41,11 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
           ✕
         </button>
       </div>
-      {t.note && <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{t.note}</div>}
+      {t.note && (
+        <div data-testid="note" className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+          {t.note}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs">
         {t.for_who && <span className="font-semibold text-attention">→ {t.for_who}</span>}
         {t.branch && <span className="text-muted-foreground">⎇ {t.branch}</span>}

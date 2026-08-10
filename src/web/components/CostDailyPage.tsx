@@ -119,7 +119,7 @@ export function CostDailyPage() {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={`${r.project}/${r.branch ?? ""}/${r.day}`} className="border-b border-border/50">
+              <tr key={`${r.project}/${r.branch ?? ""}/${r.day}`} data-testid="cost-row" className="border-b border-border/50">
                 <td className="px-2 py-1 font-semibold text-foreground">{r.project}</td>
                 <td className="px-2 py-1 text-muted-foreground">{r.branch ?? "—"}</td>
                 <td className="px-2 py-1 text-muted-foreground">{formatDay(r.day)}</td>

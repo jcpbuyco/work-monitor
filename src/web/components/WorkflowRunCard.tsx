@@ -16,7 +16,7 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
   const title = w.name ?? w.run_id;
 
   return (
-    <div className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card">
+    <div data-testid="wf-run-row" className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"

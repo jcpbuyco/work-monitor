@@ -3,9 +3,12 @@ import { useTheme } from "../useTheme.ts";
 import { useTextSize } from "../useTextSize.ts";
 import { useMotion } from "../useMotion.ts";
 
-function Count({ dotClass, label, n }: { dotClass: string; label: string; n: number }) {
+function Count({ testId, dotClass, label, n }: { testId: string; dotClass: string; label: string; n: number }) {
   return (
-    <span className="am-count inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground">
+    <span
+      data-testid={testId}
+      className="am-count inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground"
+    >
       <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
       <span>{n} {label}</span>
     </span>
@@ -30,9 +33,9 @@ export function AppBar({ state, workflows = [] }: { state: State; workflows?: Li
         agent-monitor
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <Count key={`w-${working}`} dotClass="bg-working" label="working" n={working} />
-        <Count key={`n-${needsYou}`} dotClass="bg-attention" label="needs you" n={needsYou} />
-        <Count key={`t-${todoCount}`} dotClass="bg-attention" label="to do" n={todoCount} />
+        <Count key={`w-${working}`} testId="appbar-count-working" dotClass="bg-working" label="working" n={working} />
+        <Count key={`n-${needsYou}`} testId="appbar-count-needs-you" dotClass="bg-attention" label="needs you" n={needsYou} />
+        <Count key={`t-${todoCount}`} testId="appbar-count-todo" dotClass="bg-attention" label="to do" n={todoCount} />
       </div>
       <div className="ml-auto flex items-center gap-2">
         <a

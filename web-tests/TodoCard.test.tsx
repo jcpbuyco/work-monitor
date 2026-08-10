@@ -49,7 +49,7 @@ describe("TodoCard", () => {
 
   it("clamps the note to a single line for a compact card", () => {
     renderCard();
-    expect(screen.getByText("a clamped note").className).toContain("line-clamp-1");
+    expect(screen.getByTestId("note").className).toContain("line-clamp-1");
   });
 
   it("is not draggable (no drag affordance)", () => {
