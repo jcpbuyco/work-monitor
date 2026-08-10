@@ -69,6 +69,22 @@ describe("WorkflowRunCard", () => {
     expect(screen.queryByText("map-codebase")).toBeNull();
     expect(localStorage.getItem("am-wf-wf_abc")).toBe("true");
   });
+
+  it("pairs the status label with a glyph of the same colour", () => {
+    const { container } = render(<WorkflowRunCard w={live({ status: "failed" })} />);
+    expect(container.querySelector('[data-glyph="danger"]')).toBeTruthy();
+    expect(screen.getByText("failed").className).toContain("text-danger");
+  });
+
+  it("draws the phase bar only when a phase is known, with no transition on its width", () => {
+    const { container, rerender } = render(<WorkflowRunCard w={live({ phase: null })} />);
+    expect(container.querySelector("[data-phase-bar]")).toBeNull();
+    rerender(<WorkflowRunCard w={live({ phase: { index: 2, total: 4, title: "Judge" } })} />);
+    const bar = container.querySelector("[data-phase-bar]") as HTMLElement;
+    expect(bar.style.width).toBe("50%");
+    // fed by the 5s workflows channel — width must never animate layout
+    expect(bar.className).not.toContain("transition");
+  });
 });
 
 describe("WorkflowsSection", () => {
