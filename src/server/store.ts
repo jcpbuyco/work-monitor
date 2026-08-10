@@ -231,6 +231,8 @@ export class Store {
     tokens: Tokens;
     at: number;
     cost: number;
+    runId?: string;
+    agentId?: string;
   }): boolean {
     // Stamp the session's then-current project/branch so historical cost can be
     // attributed without a join (and survives the session row being mutated later).
@@ -239,10 +241,12 @@ export class Store {
       .query(
         `INSERT OR IGNORE INTO usage
            (message_uuid, session_id, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at)
+            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
+            run_id, agent_id)
          VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
                  (SELECT project FROM sessions WHERE id = $s),
-                 (SELECT branch FROM sessions WHERE id = $s), $at)`
+                 (SELECT branch FROM sessions WHERE id = $s), $at,
+                 $run, $agent)`
       )
       .run({
         $u: u.uuid,
@@ -255,6 +259,8 @@ export class Store {
         $c1: u.tokens.cache_create_1h,
         $cost: u.cost,
         $at: u.at,
+        $run: u.runId ?? null,
+        $agent: u.agentId ?? null,
       });
     return res.changes > 0;
   }
