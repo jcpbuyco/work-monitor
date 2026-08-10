@@ -12,8 +12,9 @@ export function sessionDirFor(transcriptPath: string): string {
 }
 
 /** Liveness from two independent signals — structure (`manifest_seen`) and motion
- *  (`last_seen_at`, which is the run dir's mtime as of the last tick that saw it,
- *  NOT the time we last looked). Pure: no I/O, no agent argument.
+ *  (`last_seen_at`, which is the run dir's mtime OR the newest mtime among the
+ *  run's agent-*.jsonl/journal files, as of the last tick that saw it — NOT the
+ *  time we last looked). Pure: no I/O, no agent argument.
  *
  *  Rules in force order (spec §1.4):
  *   1. manifest + quiet ⇒ settled. A manifest is terminal for STRUCTURE only —
@@ -498,30 +499,52 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const offsets = new Map(store.workflowAgentOffsets(t.run_id).map((o) => [o.agent_id, o.offset]));
   const files: { agent_id: string; path: string }[] = [];
   let grew = false;
-  // Rule 3's hedge is specifically about an append to an ALREADY-TRACKED
-  // transcript (one with a stored offset) — that's what leaves the dir mtime
-  // alone. A brand-new agent file trivially satisfies `size > 0` on the tick
-  // that first sees it (offset defaults to 0), which is a discovery, not an
-  // append-without-motion; keeping the two separate matters below, where only
-  // genuine re-growth should bump the persisted last_seen_at (finding 3).
-  let existingAgentGrew = false;
+  // last_seen_at (spec §1.4, finding-3 redo): dir mtime OR the newest mtime
+  // among this run's agent-*.jsonl / journal.jsonl files — PURE disk truth,
+  // never `now`. An append bumps that FILE's own mtime even when it leaves
+  // the run dir's mtime untouched (rule 3: "an append to an ALREADY-TRACKED
+  // transcript... leaves the dir mtime alone"), so this un-settles a growing
+  // run without ever fabricating a clock reading, and it settles correctly
+  // the instant real writes stop — including a transcript stuck at
+  // size > offset forever (an unterminated trailing line): its mtime freezes
+  // the moment writes actually stop, independent of the offset.
+  let lastSeenAt = mtime;
   for (const name of readdirSafe(t.dir)) {
     const m = AGENT_RE.exec(name);
     if (!m) continue;
     const path = join(t.dir, name);
-    let size: number;
+    let st: ReturnType<typeof statSync>;
     try {
-      size = statSync(path).size;
+      st = statSync(path);
     } catch {
       continue;
     }
     files.push({ agent_id: m[1], path });
-    // Rule 3's hedge: an append to an EXISTING transcript leaves the dir mtime
-    // alone, so file growth is checked independently.
-    if (size > (offsets.get(m[1]) ?? 0)) grew = true;
-    if (offsets.has(m[1]) && size > offsets.get(m[1])!) existingAgentGrew = true;
+    // Size-vs-offset is a signal to bypass the cheap early-return and pay for
+    // the tail below — NEVER a liveness input (a file stuck with an
+    // unterminated final line satisfies this forever; see `lastSeenAt`
+    // above for how that case still settles correctly).
+    if (st.size > (offsets.get(m[1]) ?? 0)) grew = true;
+    const fileMtime = Math.round(st.mtimeMs);
+    if (fileMtime > lastSeenAt) lastSeenAt = fileMtime;
   }
+  // journal.jsonl lives in the run dir too; an append to it is exactly as much
+  // "the run is alive" as an agent transcript append is.
+  try {
+    const journalMtime = Math.round(statSync(join(t.dir, "journal.jsonl")).mtimeMs);
+    if (journalMtime > lastSeenAt) lastSeenAt = journalMtime;
+  } catch {}
 
+  // Structural motion of the DIR ITSELF — a brand-new agent file (or the dir
+  // touched for any other reason) bumps the dir's own mtime; an append to an
+  // already-tracked transcript does not (rule 3). Deliberately narrower than
+  // `lastSeenAt` above: this feeds the early-return bypass and the `changed`
+  // broadcast decision below, and folding ordinary file growth into it would
+  // broadcast on every tick a transcript merely grows, regardless of whether
+  // that growth actually changed anything worth showing on the client (the
+  // re-verify's regression (b): 19 identical-payload broadcasts over 20
+  // ticks). Liveness itself un-settles via `lastSeenAt`/`stateChanged` below,
+  // never via this flag.
   const dirMoved = !prev || prev.last_seen_at == null || mtime > prev.last_seen_at;
 
   // Rule 1.4 / §3.1: the ACTIVE→SETTLED (and running→orphaned) transition is
@@ -531,6 +554,16 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // flip as a change even when nothing else did; otherwise a finished run
   // never gets re-broadcast and stays "running" on the client forever
   // (findings 1 & 2).
+  //
+  // Single source of truth (finding-3 redo): this MUST use the same
+  // `lastSeenAt` that gets persisted below and that liveWorkflows/deriveRunState
+  // read back later — never the raw dir `mtime` alone. Reading raw `mtime`
+  // here while persisting a different value is exactly what re-opened
+  // findings 1&2 in the rejected fix: a long-running workflow's dir mtime is
+  // permanently "quiet" on its own (only file appends keep it alive), so a
+  // pre-pass check pinned to raw `mtime` sees "settled" on every tick
+  // regardless of real activity, corrupting this cache with a false
+  // transition and permanently masking the real one.
   let stateCache = lastRunState.get(store);
   if (!stateCache) {
     stateCache = new Map();
@@ -543,7 +576,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
       {
         manifest_seen: !!prev.manifest_seen,
         status: prev.status,
-        last_seen_at: mtime,
+        last_seen_at: lastSeenAt,
         session_status: prev.session_status,
       },
       now
@@ -557,14 +590,20 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // a previously-known run has just settled and has never been checked —
   // otherwise a run discovered while ACTIVE hits the cheap re-stat below
   // forever and the check written specifically for silently-wrong cost never
-  // runs for it (findings 5 & 7).
+  // runs for it (findings 5 & 7). Consumption itself (`cc.add`) is deferred
+  // until the check has actually run against a successfully-parsed manifest,
+  // below — marking it here would spend the run's one shot on a pass where
+  // the manifest exists but fails to parse (or existed only transiently),
+  // permanently losing the check for a run that never gets a valid manifest
+  // until later.
   let cc = crosschecked.get(store);
   if (!cc) {
     cc = new Set();
     crosschecked.set(store, cc);
   }
   const needsCrosscheck = !!prev && derivedState === "settled" && !cc.has(t.run_id);
-  if (needsCrosscheck) cc.add(t.run_id);
+  // NOTE: cc.add(t.run_id) happens below, only once the check has actually run
+  // against a successfully-parsed manifest — see the comment above `cc`.
 
   if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten && !needsCrosscheck) return stateChanged; // cheap re-stat only
 
@@ -598,22 +637,11 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
 
   const manifestById = new Map((manifest?.agents ?? []).map((a) => [a.agent_id, a]));
   const ids = new Set<string>([...files.map((f) => f.agent_id), ...journalAgents.keys(), ...manifestById.keys()]);
-  // Rule 3's other half: an append to an ALREADY-TRACKED transcript never
-  // bumps the dir mtime, but the run is still ACTIVE — `existingAgentGrew`
-  // un-settles this exactly like fresh dir motion would (spec §1.4: "dir
-  // mtime advanced OR any agent file grew ──► back to ACTIVE").
-  // `effectiveLastSeenAt` is what gets PERSISTED and is therefore what
-  // deriveRunState sees on every later read (liveWorkflows, the next tick's
-  // `prev`): on genuine re-growth it is bumped to `now` so the run reads
-  // un-settled until the next real quiet window, exactly like a dir-mtime
-  // bump would. Without this, growth un-settles the SCANNER (cost keeps
-  // tailing) but never the DERIVED state, and the run silently vanishes from
-  // the live strip while still spending. A brand-new agent file (no stored
-  // offset yet) must NOT trigger this — that is ordinary discovery, and a
-  // historical run backfilled with a genuinely stale dir must still read as
-  // settled/orphaned at its real last_seen_at.
-  const quiet = !existingAgentGrew && now - mtime > WF_QUIET_MS;
-  const effectiveLastSeenAt = existingAgentGrew ? Math.max(mtime, now) : mtime;
+  // `quiet` uses the SAME `lastSeenAt` computed above — the single value that
+  // also gets persisted below and fed to deriveRunState both here and at read
+  // time (liveWorkflows). One source of truth, incapable of disagreeing
+  // (spec §1.4, finding-3 redo).
+  const quiet = now - lastSeenAt > WF_QUIET_MS;
 
   let ccVersion: string | null = null;
   let recorded = false;
@@ -687,7 +715,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // Stored whenever the FILE exists, parsed or not: a corrupt manifest that is
     // later fixed in place must still re-trigger on its new mtime.
     manifest_mtime: manifestMtime,
-    last_seen_at: effectiveLastSeenAt, // the DIR's mtime, bumped to `now` on growth-only motion (rule 3)
+    last_seen_at: lastSeenAt, // dir mtime OR newest run-file mtime — pure disk truth (spec §1.4)
     schema_ok: !error,
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
@@ -705,7 +733,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
       {
         manifest_seen: !!manifest,
         status: manifest?.status ?? null,
-        last_seen_at: effectiveLastSeenAt,
+        last_seen_at: lastSeenAt,
         session_status: prev?.session_status ?? "working",
       },
       now
@@ -715,6 +743,14 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // Cross-check §5.8 — PRESENCE, not proportion. Claude Code's `totalTokens` is
   // not comparable to our rollup (24x–276x across 19 manifests), so the only
   // sound signal is "it says tokens were burned and we ingested none".
+  //
+  // Consumption is marked HERE, only once the check has actually run against a
+  // successfully-parsed manifest — never at `needsCrosscheck`'s computation
+  // above. A null `manifest` (parse failure, or a manifest that hasn't landed
+  // yet despite `derivedState` reading "settled") must leave the run's one
+  // shot unspent so a later pass, once the manifest is readable, still gets
+  // to run it.
+  if (needsCrosscheck && manifest) cc.add(t.run_id);
   if (manifest && quiet && (manifest.total_tokens_reported ?? 0) > 0) {
     const row = store.db
       .query(
