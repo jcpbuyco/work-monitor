@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { sessionDirFor, deriveRunState, parseManifest } from "../src/server/workflows.ts";
+import { sessionDirFor, deriveRunState, parseManifest, parseJournal } from "../src/server/workflows.ts";
 import { WF_QUIET_MS } from "../src/server/config.ts";
 
 export const FIX = join(import.meta.dir, "fixtures", "workflows");
@@ -123,5 +123,63 @@ describe("parseManifest", () => {
     expect(m.agent_count).toBe(10);
     // attempt is 1 on every surveyed entry — display only, never retry detection.
     expect(m.agents.every((a) => a.attempt === 1 || a.attempt === null)).toBe(true);
+  });
+});
+
+const jlines = (name: string) => fixture(name).split("\n").filter((l) => l.trim());
+
+describe("parseJournal", () => {
+  it("gives every key's winner a row; with a manifest present none are left running", () => {
+    // wf_eb7bf7e8-8a5: 6 started / 3 result over 6 distinct keys. This run
+    // COMPLETED — 3 keys never got a result line, so `started`-without-`result`
+    // cannot mean running once a manifest exists (C7).
+    const { agents } = parseJournal(jlines("wf_eb7bf7e8-8a5.journal.jsonl"), { manifestPresent: true });
+    expect(agents.size).toBe(6);
+    expect([...agents.values()].filter((a) => a.state === "running").length).toBe(0);
+  });
+
+  it("marks resultless winners running only when the manifest is absent", () => {
+    const { agents } = parseJournal(jlines("wf_eb7bf7e8-8a5.journal.jsonl"), { manifestPresent: false });
+    expect([...agents.values()].filter((a) => a.state === "running").length).toBe(3);
+    expect([...agents.values()].filter((a) => a.state === "done").length).toBe(3);
+  });
+
+  it("dedupes retries: the last agentId per key in FILE ORDER wins, earlier ones are abandoned", () => {
+    // wf_57b2617f-124: 13 started / 10 result over 10 keys → 10 winners + 3 abandoned.
+    // A retry reuses the key with a FRESH agentId; `attempt` stays 1, so it is
+    // never the retry signal.
+    const { agents } = parseJournal(jlines("wf_57b2617f-124.journal.jsonl"), { manifestPresent: true });
+    expect(agents.size).toBe(13); // every agentId keeps its own row so its tokens attribute
+    expect([...agents.values()].filter((a) => a.state === "abandoned").length).toBe(3);
+    expect([...agents.values()].filter((a) => a.state === "done").length).toBe(10);
+    const keys = new Set([...agents.values()].map((a) => a.journal_key));
+    expect(keys.size).toBe(10);
+  });
+
+  it("marks an unmatched started as running on a manifest-less live run", () => {
+    // wf_de7ba892-786 was still live (unmatched started) when this plan was
+    // authored; by fixture-capture time the real run had completed and every
+    // key had a result line. Drop the final result line to reconstruct the
+    // in-flight snapshot this test is meant to exercise, without hand-writing
+    // synthetic journal content.
+    const allLines = jlines("wf_de7ba892-786.journal.jsonl");
+    const inFlight = allLines.slice(0, -1);
+    const { agents } = parseJournal(inFlight, { manifestPresent: false });
+    expect([...agents.values()].filter((a) => a.state === "running").length).toBeGreaterThan(0);
+  });
+
+  it("counts unknown line types and unparseable lines toward degraded, never throws", () => {
+    const lines = [
+      JSON.stringify({ type: "started", key: "k1", agentId: "a1" }),
+      JSON.stringify({ type: "brand_new_type", key: "k1", agentId: "a1" }),
+      "{not json",
+    ];
+    const { agents, unknownTypes } = parseJournal(lines, { manifestPresent: false });
+    expect(unknownTypes).toBe(2);
+    expect(agents.get("a1")!.state).toBe("running");
+  });
+
+  it("returns an empty map for an empty journal", () => {
+    expect(parseJournal([], { manifestPresent: false }).agents.size).toBe(0);
   });
 });

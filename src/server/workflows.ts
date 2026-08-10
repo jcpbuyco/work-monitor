@@ -172,3 +172,72 @@ export function parseManifest(text: string): ManifestView | null {
     error: zeroAgents ? "manifest parsed 0 agents" : null,
   };
 }
+
+export type AgentState = "running" | "done" | "abandoned";
+
+export interface JournalAgent {
+  agent_id: string;
+  journal_key: string;
+  state: AgentState;
+}
+
+/** Reduce a run's journal.jsonl into per-agent states (§1.3, C7).
+ *
+ *  `key` is an opaque content hash (`v2:<sha256>`) — a grouping key only, never
+ *  rendered. Journal lines carry no timestamp, so FILE ORDER is the tiebreak:
+ *  the last agentId seen for a key wins and earlier ones become `abandoned`.
+ *  Abandoned agents keep their row so their tokens still attribute.
+ *
+ *  `started`-without-`result` means running ONLY when no manifest exists. A
+ *  completed run legitimately has resultless keys (6 started / 3 result over 6
+ *  keys was observed on a completed run) and would otherwise show phantom
+ *  running agents forever. */
+export function parseJournal(
+  lines: string[],
+  opts: { manifestPresent: boolean }
+): { agents: Map<string, JournalAgent>; unknownTypes: number } {
+  let unknownTypes = 0;
+  const keyOrder = new Map<string, string[]>(); // key → agentIds in file order
+  const keyOf = new Map<string, string>(); // agentId → key
+  const hasResult = new Set<string>(); // agentIds with a result line
+
+  for (const ln of lines) {
+    if (!ln.trim()) continue;
+    let o: any;
+    try {
+      o = JSON.parse(ln);
+    } catch {
+      unknownTypes++;
+      continue;
+    }
+    const type = str(o?.type);
+    if (type !== "started" && type !== "result") {
+      unknownTypes++;
+      continue;
+    }
+    const key = str(o?.key);
+    const id = str(o?.agentId);
+    if (!key || !id) {
+      unknownTypes++;
+      continue;
+    }
+    const seq = keyOrder.get(key) ?? [];
+    if (seq[seq.length - 1] !== id) seq.push(id);
+    keyOrder.set(key, seq);
+    keyOf.set(id, key);
+    if (type === "result") hasResult.add(id);
+  }
+
+  const agents = new Map<string, JournalAgent>();
+  for (const [key, seq] of keyOrder) {
+    const winner = seq[seq.length - 1];
+    for (const id of seq) {
+      let state: AgentState;
+      if (id !== winner) state = "abandoned";
+      else if (hasResult.has(id)) state = "done";
+      else state = opts.manifestPresent ? "done" : "running";
+      agents.set(id, { agent_id: id, journal_key: key, state });
+    }
+  }
+  return { agents, unknownTypes };
+}
