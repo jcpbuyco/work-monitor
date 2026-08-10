@@ -198,6 +198,52 @@ describe("GET /api/cost/daily", () => {
   });
 });
 
+describe("GET /api/workflows", () => {
+  const T = 1_700_000_000_000;
+
+  function seed(runId: string, startedAt: number) {
+    store.applyEvent("p", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({
+      run_id: runId, session_id: "p", dir: `/d/${runId}`, name: "research", status: "completed",
+      manifest_seen: true, last_seen_at: startedAt, started_at: startedAt,
+    });
+    store.upsertWorkflowAgent({ run_id: runId, agent_id: "a1", label: "map", state: "done" });
+    const z = { input: 10, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 };
+    store.recordUsage({ uuid: `${runId}-1`, sessionId: "p", model: "claude-opus-5", tokens: z, at: startedAt, cost: 2.5, runId, agentId: "a1" });
+  }
+
+  it("returns runs with embedded agents and usage rollups", async () => {
+    seed("wf_a", T);
+    const body = (await (await fetch(`${base}/api/workflows`)).json()) as any;
+    expect(body.runs.length).toBe(1);
+    expect(body.runs[0].run_id).toBe("wf_a");
+    expect(body.runs[0].project).toBe("alpha");
+    expect(body.runs[0].costUsd).toBeCloseTo(2.5, 6);
+    expect(body.runs[0].agents[0].agent_id).toBe("a1");
+    expect(body.runs[0].agents[0].costUsd).toBeCloseTo(2.5, 6);
+  });
+
+  it("respects since/until/limit", async () => {
+    seed("wf_a", T);
+    seed("wf_b", T + 5000);
+    const ranged = (await (await fetch(`${base}/api/workflows?since=${T + 1}`)).json()) as any;
+    expect(ranged.runs.map((r: any) => r.run_id)).toEqual(["wf_b"]);
+    const capped = (await (await fetch(`${base}/api/workflows?limit=1`)).json()) as any;
+    expect(capped.runs.length).toBe(1);
+  });
+
+  it("ignores malformed params rather than erroring", async () => {
+    const res = await fetch(`${base}/api/workflows?since=abc&until=xyz&limit=nope`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(((await res.json()) as any).runs)).toBe(true);
+  });
+
+  it("keeps workflows OUT of the state blob (buildState must not get slower)", () => {
+    const state = buildState(store) as any;
+    expect(state.workflows).toBeUndefined();
+  });
+});
+
 describe("todo input validation", () => {
   it("rejects malformed JSON on POST with 400", async () => {
     const res = await fetch(`${base}/api/todos`, {
