@@ -451,6 +451,13 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const offsets = new Map(store.workflowAgentOffsets(t.run_id).map((o) => [o.agent_id, o.offset]));
   const files: { agent_id: string; path: string }[] = [];
   let grew = false;
+  // Rule 3's hedge is specifically about an append to an ALREADY-TRACKED
+  // transcript (one with a stored offset) — that's what leaves the dir mtime
+  // alone. A brand-new agent file trivially satisfies `size > 0` on the tick
+  // that first sees it (offset defaults to 0), which is a discovery, not an
+  // append-without-motion; keeping the two separate matters below, where only
+  // genuine re-growth should bump the persisted last_seen_at (finding 3).
+  let existingAgentGrew = false;
   for (const name of readdirSafe(t.dir)) {
     const m = AGENT_RE.exec(name);
     if (!m) continue;
@@ -465,6 +472,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // Rule 3's hedge: an append to an EXISTING transcript leaves the dir mtime
     // alone, so file growth is checked independently.
     if (size > (offsets.get(m[1]) ?? 0)) grew = true;
+    if (offsets.has(m[1]) && size > offsets.get(m[1])!) existingAgentGrew = true;
   }
 
   const dirMoved = !prev || prev.last_seen_at == null || mtime > prev.last_seen_at;
@@ -529,7 +537,22 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
 
   const manifestById = new Map((manifest?.agents ?? []).map((a) => [a.agent_id, a]));
   const ids = new Set<string>([...files.map((f) => f.agent_id), ...journalAgents.keys(), ...manifestById.keys()]);
-  const quiet = now - mtime > WF_QUIET_MS;
+  // Rule 3's other half: an append to an ALREADY-TRACKED transcript never
+  // bumps the dir mtime, but the run is still ACTIVE — `existingAgentGrew`
+  // un-settles this exactly like fresh dir motion would (spec §1.4: "dir
+  // mtime advanced OR any agent file grew ──► back to ACTIVE").
+  // `effectiveLastSeenAt` is what gets PERSISTED and is therefore what
+  // deriveRunState sees on every later read (liveWorkflows, the next tick's
+  // `prev`): on genuine re-growth it is bumped to `now` so the run reads
+  // un-settled until the next real quiet window, exactly like a dir-mtime
+  // bump would. Without this, growth un-settles the SCANNER (cost keeps
+  // tailing) but never the DERIVED state, and the run silently vanishes from
+  // the live strip while still spending. A brand-new agent file (no stored
+  // offset yet) must NOT trigger this — that is ordinary discovery, and a
+  // historical run backfilled with a genuinely stale dir must still read as
+  // settled/orphaned at its real last_seen_at.
+  const quiet = !existingAgentGrew && now - mtime > WF_QUIET_MS;
+  const effectiveLastSeenAt = existingAgentGrew ? Math.max(mtime, now) : mtime;
 
   let ccVersion: string | null = null;
   let recorded = false;
@@ -603,7 +626,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // Stored whenever the FILE exists, parsed or not: a corrupt manifest that is
     // later fixed in place must still re-trigger on its new mtime.
     manifest_mtime: manifestMtime,
-    last_seen_at: mtime, // the DIR's mtime, not the tick's clock
+    last_seen_at: effectiveLastSeenAt, // the DIR's mtime, bumped to `now` on growth-only motion (rule 3)
     schema_ok: !error,
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
@@ -618,7 +641,12 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   stateCache.set(
     t.run_id,
     deriveRunState(
-      { manifest_seen: !!manifest, status: manifest?.status ?? null, last_seen_at: mtime, session_status: prev?.session_status ?? "working" },
+      {
+        manifest_seen: !!manifest,
+        status: manifest?.status ?? null,
+        last_seen_at: effectiveLastSeenAt,
+        session_status: prev?.session_status ?? "working",
+      },
       now
     )
   );

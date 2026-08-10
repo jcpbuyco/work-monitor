@@ -390,6 +390,26 @@ describe("scanWorkflows", () => {
     expect(total.c).toBe(2);
   });
 
+  it("un-settles the DERIVED STATE, not just the scanner's re-scan, when a file grows without a dir-mtime change (finding 3)", () => {
+    // Spec §1.4's diagram: "dir mtime advanced OR any agent file grew ──► back
+    // to ACTIVE (un-settle)". `grew` forces scanRun to keep tailing (asserted
+    // above), but last_seen_at (what deriveRunState actually reads) must also
+    // reflect that motion, or the run keeps reading "settled" and vanishes from
+    // liveWorkflows() while it is still spending.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const quiet = NOW - 60 * 60 * 1000;
+    setMtime(runDir, quiet);
+    scanWorkflows(store, NOW); // discovery: manifest present + stale dir ⇒ settles immediately
+    expect(store.liveWorkflows(NOW)).toEqual([]);
+
+    appendFileSync(join(runDir, "agent-a1.jsonl"), agentLine("u-late"));
+    setMtime(runDir, quiet); // appending never touches the dir mtime, exactly as on disk
+    scanWorkflows(store, NOW);
+    const live = store.liveWorkflows(NOW);
+    expect(live.map((w) => w.run_id)).toContain("wf_t1");
+    expect(live.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+  });
+
   it("keeps tailing after a manifest appears — a manifest is terminal for STRUCTURE only (C6)", () => {
     const { store, sessionDir, runDir } = makeRun({ agents: ["a1"] });
     setMtime(runDir, NOW - 60 * 60 * 1000);
