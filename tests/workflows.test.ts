@@ -495,6 +495,33 @@ describe("scanWorkflows", () => {
     // Steady state: the unparseable manifest must not count as "new" forever,
     // or Step 4 would broadcast an SSE event every 5s until the run dir ages out.
     expect(scanWorkflows(store, NOW + 10_000).changed).toBe(false);
+    // Extend across several more ticks: index.ts's broadcast is gated on
+    // `if (changed) sse.broadcast('workflows', live)`, so `changed: false` here IS
+    // the "no broadcast" guarantee — a corrupt manifest that stays corrupt must
+    // never re-trigger the SSE `workflows` event on every 5s tick.
+    expect(scanWorkflows(store, NOW + 15_000).changed).toBe(false);
+    expect(scanWorkflows(store, NOW + 20_000).changed).toBe(false);
+  });
+});
+
+describe("scanWorkflows live payload", () => {
+  it("returns the live run list alongside the changed flag", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    setMtime(runDir, NOW - 1000);
+    const first = scanWorkflows(store, NOW);
+    expect(first.changed).toBe(true);
+    expect(first.live.map((w) => w.run_id)).toEqual(["wf_t1"]);
+    expect(first.live[0].costUsd).toBeCloseTo(5, 6);
+    expect(first.live[0].agents[0].agent_id).toBe("a1");
+  });
+
+  it("returns an empty live list once every run has settled", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    const again = scanWorkflows(store, NOW);
+    expect(again.changed).toBe(false);
+    expect(again.live).toEqual([]);
   });
 });
 

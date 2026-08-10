@@ -1,6 +1,6 @@
 import { readdirSync, statSync, readFileSync, openSync, fstatSync, readSync, closeSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { Store } from "./store.ts";
+import type { Store, LiveWorkflow } from "./store.ts";
 import { takeUsage } from "./usage.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS, CLAUDE_PROJECTS_DIR } from "./config.ts";
 import { truncate } from "./derive.ts";
@@ -591,7 +591,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
 
 /** One tick. Discovery is per-session `readdir` (~100µs), never a glob — the only
  *  global glob in this feature is the one-time startup backfill. */
-export function scanWorkflows(store: Store, now: number): { changed: boolean } {
+export function scanWorkflows(store: Store, now: number): { changed: boolean; live: LiveWorkflow[] } {
   let changed = false;
   const targets = new Map<string, RunTarget>();
 
@@ -616,7 +616,7 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
       if (logOnce(t.run_id, err)) bumpDegraded();
     }
   }
-  return { changed };
+  return { changed, live: store.liveWorkflows(now) };
 }
 
 /** One-time startup pass over every run dir on disk. This is the ONLY place a

@@ -70,10 +70,13 @@ setInterval(() => {
 if (WORKFLOWS_ENABLED) {
   setInterval(() => {
     try {
-      scanWorkflows(store, Date.now());
+      const { changed, live } = scanWorkflows(store, Date.now());
+      // Broadcast ONLY on change — a tick that just re-stats and finds nothing
+      // sends nothing. And never pushState(): buildState() is 243ms.
+      if (changed) sse.broadcast("workflows", live);
     } catch (err) {
-      // A whole-tick failure is one cause, not one per 5s: logOnce returns true
-      // only when it actually logged, and the counter follows it (§5.5).
+      // Unchanged from Task 13: the counter is gated on logOnce's boolean, so a
+      // tick that fails every 5s counts once, not 720 times an hour (§5.5).
       if (logOnce("wf-scan", err)) bumpDegraded();
     }
   }, WF_TICK_MS);
