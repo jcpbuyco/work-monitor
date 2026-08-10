@@ -13,7 +13,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
         <span className="inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           <span className="relative flex h-2 w-2" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+            <span className="am-ping absolute inline-flex h-full w-full rounded-full bg-primary/60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
           </span>
           ⚡ Live activity

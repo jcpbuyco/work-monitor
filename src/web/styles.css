@@ -169,9 +169,9 @@ dialog::backdrop { background: hsl(var(--surface-0) / .6); backdrop-filter: blur
 .am-anim dialog[open]           { animation: am-pop var(--t-pop) var(--ease); }
 .am-anim dialog[open]::backdrop { animation: am-backdrop var(--t-pop) var(--ease); }
 
-/* These three replace Tailwind's animate-spin / animate-pulse / animate-ping,
-   which carry NO `.am-anim` ancestor requirement and therefore ignored the
-   Motion toggle entirely. */
+/* These three replace Tailwind's stock spin/pulse/ping utilities, which carry
+   NO `.am-anim` ancestor requirement and therefore ignored the Motion toggle
+   entirely. */
 .am-anim .am-spin  { animation: am-spin 1.4s linear infinite; }
 .am-anim .am-pulse { animation: am-pulse 2s var(--ease) infinite; }
 .am-anim .am-ping  { animation: am-ping 1.8s var(--ease) infinite; }

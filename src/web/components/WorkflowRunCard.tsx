@@ -5,7 +5,7 @@ import { statusClass, statusKnown } from "../workflowStatus.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
 
 const AGENT_DOT: Record<string, string> = {
-  running: "bg-working animate-pulse",
+  running: "bg-working am-pulse",
   done: "bg-idle",
   abandoned: "bg-attention/60",
 };

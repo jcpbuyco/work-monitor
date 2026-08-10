@@ -52,7 +52,7 @@ export function SessionCard({
         className="mt-0.5 inline-flex items-center gap-1.5 text-2xs font-semibold"
         style={{ color: `hsl(${st.accent})` }}
       >
-        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}${st.pulse ? " animate-pulse" : ""}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}${st.pulse ? " am-pulse" : ""}`} />
         {st.label}
       </div>
       <div className="mt-1.5 text-xs text-muted-foreground">
@@ -65,7 +65,7 @@ export function SessionCard({
       )}
       {isWorking && s.active_tool ? (
         <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working">
-          <span className="inline-block animate-spin" aria-hidden="true">⟳</span>
+          <span className="am-spin inline-block" aria-hidden="true">⟳</span>
           <span className="truncate">{prettyTool(s.active_tool)}…</span>
         </div>
       ) : isWorking && latestTool ? (
