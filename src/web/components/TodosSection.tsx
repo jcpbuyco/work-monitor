@@ -40,7 +40,10 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
           {open.length === 0 ? (
             <div className="py-3 text-xs text-ink-4">Nothing open. 🎉</div>
           ) : (
-            <div data-testid="todos-scroller" className="max-h-[40vh] overflow-y-auto pr-1">
+            // -mx/px compensation gives ROW_BASE's -mx-1.5 hover pills room inside
+            // the scroller — without it every row overflows 6px per side and a
+            // permanent horizontal scrollbar appears. Content x-position unchanged.
+            <div data-testid="todos-scroller" className="max-h-[40vh] overflow-y-auto -mx-1.5 px-1.5">
               {/* the columns-1 sm:columns-2 xl:columns-3 masonry is deleted */}
               {open.map((t) => (
                 <TodoCard key={t.id} t={t} onOpen={setSelected} />

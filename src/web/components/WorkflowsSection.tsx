@@ -29,7 +29,8 @@ export function WorkflowsSection({ workflows }: { workflows: LiveWorkflow[] }) {
         }
       />
       {!collapsed && (
-        <div className="am-fade-in max-h-[40vh] overflow-y-auto pr-1">
+        // see TodosSection: the scroller must absorb ROW_BASE's -mx-1.5 or it overflows
+        <div className="am-fade-in max-h-[40vh] overflow-y-auto -mx-1.5 px-1.5">
           {workflows.map((w) => (
             <WorkflowRunCard key={w.run_id} w={w} />
           ))}
