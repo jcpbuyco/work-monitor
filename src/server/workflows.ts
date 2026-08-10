@@ -41,25 +41,34 @@ export function deriveRunState(
  *  pricing.ts. Keys are run ids — once per run, not per tick (§5.5). */
 const warnedRuns = new Set<string>();
 
-/** Last derived state (`running`/`settled`/`orphaned`) broadcast for each run,
- *  keyed per Store so tests using fresh in-memory stores never see another
- *  test's residual state. deriveRunState is a pure function of stored fields
- *  and `now` — the ACTIVE→SETTLED (and running→orphaned) transition fires
- *  purely from the passage of time, with nothing on disk moving, so it can
- *  only be caught by comparing against a remembered previous value (§1.4,
- *  §3.1 "a state transition" is a change that must broadcast). */
-const lastRunState = new WeakMap<Store, Map<string, "running" | "settled" | "orphaned">>();
+/** The serialized `liveWorkflows` payload last put on the wire (§3.1).
+ *
+ *  This is THE broadcast contract, and the only one: a tick broadcasts when —
+ *  and only when — the payload it would send differs from the one the client
+ *  already has. No scan signal, derived-state cache or `changed` boolean feeds
+ *  that decision any more, so there is nothing left for it to disagree with.
+ *  Two rejected attempts died on exactly that disagreement: a remembered
+ *  derived state computed from one liveness value while the payload was
+ *  rendered from another flip-flopped every tick (19 identical-payload
+ *  broadcasts over 20 ticks) or latched onto a false transition and masked the
+ *  real one forever. A diff of the thing actually being sent cannot do either.
+ *
+ *  Keyed per Store for the same reason `crosschecked` is: production has one
+ *  Store for the process lifetime (so this is a plain module-level "last
+ *  payload" string), while tests build a fresh in-memory Store each and must
+ *  never inherit another test's residual value. */
+const lastBroadcast = new WeakMap<Store, string>();
 
 /** Run ids for which the §5.8 "manifest reports tokens but we ingested none"
- *  cross-check has already had its one shot, keyed per Store like
- *  `lastRunState` (a fresh Store per test means no cross-test pollution). The
- *  check needs a full pass (to re-read the manifest and query the usage
- *  rollup), but the disk-motion flags below are false BY DEFINITION on the
- *  exact tick a run goes quiet — that's what "settled" means — so without
- *  this a run discovered while ACTIVE would hit the cheap-re-stat early
- *  return forever and never get checked (findings 5 & 7). Marking it done
- *  after the one forced pass keeps that pass a one-time cost per run, not a
- *  recurring one. */
+ *  cross-check has already had its one shot, keyed per Store (a fresh Store per
+ *  test means no cross-test pollution). The check needs a full pass (to re-read
+ *  the manifest and query the usage rollup), but the disk-motion flags below
+ *  are false BY DEFINITION on the exact tick a run goes quiet — that's what
+ *  "settled" means — so without this a run discovered while ACTIVE would hit
+ *  the cheap-re-stat early return forever and never get checked (findings 5 &
+ *  7). The shot is consumed after ONE attempt whatever that attempt found, so
+ *  the forced pass is a one-time cost per run and can never become a recurring
+ *  one. */
 const crosschecked = new WeakMap<Store, Set<string>>();
 
 /** Process-lifetime counter of parse failures, unknown journal line types and
@@ -461,9 +470,13 @@ function readAgentHeader(path: string): ReturnType<typeof parseAgentHeader> {
 }
 
 /** Scan one run dir: refresh structure, then tail every agent transcript.
- *  Returns true when anything changed (new run, dir moved, manifest arrived or was
- *  rewritten in place, or usage recorded) — the `changed` contract the SSE
- *  broadcast keys off.
+ *
+ *  Returns true when this pass changed something durable (new run, disk motion,
+ *  manifest arrived or was rewritten in place, or usage recorded). That boolean
+ *  is INTERNAL BOOKKEEPING ONLY — the SSE broadcast no longer keys off it, or
+ *  off anything else this function knows. Whether the client is told is decided
+ *  in workflowTick by diffing the payload itself (§3.1).
+ *
  *  Throws only on a stat of the run dir itself; the caller catches. */
 export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const dirStat = statSync(t.dir);
@@ -499,15 +512,18 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const offsets = new Map(store.workflowAgentOffsets(t.run_id).map((o) => [o.agent_id, o.offset]));
   const files: { agent_id: string; path: string }[] = [];
   let grew = false;
-  // last_seen_at (spec §1.4, finding-3 redo): dir mtime OR the newest mtime
-  // among this run's agent-*.jsonl / journal.jsonl files — PURE disk truth,
-  // never `now`. An append bumps that FILE's own mtime even when it leaves
-  // the run dir's mtime untouched (rule 3: "an append to an ALREADY-TRACKED
-  // transcript... leaves the dir mtime alone"), so this un-settles a growing
-  // run without ever fabricating a clock reading, and it settles correctly
-  // the instant real writes stop — including a transcript stuck at
-  // size > offset forever (an unterminated trailing line): its mtime freezes
-  // the moment writes actually stop, independent of the offset.
+  // last_seen_at (spec §1.4): the BLEND — max(run dir mtime, journal.jsonl
+  // mtime, every agent-*.jsonl mtime). PURE disk truth, never `now`. An append
+  // bumps that FILE's own mtime even when it leaves the run dir's mtime
+  // untouched (rule 3: "an append to an ALREADY-TRACKED transcript... leaves
+  // the dir mtime alone"), so this un-settles a growing run without ever
+  // fabricating a clock reading, and it settles correctly the instant real
+  // writes stop — including a transcript stuck at size > offset forever (an
+  // unterminated trailing line): its mtime freezes the moment writes actually
+  // stop, independent of the offset.
+  //
+  // The SAME value is the full-pass trigger below, the `quiet` input, and what
+  // gets persisted — one number, three uses, incapable of disagreeing.
   let lastSeenAt = mtime;
   for (const name of readdirSafe(t.dir)) {
     const m = AGENT_RE.exec(name);
@@ -535,44 +551,35 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     if (journalMtime > lastSeenAt) lastSeenAt = journalMtime;
   } catch {}
 
-  // Structural motion of the DIR ITSELF — a brand-new agent file (or the dir
-  // touched for any other reason) bumps the dir's own mtime; an append to an
-  // already-tracked transcript does not (rule 3). Deliberately narrower than
-  // `lastSeenAt` above: this feeds the early-return bypass and the `changed`
-  // broadcast decision below, and folding ordinary file growth into it would
-  // broadcast on every tick a transcript merely grows, regardless of whether
-  // that growth actually changed anything worth showing on the client (the
-  // re-verify's regression (b): 19 identical-payload broadcasts over 20
-  // ticks). Liveness itself un-settles via `lastSeenAt`/`stateChanged` below,
-  // never via this flag.
-  const dirMoved = !prev || prev.last_seen_at == null || mtime > prev.last_seen_at;
+  // THE full-pass trigger: did the disk move? `lastSeenAt` is the blend above,
+  // and the value stored on the previous full pass is the same blend, so this
+  // asks precisely "has ANY file this run writes been touched since we last
+  // looked properly" — dir, journal or transcript alike. Nothing else is
+  // needed and nothing else is trusted; in particular this is deliberately NOT
+  // the raw dir mtime, which for an ordinary long-running workflow is touched
+  // once, at creation, and never again (a journal append or a transcript
+  // append would otherwise be invisible — the rejected journal-append hole).
+  const diskMoved = !prev || prev.last_seen_at == null || lastSeenAt > prev.last_seen_at;
 
-  // Rule 1.4 / §3.1: the ACTIVE→SETTLED (and running→orphaned) transition is
-  // purely time-based — WF_QUIET_MS elapses with nothing on disk moving — so
-  // none of the disk-motion checks above ever see it. Compare the freshly
-  // derived state against the last one we computed for this run and treat a
-  // flip as a change even when nothing else did; otherwise a finished run
-  // never gets re-broadcast and stays "running" on the client forever
-  // (findings 1 & 2).
+  // §5.8's cross-check needs a full pass to re-read the manifest's
+  // total_tokens_reported and query the usage rollup. Force exactly one when a
+  // previously-known run first reads settled — otherwise a run discovered while
+  // ACTIVE hits the cheap re-stat below forever and the check written
+  // specifically for silently-wrong cost never runs for it (findings 5 & 7).
   //
-  // Single source of truth (finding-3 redo): this MUST use the same
-  // `lastSeenAt` that gets persisted below and that liveWorkflows/deriveRunState
-  // read back later — never the raw dir `mtime` alone. Reading raw `mtime`
-  // here while persisting a different value is exactly what re-opened
-  // findings 1&2 in the rejected fix: a long-running workflow's dir mtime is
-  // permanently "quiet" on its own (only file appends keep it alive), so a
-  // pre-pass check pinned to raw `mtime` sees "settled" on every tick
-  // regardless of real activity, corrupting this cache with a false
-  // transition and permanently masking the real one.
-  let stateCache = lastRunState.get(store);
-  if (!stateCache) {
-    stateCache = new Map();
-    lastRunState.set(store, stateCache);
+  // `manifest_seen` here is the PERSISTED, sticky value — never this pass's
+  // parse result, which does not exist yet and, when the manifest is
+  // momentarily unreadable, would flip a settled run to "orphaned" and back on
+  // alternating ticks.
+  let cc = crosschecked.get(store);
+  if (!cc) {
+    cc = new Set();
+    crosschecked.set(store, cc);
   }
-  let stateChanged = false;
-  let derivedState: "running" | "settled" | "orphaned" | null = null;
-  if (prev) {
-    derivedState = deriveRunState(
+  const needsCrosscheck =
+    !!prev &&
+    !cc.has(t.run_id) &&
+    deriveRunState(
       {
         manifest_seen: !!prev.manifest_seen,
         status: prev.status,
@@ -580,43 +587,52 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
         session_status: prev.session_status,
       },
       now
-    );
-    stateChanged = stateCache.get(t.run_id) !== derivedState;
-    stateCache.set(t.run_id, derivedState);
+    ) === "settled";
+
+  // Cheap re-stat only. This path persists NOTHING — and is correct by
+  // construction, because "quiet" now MEANS the blend did not advance, so
+  // there is nothing to write back.
+  if (prev && !diskMoved && !grew && !manifestNew && !manifestRewritten && !needsCrosscheck) return false;
+
+  // Reading the manifest and PARSING it are different failures and must be
+  // reported differently. A read that throws (permissions, a half-replaced
+  // file) tells us nothing new about structure, so it must leave structure
+  // exactly as it was — most importantly it must NOT be mistaken for "no
+  // manifest", which would un-settle the run and make it bypass the early
+  // return forever.
+  let manifestText: string | null = null;
+  let manifestReadErr: unknown = null;
+  if (manifestExists) {
+    try {
+      manifestText = readFileSync(manifestPath, "utf8");
+    } catch (err) {
+      manifestReadErr = err;
+    }
   }
-
-  // §5.8's cross-check needs a full pass to re-read the manifest's
-  // total_tokens_reported and query the usage rollup. Force exactly one when
-  // a previously-known run has just settled and has never been checked —
-  // otherwise a run discovered while ACTIVE hits the cheap re-stat below
-  // forever and the check written specifically for silently-wrong cost never
-  // runs for it (findings 5 & 7). Consumption itself (`cc.add`) is deferred
-  // until the check has actually run against a successfully-parsed manifest,
-  // below — marking it here would spend the run's one shot on a pass where
-  // the manifest exists but fails to parse (or existed only transiently),
-  // permanently losing the check for a run that never gets a valid manifest
-  // until later.
-  let cc = crosschecked.get(store);
-  if (!cc) {
-    cc = new Set();
-    crosschecked.set(store, cc);
-  }
-  const needsCrosscheck = !!prev && derivedState === "settled" && !cc.has(t.run_id);
-  // NOTE: cc.add(t.run_id) happens below, only once the check has actually run
-  // against a successfully-parsed manifest — see the comment above `cc`.
-
-  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten && !needsCrosscheck) return stateChanged; // cheap re-stat only
-
-  const manifest = manifestExists ? parseManifest(readFileSafe(manifestPath)) : null;
+  const manifest = manifestText != null ? parseManifest(manifestText) : null;
   let error: string | null = null;
-  if (manifestExists && !manifest) error = "manifest: not valid JSON";
+  if (manifestReadErr) {
+    // Qualified key, like the `:scan` and `:journal-types` causes: an
+    // unreadable manifest must not consume the bare run id's one log slot,
+    // which belongs to the parse failure.
+    if (logOnce(`${t.run_id}:manifest-read`, manifestReadErr)) bumpDegraded();
+  } else if (manifestExists && !manifest) error = "manifest: not valid JSON";
   else if (manifest && !manifest.schema_ok) error = manifest.error;
   // logOnce returns true only on the pass that actually logged; gating the counter
   // on it makes workflows_degraded once-per-run-per-cause, not once-per-5s-tick.
   if (error && logOnce(t.run_id, error)) bumpDegraded();
 
+  // STICKY structure (§1.4): a manifest that has ever been seen has been seen.
+  // `!!manifest` is this pass's parse result and must never feed state — the
+  // persisted flag is what deriveRunState reads at read time, so anything here
+  // that derives state from the momentary result instead flip-flops the run
+  // between settled and orphaned on alternating ticks. The MAX() in
+  // upsertWorkflowRun keeps the column sticky too; this makes the intent local
+  // and covers the agent-level state derivation below as well.
+  const manifestSeen = !!manifest || !!prev?.manifest_seen;
+
   const journalLines = readFileSafe(join(t.dir, "journal.jsonl")).split("\n");
-  const { agents: journalAgents, unknownTypes } = parseJournal(journalLines, { manifestPresent: !!manifest });
+  const { agents: journalAgents, unknownTypes } = parseJournal(journalLines, { manifestPresent: manifestSeen });
   if (unknownTypes > 0 && logOnce(`${t.run_id}:journal-types`, `${unknownTypes} unknown journal line type(s)`)) {
     bumpDegraded(unknownTypes);
   }
@@ -624,7 +640,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // The script is the only LIVE source of phase titles; once a manifest exists it
   // is strictly better, so don't pay for the read.
   let script: { name: string | null; phases: Phase[] } = { name: null, phases: [] };
-  if (!manifest) {
+  if (!manifestSeen) {
     // Primary lookup: one readdir of a small dir, every ACTIVE tick.
     let scriptPath = findScriptFile(sessionDir, t.run_id);
     // Fallback (C9): 3 of 20 runs park their script under a SIBLING project slug
@@ -711,46 +727,22 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     agent_count: manifest?.agent_count ?? null,
     phases: phases.length ? JSON.stringify(phases) : null,
     cc_version: ccVersion,
-    manifest_seen: !!manifest,
+    manifest_seen: manifestSeen, // sticky — see above
     // Stored whenever the FILE exists, parsed or not: a corrupt manifest that is
     // later fixed in place must still re-trigger on its new mtime.
     manifest_mtime: manifestMtime,
-    last_seen_at: lastSeenAt, // dir mtime OR newest run-file mtime — pure disk truth (spec §1.4)
+    last_seen_at: lastSeenAt, // the blend — pure disk truth (spec §1.4)
     schema_ok: !error,
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
 
-  // Refresh the state cache with what was just written, so the next tick's
-  // cheap-re-stat comparison (above) starts from an accurate baseline instead
-  // of the pre-scan value. `session_status` isn't otherwise needed on this
-  // path (the scanner deliberately never calls deriveRunState for its own
-  // purposes — see the NOTE above); `prev`'s is close enough for a freshly
-  // discovered or just-rescanned run, and any drift self-corrects on the very
-  // next tick once `prev` is re-read from the row this upsert just wrote.
-  stateCache.set(
-    t.run_id,
-    deriveRunState(
-      {
-        manifest_seen: !!manifest,
-        status: manifest?.status ?? null,
-        last_seen_at: lastSeenAt,
-        session_status: prev?.session_status ?? "working",
-      },
-      now
-    )
-  );
-
   // Cross-check §5.8 — PRESENCE, not proportion. Claude Code's `totalTokens` is
   // not comparable to our rollup (24x–276x across 19 manifests), so the only
-  // sound signal is "it says tokens were burned and we ingested none".
-  //
-  // Consumption is marked HERE, only once the check has actually run against a
-  // successfully-parsed manifest — never at `needsCrosscheck`'s computation
-  // above. A null `manifest` (parse failure, or a manifest that hasn't landed
-  // yet despite `derivedState` reading "settled") must leave the run's one
-  // shot unspent so a later pass, once the manifest is readable, still gets
-  // to run it.
-  if (needsCrosscheck && manifest) cc.add(t.run_id);
+  // sound signal is "it says tokens were burned and we ingested none". It runs
+  // on any full pass that can actually answer the question, which is what
+  // covers backfilled historical runs (they are settled on first sight, so
+  // `needsCrosscheck` — which requires a previously-known run — is false for
+  // them).
   if (manifest && quiet && (manifest.total_tokens_reported ?? 0) > 0) {
     const row = store.db
       .query(
@@ -764,20 +756,39 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     }
   }
 
-  // `stateChanged` covers a full pass that was forced purely by a derived
-  // state transition or a cross-check due (findings 1, 2, 5, 7) — none of
-  // dirMoved/manifestNew/manifestRewritten/recorded need be true in that case.
-  return recorded || dirMoved || manifestNew || manifestRewritten || !prev || stateChanged;
+  // The §5.8 one-shot is consumed HERE, after ONE attempt, whatever that
+  // attempt found. A run whose manifest cannot be read (or has not landed
+  // despite the run reading settled) would otherwise re-force a full pass on
+  // every 5s tick for the rest of the process's life — the check is a
+  // best-effort diagnostic, not something worth an unbounded retry. The skipped
+  // case is reported instead, once, so it is visible rather than silent.
+  if (needsCrosscheck) {
+    cc.add(t.run_id);
+    if (
+      !manifest &&
+      logOnce(`${t.run_id}:crosscheck-skipped`, "settled with no readable manifest — §5.8 cross-check skipped")
+    ) {
+      bumpDegraded();
+    }
+  }
+
+  // Durable-change bookkeeping for scanWorkflows' `changed` return. NOT a
+  // broadcast signal: a full pass forced purely by the cross-check changes
+  // nothing and correctly reports false, while a time-only ACTIVE→SETTLED
+  // transition never reaches this line at all — both are handled by
+  // workflowTick's payload diff, which sees them because it re-derives the
+  // payload every tick (§3.1).
+  return recorded || diskMoved || manifestNew || manifestRewritten || !prev;
 }
 
-/** One tick. Discovery is per-session `readdir` (~100µs), never a glob — the only
- *  global glob in this feature is the one-time startup backfill.
+/** One scan pass over every run worth touching. Discovery is per-session
+ *  `readdir` (~100µs), never a glob — the only global glob in this feature is
+ *  the one-time startup backfill.
  *
- *  Returns `changed` ONLY — no `live` payload. Computing `store.liveWorkflows()`
- *  costs 4 SQL queries, and the vast majority of ticks find nothing new; paying
- *  for it here would mean paying it on every 5s tick regardless of whether
- *  anyone ever looks at the result. That cost belongs to whoever actually needs
- *  the list — `workflowTick()`, and only on the branch where `changed` is true. */
+ *  Returns `changed` ONLY — no `live` payload; computing one here would pay for
+ *  it on every 5s tick regardless of who is looking. The boolean is internal
+ *  bookkeeping ("did this pass write anything durable"), NOT the broadcast
+ *  gate: workflowTick decides that by diffing the payload (§3.1). */
 export function scanWorkflows(store: Store, now: number): { changed: boolean } {
   let changed = false;
   const targets = new Map<string, RunTarget>();
@@ -818,20 +829,43 @@ export interface BroadcastHub {
   broadcast(event: string, payload: unknown): void;
 }
 
-/** One 5s tick, in full: scan every run, and broadcast the live list ONLY when
- *  something changed. A tick that just re-stats and finds nothing sends
- *  nothing — and, per scanWorkflows' contract above, never even computes the
- *  live payload in that case. `store.liveWorkflows(now)` is called from THIS
- *  gated branch, not from scanWorkflows.
+/** One 5s tick, in full: scan every run, then broadcast the live list ONLY when
+ *  it differs from the list the client already has (§3.1).
  *
- *  Never calls pushState()/broadcasts "state": buildState() is 243ms and a 5s
- *  full-state broadcast would burn ~5% CPU permanently. Usage this tick records
- *  therefore does not reach the cost panels until the next 60s sweep; that
- *  asymmetry is accepted. This is the one place index.ts's setInterval calls into. */
+ *  BROADCAST = PAYLOAD DIFF, and nothing else. The payload is re-derived every
+ *  tick and compared, as a string, against the last one sent; `scanWorkflows`'
+ *  `changed` return is deliberately ignored here. That is what makes the two
+ *  hard cases fall out for free instead of needing their own signals: an
+ *  ACTIVE→SETTLED (or running→orphaned) flip caused purely by the passage of
+ *  time moves the payload with nothing on disk moving (findings 1 & 2), while a
+ *  transcript that grows every tick without changing cost or state does NOT move
+ *  it and stays silent. Every rejected attempt at this feature failed by
+ *  broadcasting off a signal that could disagree with the payload; a diff of the
+ *  payload itself has nothing to disagree with.
+ *
+ *  Cost when everything is settled: `liveWorkflows` is finding-6's single SQL
+ *  query returning no rows (the settled predicate lives in its WHERE clause, so
+ *  nothing is hydrated), plus a string compare. The 243ms `buildState()` stays
+ *  off this tick entirely — it never calls pushState()/broadcasts "state",
+ *  because a 5s full-state broadcast would burn ~5% CPU permanently. Usage this
+ *  tick records therefore does not reach the cost panels until the next 60s
+ *  sweep; that asymmetry is accepted. This is the one place index.ts's
+ *  setInterval calls into.
+ *
+ *  `JSON.stringify` is a sound diff basis here because the payload is stable
+ *  across quiet ticks: every key order is fixed by the object literals
+ *  `liveWorkflows`/`hydrateWorkflowRuns` build, row order by their ORDER BY
+ *  clauses, and NO field is derived from `now` except the discrete `state` —
+ *  elapsed times are computed client-side from `started_at` (useNow), never
+ *  sent. A field that moved with the clock would make every tick a "change". */
 export function workflowTick(store: Store, hub: BroadcastHub, now: number): void {
   try {
-    const { changed } = scanWorkflows(store, now);
-    if (changed) hub.broadcast("workflows", store.liveWorkflows(now));
+    scanWorkflows(store, now);
+    const payload = store.liveWorkflows(now);
+    const serialized = JSON.stringify(payload);
+    if (lastBroadcast.get(store) === serialized) return;
+    lastBroadcast.set(store, serialized);
+    hub.broadcast("workflows", payload);
   } catch (err) {
     // Unchanged from Task 13: the counter is gated on logOnce's boolean, so a
     // tick that fails every 5s counts once, not 720 times an hour (§5.5).

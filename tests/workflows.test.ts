@@ -1,5 +1,14 @@
 import { describe, it, expect } from "bun:test";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, utimesSync, rmSync } from "node:fs";
+import {
+  readFileSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  appendFileSync,
+  utimesSync,
+  rmSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/server/store.ts";
@@ -892,6 +901,120 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
       workflowTick(store, hub, tick);
     }
     expect(hub.calls.length).toBe(2); // no phantom "running" card, no broadcast storm
+  });
+
+  // --- the two defects the re-verify of 38c81b9 rejected. Both come from the
+  // same root cause: the full-pass decision and the broadcast decision hung off
+  // signals OTHER than "did the disk move" / "did the payload change", so each
+  // could disagree with the disk (and with each other).
+
+  it("a manifest that parsed once and then becomes unreadable never re-triggers a full pass or a broadcast (rejection defect i)", () => {
+    resetDegraded();
+    const { store, runDir, sessionDir } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json"),
+    });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const born = NOW - 2 * WF_QUIET_MS; // quiet from a standing start
+    setMtime(runDir, born);
+    setMtime(agentPath, born);
+    setMtime(manifestPath, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: manifest parses, run is settled
+    expect(hub.calls.length).toBe(1);
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1);
+
+    // The manifest is still THERE — statSync succeeds and its mtime never moves
+    // — but it can no longer be READ (a permission flip, a half-replaced file,
+    // an FS hiccup). Nothing about the RUN changed: it is quiet, settled, and
+    // must stay that way. `!!manifest` (this pass's parse result) is now false
+    // while the PERSISTED manifest_seen is still 1, and only the persisted one
+    // may feed state.
+    chmodSync(manifestPath, 0o000);
+
+    let fullPasses = 0;
+    const upsert = store.upsertWorkflowRun.bind(store);
+    store.upsertWorkflowRun = (r) => {
+      fullPasses++;
+      upsert(r);
+    };
+
+    // One full pass is legitimately still owed: the §5.8 cross-check gets a
+    // single forced pass when a tracked run first reads settled. It must
+    // consume that shot HERE, on its one attempt, even though the manifest it
+    // wanted to read is unreadable — otherwise it re-forces a pass forever.
+    workflowTick(store, hub, NOW + 5_000);
+    expect(fullPasses).toBe(1);
+    const degradedAfterOneShot = workflowsDegraded();
+    expect(degradedAfterOneShot).toBeGreaterThan(0); // the skip IS reported...
+
+    // ...and then nothing, ever again: no full pass, no broadcast, no degraded
+    // bump, and no flip-flop between "settled" (persisted manifest_seen) and
+    // "orphaned" (this pass's failed read).
+    let tick = NOW + 5_000;
+    for (let i = 0; i < 25; i++) {
+      tick += 5_000;
+      workflowTick(store, hub, tick);
+    }
+    expect(fullPasses).toBe(1);
+    expect(hub.calls.length).toBe(1);
+    expect(workflowsDegraded()).toBe(degradedAfterOneShot); // once per run, not per tick
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1); // sticky
+    expect(store.liveWorkflows(tick)).toEqual([]); // still settled, never orphaned
+    chmodSync(manifestPath, 0o600); // leave the temp tree removable
+  });
+
+  it("a journal-only append triggers a full pass, ingests the new agent, advances last_seen_at, and broadcasts exactly once (rejection defect ii)", () => {
+    const jline = (o: Record<string, string>) => JSON.stringify(o) + "\n";
+    const { store, runDir } = makeRun({
+      agents: ["a1"],
+      journal:
+        jline({ type: "started", key: "v2:k1", agentId: "a1" }) +
+        jline({ type: "result", key: "v2:k1", agentId: "a1" }),
+    });
+    const journalPath = join(runDir, "journal.jsonl");
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const t0 = NOW - 1_000; // recent: the run is genuinely live
+    setMtime(runDir, t0);
+    setMtime(agentPath, t0);
+    setMtime(journalPath, t0);
+
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    expect(store.getWorkflowRun("wf_t1")!.last_seen_at).toBe(t0);
+
+    workflowTick(store, hub, NOW + 5_000); // nothing moved
+    expect(hub.calls.length).toBe(1);
+
+    // The workflow spawns a second agent. The JOURNAL records it first — the
+    // transcript file does not exist yet — so the only thing that moves on disk
+    // is journal.jsonl's OWN mtime: appending to a file inside the run dir
+    // never bumps the DIR's mtime, and no agent transcript grew past its
+    // stored offset. Keying the full pass off the dir mtime alone loses this
+    // append entirely (and with it every agent that never gets a transcript).
+    appendFileSync(journalPath, jline({ type: "started", key: "v2:k2", agentId: "a2" }));
+    const appendedAt = NOW + 7_000;
+    setMtime(journalPath, appendedAt);
+    setMtime(runDir, t0);
+    setMtime(agentPath, t0);
+
+    workflowTick(store, hub, NOW + 10_000);
+    expect(hub.calls.length).toBe(2); // exactly one broadcast for one real change
+    const payload = hub.calls[1].payload as { run_id: string; agents: { agent_id: string }[] }[];
+    expect(payload.find((w) => w.run_id === "wf_t1")!.agents.map((a) => a.agent_id).sort()).toEqual(["a1", "a2"]);
+    const n = store.db.query("SELECT COUNT(*) AS c FROM workflow_agents WHERE run_id='wf_t1'").get() as { c: number };
+    expect(n.c).toBe(2);
+    // The journal's mtime is part of the blend, so the persisted value advances
+    // to it — which is what makes the NEXT tick's quiet check correct by
+    // construction instead of by a second, separately-maintained signal.
+    expect(store.getWorkflowRun("wf_t1")!.last_seen_at).toBe(appendedAt);
+
+    // Steady state again: the blend stops advancing, so the ticks go quiet.
+    workflowTick(store, hub, NOW + 15_000);
+    workflowTick(store, hub, NOW + 20_000);
+    expect(hub.calls.length).toBe(2);
   });
 });
 
