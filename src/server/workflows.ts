@@ -764,7 +764,11 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
     } catch (err) {
       // Per-run isolation: one unreadable run can never break the others, the
       // stale sweep, or session cost tailing. Counted once per run, not per tick.
-      if (logOnce(t.run_id, err)) bumpDegraded();
+      // Qualified key (":scan"): a manifest-parse failure inside scanRun logs
+      // under the BARE run id (§5.5's `error` cause) — sharing that key here
+      // would let whichever cause hits first permanently suppress the other's
+      // log line and degraded bump for this run (finding 8).
+      if (logOnce(`${t.run_id}:scan`, err)) bumpDegraded();
     }
   }
   return { changed };
@@ -828,7 +832,9 @@ export function backfillWorkflows(
           scanRun(store, target, now);
           runs++;
         } catch (err) {
-          if (logOnce(name, err)) bumpDegraded(); // once per run per cause (§5.5)
+          // Qualified key, matching scanWorkflows' catch (finding 8): a
+          // manifest-parse failure inside scanRun logs under the bare run id.
+          if (logOnce(`${name}:scan`, err)) bumpDegraded(); // once per run per cause (§5.5)
         }
       }
     }

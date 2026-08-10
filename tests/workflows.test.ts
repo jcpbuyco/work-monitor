@@ -522,6 +522,33 @@ describe("scanWorkflows", () => {
     expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
   });
 
+  it("logs a SECOND, unrelated failure cause on the same run rather than swallowing it (finding 8)", () => {
+    // The manifest-parse-failure key (workflows.ts's line ~577) and the
+    // thrown-scan-error key (scanWorkflows' catch) both used the BARE run id,
+    // so whichever cause hit first permanently suppressed logOnce — and hence
+    // bumpDegraded() — for the other, for the rest of the process lifetime.
+    resetDegraded();
+    const { store, runDir } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json").slice(0, 400), // truncated -> parse failure
+    });
+    // Pin the dir mtime relative to NOW (matching every other test's pattern)
+    // so the run stays inside the 24h WF_RECHECK_MS window across the 20
+    // ticks below — real wall-clock mtime would otherwise already be "older"
+    // than NOW - WF_RECHECK_MS, since NOW is a fixed fictitious timestamp.
+    setMtime(runDir, NOW - 1000);
+    scanWorkflows(store, NOW); // cause 1: manifest parse failure
+    expect(workflowsDegraded()).toBe(1);
+
+    rmSync(runDir, { recursive: true, force: true }); // cause 2: statSync(t.dir) now throws every tick
+    let tick = NOW;
+    for (let i = 0; i < 20; i++) {
+      tick += 5_000;
+      scanWorkflows(store, tick);
+    }
+    expect(workflowsDegraded()).toBe(2); // a genuinely different cause must still get its own bump
+  });
+
   it("converges to changed=false on a manifest that exists but never parses (no 5s re-scan loop)", () => {
     resetDegraded();
     const { store } = makeRun({
