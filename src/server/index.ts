@@ -9,7 +9,7 @@ import { createApp, buildState, type AppDeps } from "./http.ts";
 import { tailUsage } from "./usage.ts";
 import { repriceFiveSeries, REPRICE_MARKER } from "./reprice.ts";
 import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS, WF_TICK_MS, WORKFLOWS_ENABLED } from "./config.ts";
-import { scanWorkflows, backfillWorkflows, logOnce, bumpDegraded } from "./workflows.ts";
+import { backfillWorkflows, logOnce, bumpDegraded, workflowTick } from "./workflows.ts";
 
 const store = new Store(openDb(DB_PATH));
 const sse = new SseHub();
@@ -66,20 +66,11 @@ setInterval(() => {
 // feel live. This tick must NEVER call pushState() — buildState() is 243ms and a
 // 5s full-state broadcast would burn ~5% CPU permanently. Usage it records
 // therefore does not reach the cost panels until the next 60s sweep; that
-// asymmetry is accepted.
+// asymmetry is accepted. The scan-then-gated-broadcast logic itself lives in
+// workflowTick() (workflows.ts), where it can be exercised by a test without
+// importing this file (see tests/workflows.test.ts's "workflowTick" suite).
 if (WORKFLOWS_ENABLED) {
-  setInterval(() => {
-    try {
-      const { changed, live } = scanWorkflows(store, Date.now());
-      // Broadcast ONLY on change — a tick that just re-stats and finds nothing
-      // sends nothing. And never pushState(): buildState() is 243ms.
-      if (changed) sse.broadcast("workflows", live);
-    } catch (err) {
-      // Unchanged from Task 13: the counter is gated on logOnce's boolean, so a
-      // tick that fails every 5s counts once, not 720 times an hour (§5.5).
-      if (logOnce("wf-scan", err)) bumpDegraded();
-    }
-  }, WF_TICK_MS);
+  setInterval(() => workflowTick(store, sse, Date.now()), WF_TICK_MS);
 }
 
 // One-shot: reprice the pre-existing $0.00 5-series rows (spec §0b). Gated behind

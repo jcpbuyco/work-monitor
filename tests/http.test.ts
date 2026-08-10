@@ -5,6 +5,7 @@ import { openDb } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import { SseHub } from "../src/server/sse.ts";
 import { createApp, buildState } from "../src/server/http.ts";
+import { resetDegraded, bumpDegraded } from "../src/server/workflows.ts";
 
 let server: Server;
 let base: string;
@@ -261,9 +262,15 @@ describe("workflows on the stream", () => {
     await reader.cancel();
   });
 
-  it("exposes workflows_degraded as a top-level scalar, not nested under cost", () => {
+  it("exposes workflows_degraded as a top-level scalar reflecting the shared counter, not nested under cost", () => {
+    // `typeof === "number"` alone would pass for a hardcoded `workflows_degraded: 0`
+    // in buildState() — drive the counter to a known, non-zero value through its
+    // own public API and assert buildState() reflects that EXACT value, proving
+    // it is actually wired to workflowsDegraded() and not a stub.
+    resetDegraded();
+    bumpDegraded(3);
     const state = buildState(store) as any;
-    expect(typeof state.workflows_degraded).toBe("number");
+    expect(state.workflows_degraded).toBe(3);
     expect(state.cost.workflows_degraded).toBeUndefined();
   });
 });
