@@ -483,6 +483,19 @@ describe("scanWorkflows", () => {
     const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
     expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
   });
+
+  it("converges to changed=false on a manifest that exists but never parses (no 5s re-scan loop)", () => {
+    resetDegraded();
+    const { store } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json").slice(0, 400),
+    });
+    scanWorkflows(store, NOW); // discovery: full parse attempt, mtime stored despite the parse failure
+    scanWorkflows(store, NOW + 5_000);
+    // Steady state: the unparseable manifest must not count as "new" forever,
+    // or Step 4 would broadcast an SSE event every 5s until the run dir ages out.
+    expect(scanWorkflows(store, NOW + 10_000).changed).toBe(false);
+  });
 });
 
 describe("backfillWorkflows", () => {

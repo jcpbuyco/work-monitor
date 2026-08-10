@@ -426,7 +426,11 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     manifestMtime = Math.round(statSync(manifestPath).mtimeMs);
   } catch {}
   const manifestExists = manifestMtime !== null;
-  const manifestNew = manifestExists && (!prev || prev.manifest_seen === 0);
+  // Keyed on manifest_mtime, not manifest_seen: the mtime is stored whenever the
+  // FILE exists (parsed or not), so a manifest that exists but never parses is
+  // "new" for exactly one pass. manifest_seen stays 0 on a parse failure, which
+  // would otherwise re-trigger the full scan every tick forever.
+  const manifestNew = manifestExists && (!prev || prev.manifest_mtime == null);
   // C6: a manifest is rewritten in place (`failed` 09:27:58 → `completed` 09:41:16)
   // with the run dir untouched. A stored mtime older than the file's is the only
   // signal that happened. A NULL stored value (row written before this column, or
