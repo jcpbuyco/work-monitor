@@ -270,6 +270,21 @@ export class Store {
     return (row as { transcript_path: string | null; usage_offset: number }) ?? null;
   }
 
+  /** Process-independent key/value marker store. Used by one-shot maintenance
+   *  routines (e.g. repricing) so a restart cannot re-run them. */
+  getMeta(key: string): string | null {
+    const row = this.db.query(`SELECT value FROM app_meta WHERE key = $k`).get({ $k: key }) as
+      | { value: string | null }
+      | undefined;
+    return row?.value ?? null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db
+      .query(`INSERT INTO app_meta (key, value) VALUES ($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run({ $k: key, $v: value });
+  }
+
   sessionsToTail(): { id: string; transcript_path: string | null; usage_offset: number }[] {
     return this.db
       .query(
