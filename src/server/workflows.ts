@@ -2,7 +2,7 @@ import { readdirSync, statSync, readFileSync, openSync, fstatSync, readSync, clo
 import { basename, join, resolve } from "node:path";
 import type { Store } from "./store.ts";
 import { takeUsage } from "./usage.ts";
-import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
+import { WF_QUIET_MS, WF_RECHECK_MS, CLAUDE_PROJECTS_DIR } from "./config.ts";
 import { truncate } from "./derive.ts";
 
 /** A session's on-disk directory is its transcript path minus `.jsonl` — exact
@@ -613,4 +613,41 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
     }
   }
   return { changed };
+}
+
+/** One-time startup pass over every run dir on disk. This is the ONLY place a
+ *  global glob is allowed (~1ms for 20 dirs).
+ *
+ *  Each hit is resolved to its session by PATH STRUCTURE, never by string-matching
+ *  `transcript_path`: the session dir is the run dir's third parent and the
+ *  session id is that directory's basename. A run whose session id is absent from
+ *  `sessions` is still ingested — recordUsage's subquery yields NULL project, which
+ *  the cost queries already bucket under 'unknown'. Dropping it would lose spend.
+ *
+ *  Every run here is a first sight on a fresh DB, so this is also where scanRun's
+ *  once-per-run cross-slug script lookup (§1.3) happens for historical runs — at
+ *  backfill time, never on a 5s tick. On a warm DB the run rows already exist and
+ *  scanRun skips it. */
+export function backfillWorkflows(
+  store: Store,
+  now: number,
+  root: string = CLAUDE_PROJECTS_DIR
+): { runs: number } {
+  let runs = 0;
+  for (const slug of readdirSafe(root)) {
+    for (const sessionId of readdirSafe(join(root, slug))) {
+      const runsDir = join(root, slug, sessionId, "subagents", "workflows");
+      for (const name of readdirSafe(runsDir)) {
+        if (!name.startsWith("wf_")) continue;
+        const target: RunTarget = { run_id: name, session_id: sessionId, dir: join(runsDir, name) };
+        try {
+          scanRun(store, target, now);
+          runs++;
+        } catch (err) {
+          if (logOnce(name, err)) bumpDegraded(); // once per run per cause (§5.5)
+        }
+      }
+    }
+  }
+  return { runs };
 }

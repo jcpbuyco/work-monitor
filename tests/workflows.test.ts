@@ -17,6 +17,7 @@ import {
   scanWorkflows,
   workflowsDegraded,
   resetDegraded,
+  backfillWorkflows,
 } from "../src/server/workflows.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS } from "../src/server/config.ts";
 
@@ -481,5 +482,54 @@ describe("scanWorkflows", () => {
     expect(workflowsDegraded()).toBe(1); // a second tick over the same broken manifest adds nothing
     const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
     expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
+  });
+});
+
+describe("backfillWorkflows", () => {
+  /** ~/.claude/projects/<slug>/<sessionId>/subagents/workflows/wf_* */
+  function makeTree() {
+    const root = mkdtempSync(join(tmpdir(), "am-bf-"));
+    const sessionDir = join(root, "-home-u-repo", "sess-1");
+    const runDir = join(sessionDir, "subagents", "workflows", "wf_old");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "agent-a1.jsonl"), agentLine("bf-1"));
+    return { root, runDir };
+  }
+
+  it("finds run dirs by path structure and resolves the session from the dir's third parent", () => {
+    const { root } = makeTree();
+    const store = new Store(openDb(":memory:"));
+    // The session exists but its transcript_path points somewhere else entirely —
+    // resolution must come from the run dir's own path, not string-matching.
+    store.applyEvent("sess-1", { status: "ended", project: "repo", branch: "main", transcript_path: "/elsewhere/x.jsonl", last_activity_at: 1 }, 1);
+
+    expect(backfillWorkflows(store, NOW, root).runs).toBe(1);
+    const row = store.db.query("SELECT run_id, session_id, project FROM workflow_runs").get();
+    expect(row).toEqual({ run_id: "wf_old", session_id: "sess-1", project: "repo" });
+    const usage = store.db.query("SELECT session_id, run_id, project FROM usage").get();
+    expect(usage).toEqual({ session_id: "sess-1", run_id: "wf_old", project: "repo" });
+  });
+
+  it("still ingests a run whose session row is missing, bucketing it under unknown", () => {
+    const { root } = makeTree();
+    const store = new Store(openDb(":memory:"));
+    expect(backfillWorkflows(store, NOW, root).runs).toBe(1);
+    // Skipping it would silently drop spend — the one thing this feature exists
+    // to prevent. The existing queries already bucket a NULL project as 'unknown'.
+    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 5, tokens: 1_000_000 }]);
+  });
+
+  it("is idempotent — a second backfill records nothing new", () => {
+    const { root } = makeTree();
+    const store = new Store(openDb(":memory:"));
+    backfillWorkflows(store, NOW, root);
+    backfillWorkflows(store, NOW, root);
+    const n = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
+    expect(n.c).toBe(1);
+  });
+
+  it("returns 0 runs for a root that does not exist", () => {
+    const store = new Store(openDb(":memory:"));
+    expect(backfillWorkflows(store, NOW, "/no/such/root").runs).toBe(0);
   });
 });
