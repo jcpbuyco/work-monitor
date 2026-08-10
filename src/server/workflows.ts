@@ -1,6 +1,8 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, openSync, fstatSync, readSync, closeSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { WF_QUIET_MS } from "./config.ts";
+import type { Store } from "./store.ts";
+import { takeUsage } from "./usage.ts";
+import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
 import { truncate } from "./derive.ts";
 
 /** A session's on-disk directory is its transcript path minus `.jsonl` — exact
@@ -360,4 +362,255 @@ export function findScriptAcrossSlugs(sessionDir: string, runId: string): string
     if (hit) return join(dir, hit);
   }
   return null;
+}
+
+export interface RunTarget {
+  run_id: string;
+  session_id: string;
+  dir: string;
+}
+
+const AGENT_RE = /^agent-(.+)\.jsonl$/;
+
+// `readdirSafe` already exists from Task 10 (the script lookup uses it).
+
+function readFileSafe(p: string): string {
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** First `bytes` of a file — enough for version/model/prompt without paying for a
+ *  6.3MB read. */
+function readHead(path: string, bytes = 8192): string {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return "";
+  }
+  try {
+    const n = Math.min(bytes, fstatSync(fd).size);
+    if (n <= 0) return "";
+    const buf = Buffer.allocUnsafe(n);
+    // Same short-read rule as takeUsage: decode only what was actually read.
+    const got = readSync(fd, buf, 0, n, 0);
+    return got > 0 ? buf.subarray(0, got).toString("utf8") : "";
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Scan one run dir: refresh structure, then tail every agent transcript.
+ *  Returns true when anything changed (new run, dir moved, manifest arrived or was
+ *  rewritten in place, or usage recorded) — the `changed` contract the SSE
+ *  broadcast keys off.
+ *  Throws only on a stat of the run dir itself; the caller catches. */
+export function scanRun(store: Store, t: RunTarget, now: number): boolean {
+  const dirStat = statSync(t.dir);
+  const mtime = Math.round(dirStat.mtimeMs);
+  const prev = store.getWorkflowRun(t.run_id);
+  // NOTE: the scanner never calls deriveRunState. Liveness is derived at READ time
+  // (hydrateWorkflowRuns / liveWorkflows), from `manifest_seen` + `last_seen_at` +
+  // the joined session status — so nothing here needs the owning session's status.
+
+  // The manifest lives OUTSIDE the run dir, so neither its arrival nor an in-place
+  // rewrite bumps the run dir mtime — it has to be stat'd explicitly, and its own
+  // mtime remembered.
+  const sessionDir = resolve(t.dir, "..", "..", "..");
+  const manifestPath = join(sessionDir, "workflows", `${t.run_id}.json`);
+  let manifestMtime: number | null = null;
+  try {
+    manifestMtime = Math.round(statSync(manifestPath).mtimeMs);
+  } catch {}
+  const manifestExists = manifestMtime !== null;
+  const manifestNew = manifestExists && (!prev || prev.manifest_seen === 0);
+  // C6: a manifest is rewritten in place (`failed` 09:27:58 → `completed` 09:41:16)
+  // with the run dir untouched. A stored mtime older than the file's is the only
+  // signal that happened. A NULL stored value (row written before this column, or
+  // by a pass that never read the manifest) re-parses once, then converges.
+  const manifestRewritten =
+    manifestExists && !!prev && (prev.manifest_mtime == null || manifestMtime! > prev.manifest_mtime);
+
+  // Agent set = the run dir's agent-*.jsonl files. Not the manifest, not the journal.
+  const offsets = new Map(store.workflowAgentOffsets(t.run_id).map((o) => [o.agent_id, o.offset]));
+  const files: { agent_id: string; path: string }[] = [];
+  let grew = false;
+  for (const name of readdirSafe(t.dir)) {
+    const m = AGENT_RE.exec(name);
+    if (!m) continue;
+    const path = join(t.dir, name);
+    let size: number;
+    try {
+      size = statSync(path).size;
+    } catch {
+      continue;
+    }
+    files.push({ agent_id: m[1], path });
+    // Rule 3's hedge: an append to an EXISTING transcript leaves the dir mtime
+    // alone, so file growth is checked independently.
+    if (size > (offsets.get(m[1]) ?? 0)) grew = true;
+  }
+
+  const dirMoved = !prev || prev.last_seen_at == null || mtime > prev.last_seen_at;
+  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten) return false; // cheap re-stat only
+
+  const manifest = manifestExists ? parseManifest(readFileSafe(manifestPath)) : null;
+  let error: string | null = null;
+  if (manifestExists && !manifest) error = "manifest: not valid JSON";
+  else if (manifest && !manifest.schema_ok) error = manifest.error;
+  // logOnce returns true only on the pass that actually logged; gating the counter
+  // on it makes workflows_degraded once-per-run-per-cause, not once-per-5s-tick.
+  if (error && logOnce(t.run_id, error)) bumpDegraded();
+
+  const journalLines = readFileSafe(join(t.dir, "journal.jsonl")).split("\n");
+  const { agents: journalAgents, unknownTypes } = parseJournal(journalLines, { manifestPresent: !!manifest });
+  if (unknownTypes > 0 && logOnce(`${t.run_id}:journal-types`, `${unknownTypes} unknown journal line type(s)`)) {
+    bumpDegraded(unknownTypes);
+  }
+
+  // The script is the only LIVE source of phase titles; once a manifest exists it
+  // is strictly better, so don't pay for the read.
+  let script: { name: string | null; phases: Phase[] } = { name: null, phases: [] };
+  if (!manifest) {
+    // Primary lookup: one readdir of a small dir, every ACTIVE tick.
+    let scriptPath = findScriptFile(sessionDir, t.run_id);
+    // Fallback (C9): 3 of 20 runs park their script under a SIBLING project slug
+    // carrying the same sessionId. `!prev` pins this to the pass that DISCOVERS
+    // the run — the first tick that sees it, or the startup backfill on a fresh
+    // DB — so it is a discovery-time cost and NEVER lands on a 5s tick (§1.3).
+    if (!scriptPath && !prev) scriptPath = findScriptAcrossSlugs(sessionDir, t.run_id);
+    if (scriptPath) script = parseScriptMeta(readFileSafe(scriptPath));
+  }
+
+  const manifestById = new Map((manifest?.agents ?? []).map((a) => [a.agent_id, a]));
+  const ids = new Set<string>([...files.map((f) => f.agent_id), ...journalAgents.keys(), ...manifestById.keys()]);
+  const quiet = now - mtime > WF_QUIET_MS;
+
+  let ccVersion: string | null = null;
+  let recorded = false;
+
+  for (const id of ids) {
+    const file = files.find((f) => f.agent_id === id);
+    const j = journalAgents.get(id);
+    const m = manifestById.get(id);
+    // Read the transcript head only for an agent we have never seen; after that
+    // the header fields never change.
+    const header =
+      file && !offsets.has(id)
+        ? parseAgentHeader(readHead(file.path))
+        : { cc_version: null, model: null, prompt_preview: null };
+    if (!ccVersion && header.cc_version) ccVersion = header.cc_version;
+    const meta = file
+      ? parseAgentMeta(readFileSafe(file.path.replace(/\.jsonl$/, ".meta.json")))
+      : { agent_type: null, model: null };
+
+    store.upsertWorkflowAgent({
+      run_id: t.run_id,
+      agent_id: id,
+      label: m?.label ?? null, // labels exist only in the manifest — null on a live run
+      phase_index: m?.phase_index ?? null,
+      phase_title: m?.phase_title ?? null,
+      idx: m?.idx ?? null,
+      model: m?.model ?? header.model ?? meta.model ?? null,
+      // Rule 6: a transcript with no journal mention is running while ACTIVE, done once quiet.
+      state: m?.state ?? j?.state ?? (file ? (quiet ? "done" : "running") : null),
+      attempt: m?.attempt ?? null,
+      journal_key: j?.journal_key ?? null,
+      last_tool: m?.last_tool ?? null,
+      last_tool_summary: m?.last_tool_summary ?? null,
+      prompt_preview: m?.prompt_preview ?? header.prompt_preview ?? null,
+      started_at: m?.started_at ?? null,
+      duration_ms: m?.duration_ms ?? null,
+      tool_calls: m?.tool_calls ?? null,
+    });
+
+    if (!file) continue;
+    const before = offsets.get(id) ?? 0;
+    const r = takeUsage(store, {
+      path: file.path,
+      offset: before,
+      sessionId: t.session_id, // PARENT session id — the keystone (C3)
+      runId: t.run_id,
+      agentId: id,
+    });
+    if (r.offset !== before) store.setWorkflowAgentOffset(t.run_id, id, r.offset);
+    if (r.recorded) recorded = true;
+  }
+
+  const phases = manifest?.phases.length ? manifest.phases : script.phases;
+  store.upsertWorkflowRun({
+    run_id: t.run_id,
+    session_id: t.session_id,
+    dir: t.dir,
+    name: manifest?.name ?? script.name ?? null,
+    summary: manifest?.summary ?? null,
+    status: manifest?.status ?? null, // RAW
+    error,
+    // Before a manifest exists, the dir's birthtime is the best start we have
+    // (~42s early on a sample); mtimeMs is the fallback where birthtime is 0.
+    started_at: manifest?.started_at ?? Math.round(dirStat.birthtimeMs || dirStat.mtimeMs),
+    ended_at: manifest?.ended_at ?? null,
+    duration_ms: manifest?.duration_ms ?? null,
+    agent_count: manifest?.agent_count ?? null,
+    phases: phases.length ? JSON.stringify(phases) : null,
+    cc_version: ccVersion,
+    manifest_seen: !!manifest,
+    // Stored whenever the FILE exists, parsed or not: a corrupt manifest that is
+    // later fixed in place must still re-trigger on its new mtime.
+    manifest_mtime: manifestMtime,
+    last_seen_at: mtime, // the DIR's mtime, not the tick's clock
+    schema_ok: !error,
+    total_tokens_reported: manifest?.total_tokens_reported ?? null,
+  });
+
+  // Cross-check §5.8 — PRESENCE, not proportion. Claude Code's `totalTokens` is
+  // not comparable to our rollup (24x–276x across 19 manifests), so the only
+  // sound signal is "it says tokens were burned and we ingested none".
+  if (manifest && quiet && (manifest.total_tokens_reported ?? 0) > 0) {
+    const row = store.db
+      .query(
+        `SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens +
+                            cache_create_5m_tokens + cache_create_1h_tokens), 0) AS t
+         FROM usage WHERE run_id = $r`
+      )
+      .get({ $r: t.run_id }) as { t: number };
+    if (row.t === 0 && logOnce(`${t.run_id}:no-tokens`, "manifest reports tokens but no usage rows were ingested")) {
+      bumpDegraded();
+    }
+  }
+
+  return recorded || dirMoved || manifestNew || manifestRewritten || !prev;
+}
+
+/** One tick. Discovery is per-session `readdir` (~100µs), never a glob — the only
+ *  global glob in this feature is the one-time startup backfill. */
+export function scanWorkflows(store: Store, now: number): { changed: boolean } {
+  let changed = false;
+  const targets = new Map<string, RunTarget>();
+
+  for (const s of store.listSessions()) {
+    if (!s.transcript_path) continue;
+    const runsDir = join(sessionDirFor(s.transcript_path), "subagents", "workflows");
+    for (const n of readdirSafe(runsDir)) {
+      if (!n.startsWith("wf_")) continue;
+      targets.set(n, { run_id: n, session_id: s.id, dir: join(runsDir, n) });
+    }
+  }
+  for (const r of store.workflowRunsToScan(now - WF_RECHECK_MS)) {
+    if (!targets.has(r.run_id)) targets.set(r.run_id, { run_id: r.run_id, session_id: r.session_id, dir: r.dir });
+  }
+
+  for (const t of targets.values()) {
+    try {
+      if (scanRun(store, t, now)) changed = true;
+    } catch (err) {
+      // Per-run isolation: one unreadable run can never break the others, the
+      // stale sweep, or session cost tailing. Counted once per run, not per tick.
+      if (logOnce(t.run_id, err)) bumpDegraded();
+    }
+  }
+  return { changed };
 }

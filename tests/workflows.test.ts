@@ -1,7 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, utimesSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Store } from "../src/server/store.ts";
+import { openDb } from "../src/server/db.ts";
 import {
   sessionDirFor,
   deriveRunState,
@@ -12,8 +14,11 @@ import {
   parseScriptMeta,
   findScriptFile,
   findScriptAcrossSlugs,
+  scanWorkflows,
+  workflowsDegraded,
+  resetDegraded,
 } from "../src/server/workflows.ts";
-import { WF_QUIET_MS } from "../src/server/config.ts";
+import { WF_QUIET_MS, WF_RECHECK_MS } from "../src/server/config.ts";
 
 export const FIX = join(import.meta.dir, "fixtures", "workflows");
 export const fixture = (name: string): string => readFileSync(join(FIX, name), "utf8");
@@ -276,5 +281,205 @@ describe("script lookup", () => {
     mkdirSync(join(root, "-home-u-other", "sess-2", "workflows", "scripts"), { recursive: true });
     writeFileSync(join(root, "-home-u-other", "sess-2", "workflows", "scripts", "research-wf_9.js"), "x");
     expect(findScriptAcrossSlugs(sessionDir, "wf_9")).toBeNull();
+  });
+});
+
+const NOW = 1_800_000_000_000;
+
+/** One priced transcript line: 1M input tokens of opus-5 = exactly $5. */
+function agentLine(uuid: string) {
+  return (
+    JSON.stringify({
+      uuid,
+      sessionId: "parent",
+      isSidechain: true,
+      version: "2.1.226",
+      timestamp: "2026-08-10T09:00:00.000Z",
+      message: { model: "claude-opus-5", content: "do the thing", usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    }) + "\n"
+  );
+}
+
+/** Lay out a projects root, a session dir and a run dir exactly as Claude Code
+ *  does, in a temp tree: <root>/<slug>/<sessionId>/subagents/workflows/wf_t1.
+ *  The slug level is load-bearing — findScriptAcrossSlugs derives the projects
+ *  root as <sessionDir>/../.., so the whole cross-slug search stays inside `root`
+ *  and never touches ~/.claude. `siblingScripts` is C9's split: a SECOND slug
+ *  holding the same sessionId, where the run's script sometimes lives. */
+function makeRun(opts: { agents: string[]; journal?: string; manifest?: string; siblingScript?: string }) {
+  const root = mkdtempSync(join(tmpdir(), "am-wf-"));           // ≙ ~/.claude/projects
+  const sessionDir = join(root, "-slug-a", "parent");
+  const transcript = join(root, "-slug-a", "parent.jsonl");
+  const runDir = join(sessionDir, "subagents", "workflows", "wf_t1");
+  const siblingScripts = join(root, "-slug-b", "parent", "workflows", "scripts");
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(join(sessionDir, "workflows"), { recursive: true });
+  writeFileSync(transcript, ""); // the parent transcript
+  opts.agents.forEach((id, i) => {
+    writeFileSync(join(runDir, `agent-${id}.jsonl`), agentLine(`u-${i}`));
+    writeFileSync(join(runDir, `agent-${id}.meta.json`), JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }));
+  });
+  if (opts.journal) writeFileSync(join(runDir, "journal.jsonl"), opts.journal);
+  if (opts.manifest) writeFileSync(join(sessionDir, "workflows", "wf_t1.json"), opts.manifest);
+  if (opts.siblingScript) {
+    mkdirSync(siblingScripts, { recursive: true });
+    writeFileSync(join(siblingScripts, "research-wf_t1.js"), opts.siblingScript);
+  }
+
+  const store = new Store(openDb(":memory:"));
+  store.applyEvent(
+    "parent",
+    { status: "working", project: "alpha", branch: "feat/x", transcript_path: transcript, last_activity_at: 1 },
+    1
+  );
+  return { store, root, sessionDir, runDir, siblingScripts };
+}
+
+/** Force a directory's mtime, so liveness tests don't depend on wall-clock timing. */
+const setMtime = (p: string, ms: number) => utimesSync(p, ms / 1000, ms / 1000);
+
+describe("scanWorkflows", () => {
+  it("tails every agent transcript against the PARENT session, stamping run_id/agent_id", () => {
+    const { store } = makeRun({ agents: ["a1", "a2"] });
+    expect(scanWorkflows(store, NOW).changed).toBe(true);
+    const rows = store.db
+      .query("SELECT run_id, agent_id, project, branch, cost_usd FROM usage ORDER BY agent_id")
+      .all() as any[];
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toEqual({ run_id: "wf_t1", agent_id: "a1", project: "alpha", branch: "feat/x", cost_usd: 5 });
+    // The keystone: parent attribution means no `unknown` bucket appears.
+    expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: 10, tokens: 2_000_000 }]);
+  });
+
+  it("creates one agent row per transcript file even when the manifest lists fewer", () => {
+    // The real 10-entry manifest against the real 13-agentId journal: keying off
+    // the manifest would lose 3 agents' tokens.
+    const journal = fixture("wf_57b2617f-124.journal.jsonl");
+    const ids = [...new Set(journal.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l).agentId))] as string[];
+    expect(ids.length).toBe(13);
+    const { store } = makeRun({ agents: ids, journal, manifest: fixture("wf_57b2617f-124.manifest.json") });
+    scanWorkflows(store, NOW);
+    const n = store.db.query("SELECT COUNT(*) AS c FROM workflow_agents WHERE run_id='wf_t1'").get() as { c: number };
+    expect(n.c).toBe(13);
+    const abandoned = store.db
+      .query("SELECT COUNT(*) AS c FROM workflow_agents WHERE run_id='wf_t1' AND state='abandoned'")
+      .get() as { c: number };
+    expect(abandoned.c).toBe(3);
+  });
+
+  it("reports changed: false on a tick where nothing moved", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    expect(scanWorkflows(store, NOW).changed).toBe(true); // first sight
+    expect(scanWorkflows(store, NOW).changed).toBe(false); // pure re-stat
+  });
+
+  it("un-settles when an agent file grows without any dir-mtime change (rule 3's hedge)", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const quiet = NOW - 60 * 60 * 1000;
+    setMtime(runDir, quiet);
+    scanWorkflows(store, NOW);
+    expect(scanWorkflows(store, NOW).changed).toBe(false);
+
+    appendFileSync(join(runDir, "agent-a1.jsonl"), agentLine("u-late"));
+    setMtime(runDir, quiet); // appending to a file does NOT touch the dir mtime
+    expect(scanWorkflows(store, NOW).changed).toBe(true);
+    const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
+    expect(total.c).toBe(2);
+  });
+
+  it("keeps tailing after a manifest appears — a manifest is terminal for STRUCTURE only (C6)", () => {
+    const { store, sessionDir, runDir } = makeRun({ agents: ["a1"] });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(0);
+
+    // The manifest lives OUTSIDE the run dir, so its arrival never bumps the run
+    // dir's mtime — the scan must stat it explicitly or the run never enriches.
+    writeFileSync(join(sessionDir, "workflows", "wf_t1.json"), fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    expect(scanWorkflows(store, NOW).changed).toBe(true);
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1);
+    expect(store.getWorkflowRun("wf_t1")!.status).toBe("completed");
+
+    // …and six minutes of appends AFTER the manifest still cost money.
+    appendFileSync(join(runDir, "agent-a1.jsonl"), agentLine("u-after-manifest"));
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
+    expect(total.c).toBe(2);
+  });
+
+  it("re-parses a manifest rewritten IN PLACE, which never moves the run dir (C6)", () => {
+    // wf_3b398ae6-146's manifest read `failed` at 09:27:58 and was rewritten to
+    // `completed` at 09:41:16. The manifest lives outside the run dir, so neither
+    // last_seen_at nor any agent file changes — manifest_mtime is the only signal.
+    const done = fixture("wf_eb7bf7e8-8a5.manifest.json");
+    const failed = JSON.stringify({ ...JSON.parse(done), status: "failed" });
+    const { store, sessionDir, runDir } = makeRun({ agents: ["a1"], manifest: failed });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const quiet = NOW - 60 * 60 * 1000;
+    setMtime(manifestPath, NOW - 10_000);
+    setMtime(runDir, quiet);
+    scanWorkflows(store, NOW);
+    expect(store.getWorkflowRun("wf_t1")!.status).toBe("failed");
+    expect(scanWorkflows(store, NOW).changed).toBe(false); // nothing moved
+
+    writeFileSync(manifestPath, done); // the rewrite
+    setMtime(manifestPath, NOW - 5_000); // strictly later than the stored mtime
+    setMtime(runDir, quiet); // …and the run dir is untouched, as on disk
+    expect(scanWorkflows(store, NOW).changed).toBe(true);
+    expect(store.getWorkflowRun("wf_t1")!.status).toBe("completed");
+  });
+
+  it("resolves phase titles from a SIBLING project slug at discovery (C9's 3 split runs)", () => {
+    const { store } = makeRun({ agents: ["a1"], siblingScript: fixture("script-with-phases.js") });
+    scanWorkflows(store, NOW);
+    const row = store.db.query("SELECT name, phases FROM workflow_runs WHERE run_id='wf_t1'").get() as any;
+    expect(row.name).toBe("workflows-monitoring-research");
+    expect(JSON.parse(row.phases).length).toBeGreaterThan(0);
+  });
+
+  it("never re-runs the cross-slug lookup after discovery — it is a discovery-time cost only", () => {
+    const { store, runDir, siblingScripts } = makeRun({ agents: ["a1"] });
+    scanWorkflows(store, NOW); // discovery: no script under either slug yet
+    expect((store.db.query("SELECT name FROM workflow_runs WHERE run_id='wf_t1'").get() as any).name).toBeNull();
+
+    mkdirSync(siblingScripts, { recursive: true });
+    writeFileSync(join(siblingScripts, "research-wf_t1.js"), fixture("script-with-phases.js"));
+    appendFileSync(join(runDir, "agent-a1.jsonl"), agentLine("u-late")); // force a full re-parse
+    scanWorkflows(store, NOW);
+    // Still null: the 5s tick only ever reads <sessionDir>/workflows/scripts.
+    expect((store.db.query("SELECT name FROM workflow_runs WHERE run_id='wf_t1'").get() as any).name).toBeNull();
+  });
+
+  it("does not touch a settled run older than WF_RECHECK_MS", () => {
+    resetDegraded();
+    const { store, runDir, root } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - WF_RECHECK_MS - 60_000);
+    scanWorkflows(store, NOW);
+    store.applyEvent("parent", { status: "ended", last_activity_at: 1 }, 1); // off the discovery list
+    rmSync(root, { recursive: true, force: true }); // any stat would now throw
+    expect(scanWorkflows(store, NOW).changed).toBe(false);
+    expect(workflowsDegraded()).toBe(0); // proves the dir was never stat'd
+  });
+
+  it("survives a truncated manifest with schema_ok=0 and an error, still tailing cost", () => {
+    resetDegraded();
+    const { store } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json").slice(0, 400),
+    });
+    scanWorkflows(store, NOW);
+    const row = store.db.query("SELECT schema_ok, error FROM workflow_runs WHERE run_id='wf_t1'").get() as any;
+    expect(row.schema_ok).toBe(0);
+    expect(row.error).toContain("manifest");
+    // resetDegraded() above also clears logOnce's key memory — the counter is
+    // gated on logOnce returning true, and every test here reuses run id wf_t1.
+    expect(workflowsDegraded()).toBe(1); // once per run per cause, not once per tick
+    scanWorkflows(store, NOW);
+    expect(workflowsDegraded()).toBe(1); // a second tick over the same broken manifest adds nothing
+    const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
+    expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
   });
 });
