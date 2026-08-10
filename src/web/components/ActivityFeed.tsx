@@ -48,7 +48,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
       />
 
       <div
-        className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5"
+        className="max-h-[calc(100vh-8rem)] overflow-y-auto -mx-1.5 px-1.5"
         style={{ WebkitMaskImage: FADE, maskImage: FADE }}
       >
         {rows.length === 0 ? (
