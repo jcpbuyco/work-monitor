@@ -57,8 +57,7 @@ export default {
       spacing: { rail: "var(--rail)" },
       maxWidth: { board: "86rem", page: "64rem" },
       boxShadow: {
-        card: "0 1px 1px hsl(var(--shadow) / calc(var(--shadow-a) * .5))",
-        pop:  "0 8px 32px hsl(var(--shadow) / var(--shadow-a)), 0 1px 2px hsl(var(--shadow) / calc(var(--shadow-a) * .6))",
+        pop: "0 8px 32px hsl(var(--shadow) / var(--shadow-a)), 0 1px 2px hsl(var(--shadow) / calc(var(--shadow-a) * .6))",
       },
       transitionTimingFunction: { quad: "var(--ease)", move: "var(--ease-move)" },
       transitionDuration: { quick: "100ms", base: "160ms", pop: "175ms", move: "280ms" },

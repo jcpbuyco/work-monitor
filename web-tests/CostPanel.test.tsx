@@ -34,4 +34,12 @@ describe("CostPanel", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("reads as a 2-up grid with today primary and live total one step back", () => {
+    render(<CostPanel cost={cost} />);
+    expect(screen.getByTestId("cost-today").textContent).toBe("$12.40");
+    expect(screen.getByTestId("cost-live-total").textContent).toBe("$3.71");
+    expect(screen.getByTestId("cost-today").className).toContain("text-ink");
+    expect(screen.getByTestId("cost-live-total").className).toContain("text-ink-3");
+  });
 });

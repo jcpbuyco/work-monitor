@@ -54,4 +54,16 @@ describe("ActivityFeed", () => {
     render(<ActivityFeed activity={[]} sessions={[]} />);
     expect(screen.getByText("Waiting for tool activity…")).toBeDefined();
   });
+
+  it("draws rows as lines, not cards", () => {
+    const { container } = render(
+      <ActivityFeed activity={[act(1, "s1", "Bash", "git status", 1234)]} sessions={[session("s1", "p")]} />
+    );
+    const li = container.querySelector("li")!;
+    expect(li.className).not.toContain("border");
+    expect(li.className).not.toContain("shadow-card");
+    expect(li.className).toContain("am-row-in");
+    // the stagger is capped so a 100-row feed does not cascade for 3 seconds
+    expect(li.style.animationDelay).toBe("0ms");
+  });
 });

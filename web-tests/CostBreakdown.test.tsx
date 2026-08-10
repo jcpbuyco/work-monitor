@@ -45,4 +45,11 @@ describe("CostBreakdown", () => {
     const { container } = render(<CostBreakdown cost={legacy} />);
     expect(container.firstChild).toBeNull();
   });
+
+  it("uses the same MeterRow grid as ToolStats so the two panels read as one", () => {
+    const { container } = render(<CostBreakdown cost={cost} />);
+    const bars = container.querySelectorAll("[data-meter-bar]");
+    expect(bars.length).toBe(4); // 2 projects + 2 branches
+    expect((bars[0] as HTMLElement).className).toContain("bg-bar");
+  });
 });

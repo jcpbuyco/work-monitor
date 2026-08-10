@@ -1,6 +1,7 @@
 import type { ToolStat } from "../types.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
 import { prettyTool, toolDot, formatDur } from "../tools.ts";
+import { SectionHeader, MeterRow } from "./primitives.tsx";
 
 const TOP = 8;
 
@@ -13,37 +14,26 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
   const max = rows[0]?.calls ?? 1;
 
   return (
-    <section className="mt-7">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={!collapsed}
-        className="mb-3 inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition hover:text-foreground"
-      >
-        <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-        <span aria-hidden="true">Σ</span> Tool usage ({total})
-      </button>
-
+    <section className="mt-6">
+      <SectionHeader
+        label={`Tool usage (${total})`}
+        collapsed={collapsed}
+        onToggle={toggle}
+        leading={<span aria-hidden="true" className="text-ink-4">Σ</span>}
+      />
       {!collapsed && (
-        <ul className="space-y-1">
+        <ul>
           {rows.map((s) => (
-            <li
+            <MeterRow
               key={s.tool}
-              className="relative isolate flex items-center gap-2 overflow-hidden rounded-md px-2 py-1 font-mono text-2xs"
-            >
-              {/* faint proportional bar */}
-              <span
-                aria-hidden="true"
-                className="absolute inset-y-0 left-0 -z-10 rounded-md bg-primary/10"
-                style={{ width: `${Math.max(6, Math.round((s.calls / max) * 100))}%` }}
-              />
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(s.tool)}`} />
-              <span className="min-w-0 flex-1 truncate font-semibold text-foreground">{prettyTool(s.tool)}</span>
-              <span className="w-9 shrink-0 text-right tabular-nums text-muted-foreground">{s.calls}</span>
-              <span className="w-16 shrink-0 whitespace-nowrap text-right tabular-nums text-muted-foreground/50">
-                {s.avgMs != null ? `avg ${formatDur(s.avgMs)}` : ""}
-              </span>
-            </li>
+              frac={s.calls / max}
+              /* tool dots encode a CATEGORY, not a state — they stay 6px dots
+                 and must not read as status (K17) */
+              leading={<span className={`h-1.5 w-1.5 rounded-full ${toolDot(s.tool)}`} />}
+              label={prettyTool(s.tool)}
+              a={<>{s.calls}</>}
+              b={<>{s.avgMs != null ? `avg ${formatDur(s.avgMs)}` : ""}</>}
+            />
           ))}
         </ul>
       )}
