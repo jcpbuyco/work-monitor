@@ -81,6 +81,9 @@ export interface State {
   activity: Activity[];
   stats: ToolStat[];
   cost: Cost;
+  /** OPTIONAL on purpose: a rebuilt bundle can briefly talk to a server that
+   *  predates the field (the restart-skew gotcha). Always read it as `?? 0`. */
+  workflows_degraded?: number;
 }
 
 export interface WorkflowAgentView {
@@ -123,6 +126,22 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
+  costUsd: number;
+  tokens: number;
+  agents: WorkflowAgentView[];
+}
+
+export interface LiveWorkflow {
+  run_id: string;
+  session_id: string;
+  project: string;
+  branch: string | null;
+  name: string | null;
+  status: string | null;
+  state: string;
+  started_at: number | null;
+  phase: { index: number; total: number; title: string } | null;
+  schema_ok: boolean;
   costUsd: number;
   tokens: number;
   agents: WorkflowAgentView[];

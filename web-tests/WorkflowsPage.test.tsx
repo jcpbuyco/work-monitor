@@ -108,4 +108,10 @@ describe("WorkflowsPage", () => {
     render(<WorkflowsPage />);
     expect(await screen.findByText(/couldn.t load/i)).toBeTruthy();
   });
+
+  it("surfaces the newest run's Claude Code version so fixtures get re-checked after an upgrade", async () => {
+    mockFetch(RUNS);
+    render(<WorkflowsPage />);
+    expect(await screen.findByText(/format last verified on 2\.1\.226/)).toBeTruthy();
+  });
 });
