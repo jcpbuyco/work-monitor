@@ -586,6 +586,35 @@ describe("scanWorkflows + liveWorkflows (Minor A: live is no longer scanWorkflow
     expect(again.changed).toBe(false);
     expect(store.liveWorkflows(NOW)).toEqual([]);
   });
+
+  it("excludes a settled run in SQL, never paying to hydrate it (finding 6)", () => {
+    // liveWorkflows() must not select every row in the 24h WF_RECHECK_MS window
+    // and filter settled ones out in JS afterward — that pays the per-agent
+    // usage rollup, workflow_agents fetch and sessions scan for rows that get
+    // thrown away. The settled predicate belongs in the WHERE clause.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    expect(store.liveWorkflows(NOW)).toEqual([]); // sanity: it really is settled
+
+    let queryCount = 0;
+    const origQuery = store.db.query.bind(store.db);
+    (store.db as unknown as { query: typeof store.db.query }).query = ((sql: string) => {
+      queryCount++;
+      return origQuery(sql);
+    }) as typeof store.db.query;
+    try {
+      store.liveWorkflows(NOW);
+    } finally {
+      store.db.query = origQuery;
+    }
+    // Before the fix: workflow_runs SELECT + usage rollup + workflow_agents +
+    // sessions — four queries paid for a run that gets discarded by a JS
+    // `.filter()`. After: the settled run never leaves the WHERE clause, so
+    // hydrateWorkflowRuns short-circuits on an empty row set and only the
+    // first query ever runs.
+    expect(queryCount).toBe(1);
+  });
 });
 
 describe("workflowTick (the gate that used to live, untested, at index.ts:76)", () => {
