@@ -412,6 +412,41 @@ function readHead(path: string, bytes = 8192): string {
   }
 }
 
+/** Cap on `readAgentHeader`'s growing read window (finding 4). A fixed 8KB
+ *  window can never reach `message.model`: that field lives on the SECOND
+ *  (assistant) transcript line, and the FIRST (user) line alone reaches
+ *  65,902 bytes on real transcripts, with the model line itself starting as
+ *  late as byte 86,774. A bigger fixed constant would just move the cliff, so
+ *  this grows instead — bounded so a pathological transcript can't turn one
+ *  header read into a multi-MB scan. */
+const HEADER_READ_CAP = 256 * 1024;
+
+/** Read an agent transcript's header, DOUBLING the read window (8KB, 16KB, …)
+ *  until `parseAgentHeader` resolves `model`, the whole file has been read, or
+ *  `HEADER_READ_CAP` is hit — whichever comes first. Runs at most once per
+ *  agent (the `!offsets.has(id)` gate at the call site), so the extra reads
+ *  are a bounded, one-time cost per agent, not a per-tick one.
+ *
+ *  File size is checked via `statSync`, not the decoded string's `.length` —
+ *  a multi-byte UTF-8 line (non-English prompt text, emoji, …) decodes to
+ *  fewer UTF-16 code units than bytes read, so comparing string length
+ *  against the byte budget would signal "hit EOF" prematurely and stop
+ *  growing before the model line is actually reached. */
+function readAgentHeader(path: string): ReturnType<typeof parseAgentHeader> {
+  let fileSize: number;
+  try {
+    fileSize = statSync(path).size;
+  } catch {
+    return parseAgentHeader("");
+  }
+  let bytes = 8192;
+  for (;;) {
+    const parsed = parseAgentHeader(readHead(path, bytes));
+    if (parsed.model || bytes >= fileSize || bytes >= HEADER_READ_CAP) return parsed;
+    bytes *= 2;
+  }
+}
+
 /** Scan one run dir: refresh structure, then tail every agent transcript.
  *  Returns true when anything changed (new run, dir moved, manifest arrived or was
  *  rewritten in place, or usage recorded) — the `changed` contract the SSE
@@ -565,7 +600,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // the header fields never change.
     const header =
       file && !offsets.has(id)
-        ? parseAgentHeader(readHead(file.path))
+        ? readAgentHeader(file.path)
         : { cc_version: null, model: null, prompt_preview: null };
     if (!ccVersion && header.cc_version) ccVersion = header.cc_version;
     const meta = file

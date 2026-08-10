@@ -341,6 +341,23 @@ function makeRun(opts: { agents: string[]; journal?: string; manifest?: string; 
 const setMtime = (p: string, ms: number) => utimesSync(p, ms / 1000, ms / 1000);
 
 describe("scanWorkflows", () => {
+  it("resolves model from an agent transcript header via the REAL scan path, even when it starts past 8KB (finding 4)", () => {
+    // agent-head.jsonl is a real (anonymized) transcript: message.model doesn't
+    // appear until byte 22,544 — the first three lines (user + two attachments)
+    // alone run past a fixed 8KB header window. The agent's meta.json (written
+    // by makeRun) carries no model, so this is the fallback path the fixture
+    // for parseAgentHeader alone doesn't exercise (that test feeds the parser
+    // the whole file directly; this one goes through the scanner's real
+    // bounded read).
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    writeFileSync(join(runDir, "agent-a1.jsonl"), fixture("agent-head.jsonl"));
+    scanWorkflows(store, NOW);
+    const row = store.db
+      .query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'")
+      .get() as { model: string | null };
+    expect(row.model).toBe("claude-sonnet-5");
+  });
+
   it("tails every agent transcript against the PARENT session, stamping run_id/agent_id", () => {
     const { store } = makeRun({ agents: ["a1", "a2"] });
     expect(scanWorkflows(store, NOW).changed).toBe(true);
