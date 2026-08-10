@@ -399,12 +399,13 @@ Two independent signals — **structure** and **motion** — deliberately not co
                  ┌───────────────────────────────────────────────┐
   discovered ──► │ ACTIVE: tail every agent-*.jsonl each tick     │
                  └───┬───────────────────────────────────────────┘
-                     │ dir mtime unchanged for WF_QUIET_MS
+                     │ last_seen_at unchanged for WF_QUIET_MS
                      ▼
                  ┌───────────────────────────────────────────────┐
                  │ SETTLED: stop tailing; re-stat cheaply        │
                  └───┬───────────────────────────────────────────┘
-                     │ dir mtime advanced  OR  any agent file grew
+                     │ last_seen_at advanced (dir mtime moved, OR any
+                     │ agent-*.jsonl / journal.jsonl file's mtime moved)
                      └──────────────► back to ACTIVE  (un-settle)
 ```
 
@@ -414,15 +415,20 @@ Two independent signals — **structure** and **motion** — deliberately not co
    states, durations. It does **not** stop cost tailing (C6 — a `failed` manifest was
    followed by 6 minutes of appends and then rewritten to `completed`). Any
    implementation that seals on `manifest_seen` permanently loses resumed spend.
-2. **Tailing stops on quiet, not on manifest.** A run leaves ACTIVE only when its
-   dir mtime has not advanced for `WF_QUIET_MS`.
+2. **Tailing stops on quiet, not on manifest.** A run leaves ACTIVE only when
+   `last_seen_at` has not advanced for `WF_QUIET_MS`.
 3. **Un-settle on motion.** Each tick, settled runs with
-   `now - last_seen_at < WF_RECHECK_MS` get one `statSync` on the run dir; if mtime
-   advanced, the run returns to ACTIVE. Because a resume spawns a **new** agentId
-   (hence a new file), the dir mtime bumps. **Hedge for the case where it doesn't:**
-   within the same 24h window we also `statSync` each known `agent-*.jsonl` and
-   compare size against the stored `offset` — an append to an *existing* transcript
-   is caught even without a dir-mtime change. Beyond 24h a run is final.
+   `now - last_seen_at < WF_RECHECK_MS` get one `statSync` on the run dir AND on
+   every known `agent-*.jsonl`/`journal.jsonl`; `last_seen_at` is the MAX of all of
+   those mtimes, so any one of them moving un-settles the run. Because a resume
+   spawns a **new** agentId (hence a new file), the dir mtime bumps; an append to an
+   *already-tracked* transcript instead bumps that FILE's own mtime, which is caught
+   the same way — no separate size-vs-offset liveness hedge is needed, since the
+   file's mtime already IS the disk-truth signal `last_seen_at` folds in. (Comparing
+   size against the stored `offset` still happens on this same pass, but only to
+   decide whether to pay for a tail read — never as a liveness input; a transcript
+   stuck with an unterminated final line satisfies `size > offset` forever, and must
+   still settle once its mtime stops advancing.) Beyond 24h a run is final.
 4. **Orphan** = display state, computed at read time, never persisted as a status:
    `no manifest AND now - last_seen_at > WF_QUIET_MS`, **or** the owning session row
    is `ended`. Self-healing — if files move again the run flips back to running.
@@ -430,9 +436,13 @@ Two independent signals — **structure** and **motion** — deliberately not co
    one, so without this it would read "running" forever.
 5. **PID registry rejected** (C8). mtime is strictly better and costs nothing.
 
-`last_seen_at` means **"run dir mtime as of the last tick that saw it"**, not "the
-tick that last looked". It only advances when the directory does; otherwise rules 2
-and 4 could never fire.
+`last_seen_at` means **"the run dir's mtime, OR the newest mtime among the run's
+`agent-*.jsonl`/`journal.jsonl` files, as of the last tick that saw it"**, not "the
+tick that last looked". It only advances when the disk does — never a fabricated
+`now` reading, on growth or otherwise; otherwise rules 2 and 4 could never fire. The
+scanner's own in-pass state cache and "quiet" check MUST derive from this exact
+persisted value too, never from the raw dir mtime alone — the two are incapable of
+disagreeing only because there is a single source of truth for both.
 
 The manifest lives **outside** the run dir, so neither its arrival nor an in-place
 rewrite moves the run dir's mtime. `manifest_mtime` — the manifest's mtime as of the
