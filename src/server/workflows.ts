@@ -49,6 +49,18 @@ const warnedRuns = new Set<string>();
  *  §3.1 "a state transition" is a change that must broadcast). */
 const lastRunState = new WeakMap<Store, Map<string, "running" | "settled" | "orphaned">>();
 
+/** Run ids for which the §5.8 "manifest reports tokens but we ingested none"
+ *  cross-check has already had its one shot, keyed per Store like
+ *  `lastRunState` (a fresh Store per test means no cross-test pollution). The
+ *  check needs a full pass (to re-read the manifest and query the usage
+ *  rollup), but the disk-motion flags below are false BY DEFINITION on the
+ *  exact tick a run goes quiet — that's what "settled" means — so without
+ *  this a run discovered while ACTIVE would hit the cheap-re-stat early
+ *  return forever and never get checked (findings 5 & 7). Marking it done
+ *  after the one forced pass keeps that pass a one-time cost per run, not a
+ *  recurring one. */
+const crosschecked = new WeakMap<Store, Set<string>>();
+
 /** Process-lifetime counter of parse failures, unknown journal line types and
  *  zero-agent manifests. Surfaced as `workflows_degraded` in buildState (§5.9).
  *  Resetting on restart is intended: a restart is how you clear the banner.
@@ -540,7 +552,21 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     stateCache.set(t.run_id, derivedState);
   }
 
-  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten) return stateChanged; // cheap re-stat only
+  // §5.8's cross-check needs a full pass to re-read the manifest's
+  // total_tokens_reported and query the usage rollup. Force exactly one when
+  // a previously-known run has just settled and has never been checked —
+  // otherwise a run discovered while ACTIVE hits the cheap re-stat below
+  // forever and the check written specifically for silently-wrong cost never
+  // runs for it (findings 5 & 7).
+  let cc = crosschecked.get(store);
+  if (!cc) {
+    cc = new Set();
+    crosschecked.set(store, cc);
+  }
+  const needsCrosscheck = !!prev && derivedState === "settled" && !cc.has(t.run_id);
+  if (needsCrosscheck) cc.add(t.run_id);
+
+  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten && !needsCrosscheck) return stateChanged; // cheap re-stat only
 
   const manifest = manifestExists ? parseManifest(readFileSafe(manifestPath)) : null;
   let error: string | null = null;
@@ -702,7 +728,10 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     }
   }
 
-  return recorded || dirMoved || manifestNew || manifestRewritten || !prev;
+  // `stateChanged` covers a full pass that was forced purely by a derived
+  // state transition or a cross-check due (findings 1, 2, 5, 7) — none of
+  // dirMoved/manifestNew/manifestRewritten/recorded need be true in that case.
+  return recorded || dirMoved || manifestNew || manifestRewritten || !prev || stateChanged;
 }
 
 /** One tick. Discovery is per-session `readdir` (~100µs), never a glob — the only

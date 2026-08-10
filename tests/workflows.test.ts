@@ -538,6 +538,30 @@ describe("scanWorkflows", () => {
     expect(scanWorkflows(store, NOW + 15_000).changed).toBe(false);
     expect(scanWorkflows(store, NOW + 20_000).changed).toBe(false);
   });
+
+  it("evaluates the §5.8 no-tokens cross-check for a run discovered while ACTIVE, not just a backfilled one (findings 5 & 7)", () => {
+    // No agent-*.jsonl files at all — stands in for a Claude Code format break
+    // (e.g. a transcript filename convention change AGENT_RE misses); either
+    // way the effect is the same, zero usage rows despite a manifest reporting
+    // real tokens burned.
+    resetDegraded();
+    const manifestRaw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    expect(manifestRaw.totalTokens).toBeGreaterThan(0); // sanity: fixture really reports tokens
+    const { store, runDir } = makeRun({ agents: [], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    scanWorkflows(store, NOW); // discovered while ACTIVE: manifest lands, dir just moved
+    expect(workflowsDegraded()).toBe(0); // not quiet yet — no false positive while legitimately ahead
+    const usageRows = store.db.query("SELECT COUNT(*) AS c FROM usage WHERE run_id='wf_t1'").get() as { c: number };
+    expect(usageRows.c).toBe(0);
+
+    // WF_QUIET_MS elapses with nothing on disk moving — exactly the tick the
+    // cheap-re-stat early return would otherwise always take, skipping the one
+    // check §5 has for silently-wrong cost.
+    const later = NOW + WF_QUIET_MS + 5_000;
+    scanWorkflows(store, later);
+    expect(workflowsDegraded()).toBe(1);
+  });
 });
 
 describe("scanWorkflows + liveWorkflows (Minor A: live is no longer scanWorkflows's concern)", () => {
