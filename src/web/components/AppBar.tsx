@@ -1,4 +1,4 @@
-import type { State } from "../types.ts";
+import type { State, LiveWorkflow } from "../types.ts";
 import { useTheme } from "../useTheme.ts";
 import { useTextSize } from "../useTextSize.ts";
 import { useMotion } from "../useMotion.ts";
@@ -12,7 +12,7 @@ function Count({ dotClass, label, n }: { dotClass: string; label: string; n: num
   );
 }
 
-export function AppBar({ state }: { state: State }) {
+export function AppBar({ state, workflows = [] }: { state: State; workflows?: LiveWorkflow[] }) {
   const { theme, toggle } = useTheme();
   const { inc, dec, canInc, canDec } = useTextSize();
   const { on: motionOn, toggle: toggleMotion } = useMotion();
@@ -48,6 +48,9 @@ export function AppBar({ state }: { state: State }) {
         >
           <span aria-hidden="true">⚙</span>
           <span>Workflows</span>
+          {workflows.length > 0 && (
+            <span className="rounded-full bg-working/20 px-1.5 text-2xs text-working">{workflows.length}</span>
+          )}
         </a>
         <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
           <button

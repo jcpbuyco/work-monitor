@@ -16,11 +16,13 @@ export function SessionCard({
   latestTool,
   latestDetail,
   cost,
+  wf = false,
 }: {
   s: Session;
   latestTool?: string;
   latestDetail?: string | null;
   cost?: SessionCost;
+  wf?: boolean;
 }) {
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
@@ -32,7 +34,17 @@ export function SessionCard({
       className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
       style={cardStyle}
     >
-      <div className="font-medium text-foreground">{s.project}</div>
+      <div className="flex items-center gap-1.5 font-medium text-foreground">
+        {s.project}
+        {wf && (
+          <span
+            title="owns a live workflow run"
+            className="rounded-full border border-border bg-chip px-1.5 py-0.5 font-mono text-2xs text-working"
+          >
+            wf
+          </span>
+        )}
+      </div>
       <div
         className="mt-0.5 inline-flex items-center gap-1.5 text-2xs font-semibold"
         style={{ color: `hsl(${st.accent})` }}

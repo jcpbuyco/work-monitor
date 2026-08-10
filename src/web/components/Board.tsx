@@ -1,4 +1,4 @@
-import type { State, Session, Activity } from "../types.ts";
+import type { State, Session, Activity, LiveWorkflow } from "../types.ts";
 import { useNow } from "../useNow.ts";
 import { Lane, Column } from "./Lane.tsx";
 import { SessionCard } from "./SessionCard.tsx";
@@ -8,6 +8,7 @@ import { ActivityFeed } from "./ActivityFeed.tsx";
 import { ToolStats } from "./ToolStats.tsx";
 import { CostPanel } from "./CostPanel.tsx";
 import { CostBreakdown } from "./CostBreakdown.tsx";
+import { WorkflowsSection } from "./WorkflowsSection.tsx";
 
 const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
   { id: "working", title: "Working", dot: "bg-working" },
@@ -15,7 +16,7 @@ const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
   { id: "idle", title: "Idle / done", dot: "bg-idle" },
 ];
 
-export function Board({ state }: { state: State }) {
+export function Board({ state, workflows = [] }: { state: State; workflows?: LiveWorkflow[] }) {
   // Re-render every second so relative timestamps tick live.
   useNow();
 
@@ -27,13 +28,24 @@ export function Board({ state }: { state: State }) {
     if (!latest.has(a.session_id)) latest.set(a.session_id, a);
   }
 
+  // Computed once per render rather than passing the array down to every card.
+  const wfSessions = new Set(workflows.map((w) => w.session_id));
+
   return (
     <div className="mx-auto max-w-7xl px-4 pb-12">
-      <AppBar state={state} />
+      <AppBar state={state} workflows={workflows} />
 
       <div className="mt-2 flex flex-col gap-6 lg:flex-row lg:items-start">
         <main className="min-w-0 flex-1">
           <TodosSection todos={state.todos} />
+
+          {(state.workflows_degraded ?? 0) > 0 && (
+            <div className="mt-4 rounded-lg border border-attention/25 bg-attention/10 px-3 py-2 text-2xs text-attention">
+              ⚠ workflow data looks off — Claude Code may have changed format
+            </div>
+          )}
+
+          <WorkflowsSection workflows={workflows} />
 
           <Lane label="Sessions" hint="auto — moves itself from agent hook events">
             {SESSION_COLS.map((c) => {
@@ -47,6 +59,7 @@ export function Board({ state }: { state: State }) {
                       latestTool={latest.get(s.id)?.tool}
                       latestDetail={latest.get(s.id)?.detail ?? null}
                       cost={state.cost.perSession[s.id]}
+                      wf={wfSessions.has(s.id)}
                     />
                   ))}
                 </Column>

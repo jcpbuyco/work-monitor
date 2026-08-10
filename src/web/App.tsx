@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchState, subscribe } from "./api.ts";
-import type { State } from "./types.ts";
+import type { State, LiveWorkflow } from "./types.ts";
 import { runViewTransition } from "./viewTransition.ts";
 import { Board } from "./components/Board.tsx";
 import { useHashRoute } from "./useHashRoute.ts";
@@ -15,6 +15,7 @@ export default function App() {
     stats: [],
     cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [], byProject: [], byBranch: [] },
   });
+  const [workflows, setWorkflows] = useState<LiveWorkflow[]>([]);
   const ready = useRef(false);
 
   useEffect(() => {
@@ -26,12 +27,15 @@ export default function App() {
       ready.current = true;
     };
     fetchState().then(apply).catch(() => {});
-    const unsub = subscribe(apply);
+    // Workflow updates are applied straight through setWorkflows — no
+    // runViewTransition, because a 5s token tick is not a layout change
+    // worth animating.
+    const unsub = subscribe({ onState: apply, onWorkflows: setWorkflows });
     return unsub;
   }, []);
 
   const route = useHashRoute();
   if (route === "#/cost") return <CostDailyPage />;
   if (route === "#/workflows") return <WorkflowsPage />;
-  return <Board state={state} />;
+  return <Board state={state} workflows={workflows} />;
 }

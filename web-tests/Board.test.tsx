@@ -37,3 +37,36 @@ describe("Board", () => {
     expect(screen.getAllByText("Bash").length).toBeGreaterThan(0);
   });
 });
+
+import type { LiveWorkflow } from "../src/web/types.ts";
+
+const liveRun: LiveWorkflow = {
+  run_id: "wf_abc", session_id: "s1", project: "browns", branch: "main", name: "research",
+  status: null, state: "running", started_at: Date.now() - 1000, phase: null, schema_ok: true,
+  costUsd: 1, tokens: 10, agents: [],
+};
+
+describe("Board workflows strip", () => {
+  it("renders no workflows section when there are zero live runs", () => {
+    render(<Board state={state} />);
+    // The AppBar always carries a "Workflows" LINK, so scope this to the section
+    // toggle BUTTON to avoid a false positive.
+    expect(screen.queryByRole("button", { name: /Workflows \(/ })).toBeNull();
+  });
+
+  it("renders the strip and flags the owning session when a run is live", () => {
+    render(<Board state={state} workflows={[liveRun]} />);
+    expect(screen.getByRole("button", { name: /Workflows \(1\)/ })).toBeTruthy();
+    expect(screen.getByTitle("owns a live workflow run")).toBeTruthy(); // the wf badge on s1
+  });
+
+  it("warns when workflow data looks degraded", () => {
+    render(<Board state={{ ...state, workflows_degraded: 3 }} />);
+    expect(screen.getByText(/workflow data looks off/i)).toBeTruthy();
+  });
+
+  it("does not warn when the server predates workflows_degraded (field absent)", () => {
+    render(<Board state={state} />);
+    expect(screen.queryByText(/workflow data looks off/i)).toBeNull();
+  });
+});
