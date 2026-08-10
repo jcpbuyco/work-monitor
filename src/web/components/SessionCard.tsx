@@ -3,12 +3,16 @@ import type { Session, SessionCost } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool } from "../tools.ts";
 import { formatUsd, formatTokens } from "../cost.ts";
+import { StatusGlyph, type GlyphKind } from "./StatusGlyph.tsx";
+import { ListRow, Rail, Chip } from "./primitives.tsx";
 
-const STATUS: Record<string, { accent: string; label: string; dot: string; pulse?: boolean }> = {
-  working: { accent: "var(--working)", label: "Working", dot: "bg-working", pulse: true },
-  needs_you: { accent: "var(--attention)", label: "Needs you", dot: "bg-attention" },
-  idle: { accent: "var(--idle)", label: "Idle", dot: "bg-idle" },
-  ended: { accent: "var(--idle)", label: "Ended", dot: "bg-idle" },
+/** Rows in the idle group are drawn in ink-4, not `idle`: the GROUP HEADER
+ *  carries the semantic colour once (Lane.tsx), and the rows recede. */
+const STATUS: Record<string, { kind: GlyphKind; tone: string; label: string }> = {
+  working: { kind: "working", tone: "text-working", label: "Working" },
+  needs_you: { kind: "needs_you", tone: "text-attention", label: "Needs you" },
+  idle: { kind: "idle", tone: "text-ink-4", label: "Idle" },
+  ended: { kind: "ended", tone: "text-ink-4", label: "Ended" },
 };
 
 export function SessionCard({
@@ -26,50 +30,83 @@ export function SessionCard({
 }) {
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
-  // Stable name so a status change (column move) tweens between positions.
-  const cardStyle: CSSProperties = { borderLeft: `3px solid hsl(${st.accent})` };
-  (cardStyle as Record<string, string>).viewTransitionName = `vt-s-${s.id}`;
+  const compact = s.status === "idle" || s.status === "ended";
+  const task = s.current_task ?? s.current_intent ?? "—";
+
+  // Stable name so a status change (group move) tweens between positions.
+  const style: CSSProperties = {};
+  (style as Record<string, string>).viewTransitionName = `vt-s-${s.id}`;
+
+  if (compact) {
+    return (
+      <ListRow
+        data-testid="session-row"
+        data-status={s.status}
+        className="am-fade-in flex items-center py-1"
+        style={style}
+      >
+        <Rail>
+          <StatusGlyph kind={st.kind} animate={false} className={st.tone} />
+        </Rail>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="sr-only">{st.label}</span>
+          <span className="shrink-0 text-xs text-ink-2">{s.project}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-ink-4">{task}</span>
+          {cost && (
+            <span className="shrink-0 font-mono text-2xs tabular-nums slashed-zero text-ink-4">
+              {formatUsd(cost.costUsd)}
+            </span>
+          )}
+          <span className="w-14 shrink-0 text-right font-mono text-2xs tabular-nums text-ink-4">
+            {ago(s.last_activity_at)}
+          </span>
+        </div>
+      </ListRow>
+    );
+  }
+
   return (
-    <div
+    <ListRow
       data-testid="session-row"
       data-status={s.status}
-      className="am-fade-in mb-2 rounded-lg border border-border bg-card p-3 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
-      style={cardStyle}
+      tone={s.status === "needs_you" ? "attention" : "default"}
+      className="am-fade-in relative py-1.5"
+      style={style}
     >
-      <div className="flex items-center gap-1.5 font-medium text-foreground">
-        {s.project}
-        {wf && (
-          <span
-            data-testid="wf-badge"
-            title="owns a live workflow run"
-            className="rounded-full border border-border bg-chip px-1.5 py-0.5 font-mono text-2xs text-working"
-          >
-            wf
+      <div className="flex items-center">
+        <Rail>
+          <StatusGlyph kind={st.kind} className={st.tone} />
+        </Rail>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {/* removing the visible status label must not remove status from the
+              accessibility tree — the glyph is aria-hidden */}
+          <span className="sr-only">{st.label}</span>
+          <span className="shrink-0 text-sm font-medium text-ink">{s.project}</span>
+          {wf && (
+            <Chip data-testid="wf-badge" tone="working" title="owns a live workflow run">
+              wf
+            </Chip>
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm text-ink-3">{task}</span>
+          {s.branch && <span className="shrink-0 font-mono text-2xs text-ink-4">⎇ {s.branch}</span>}
+          {cost && (
+            <span className="shrink-0 font-mono text-2xs tabular-nums slashed-zero text-ink-4">
+              {formatUsd(cost.costUsd)} · {formatTokens(cost.tokens)} tok
+            </span>
+          )}
+          <span className="w-14 shrink-0 text-right font-mono text-2xs tabular-nums text-ink-4">
+            {ago(s.last_activity_at)}
           </span>
-        )}
-      </div>
-      <div
-        className="mt-0.5 inline-flex items-center gap-1.5 text-2xs font-semibold"
-        style={{ color: `hsl(${st.accent})` }}
-      >
-        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}${st.pulse ? " am-pulse" : ""}`} />
-        {st.label}
-      </div>
-      <div className="mt-1.5 text-xs text-muted-foreground">
-        {s.current_task ?? s.current_intent ?? "—"}
-      </div>
-      {cost && (
-        <div className="mt-1.5 font-mono text-2xs text-muted-foreground/70">
-          {formatUsd(cost.costUsd)} · {formatTokens(cost.tokens)} tok
         </div>
-      )}
+      </div>
+
       {isWorking && s.active_tool ? (
-        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working">
+        <div className="flex min-w-0 items-center gap-1.5 pl-rail font-mono text-2xs text-working">
           <span className="am-spin inline-block" aria-hidden="true">⟳</span>
           <span className="truncate">{prettyTool(s.active_tool)}…</span>
         </div>
       ) : isWorking && latestTool ? (
-        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-working/80">
+        <div className="flex min-w-0 items-center gap-1.5 pl-rail font-mono text-2xs text-working/80">
           <span aria-hidden="true">▸</span>
           <span className="truncate">
             {prettyTool(latestTool)}
@@ -77,14 +114,17 @@ export function SessionCard({
           </span>
         </div>
       ) : null}
+
+      {/* the guard is preserved: a needs-you session with a null reason renders
+          no second line rather than a bare ⚠ */}
       {s.attention_reason && s.status === "needs_you" && (
-        <div className="mt-2 rounded-md border border-attention/25 bg-attention/10 px-2 py-1.5 text-xs text-attention">
-          ⚠ {s.attention_reason}
-        </div>
+        <div className="truncate pl-rail font-mono text-2xs text-attention">⚠ {s.attention_reason}</div>
       )}
-      {s.branch && <div className="mt-2 text-2xs text-muted-foreground/70">⎇ {s.branch}</div>}
-      {isWorking && <div className="am-shimmer mt-2 h-0.5 w-full rounded-full bg-working/15" />}
-      <div className="mt-2 text-2xs text-muted-foreground/70">{ago(s.last_activity_at)}</div>
-    </div>
+
+      {/* a 1px underline at the row's bottom edge, rail → right */}
+      {isWorking && (
+        <span aria-hidden="true" className="am-shimmer absolute bottom-0 left-rail right-0 h-px bg-working/[0.14]" />
+      )}
+    </ListRow>
   );
 }
