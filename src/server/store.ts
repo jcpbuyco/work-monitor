@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTodoInput } from "./types.ts";
 import type { Tokens } from "./pricing.ts";
 import { deriveRunState } from "./workflows.ts";
+import { WF_RECHECK_MS } from "./config.ts";
 
 const SESSION_COLS =
   "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at";
@@ -154,6 +155,23 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
+  costUsd: number;
+  tokens: number;
+  agents: WorkflowAgentView[];
+}
+
+export interface LiveWorkflow {
+  run_id: string;
+  session_id: string;
+  project: string;
+  branch: string | null;
+  name: string | null;
+  status: string | null;
+  state: string;
+  started_at: number | null;
+  /** 1-based verbatim, so a pill reads `Phase ${index}/${total}` with no arithmetic. */
+  phase: { index: number; total: number; title: string } | null;
+  schema_ok: boolean;
   costUsd: number;
   tokens: number;
   agents: WorkflowAgentView[];
@@ -829,5 +847,47 @@ export class Store {
       )
       .all(params) as Record<string, any>[];
     return this.hydrateWorkflowRuns(rows, now);
+  }
+
+  /** Runs to show on the board strip: everything unsettled within the 24h recheck
+   *  window. Orphaned runs stay visible deliberately — the state is self-healing,
+   *  so a run whose files move again flips back to running.
+   *
+   *  This is the ONLY payload the 5s tick broadcasts. It must never grow into a
+   *  buildState()-sized query. */
+  liveWorkflows(now: number = Date.now()): LiveWorkflow[] {
+    const rows = this.db
+      .query(
+        `SELECT * FROM workflow_runs
+         WHERE last_seen_at IS NULL OR last_seen_at > $cutoff
+         ORDER BY started_at DESC`
+      )
+      .all({ $cutoff: now - WF_RECHECK_MS }) as Record<string, any>[];
+
+    return this.hydrateWorkflowRuns(rows, now)
+      .filter((r) => r.state !== "settled")
+      .map((r) => {
+        // Current phase = the highest 1-based phase_index any agent carries.
+        // Titles come from the manifest/script skeleton; without either there is
+        // genuinely no label -> null, and the card says so in words (§4.1).
+        const index = r.agents.reduce((m, a) => (a.phase_index != null && a.phase_index > m ? a.phase_index : m), 0);
+        const total = r.phases.length;
+        const title = index > 0 ? (r.phases[index - 1]?.title ?? r.agents.find((a) => a.phase_index === index)?.phase_title ?? "") : "";
+        return {
+          run_id: r.run_id,
+          session_id: r.session_id,
+          project: r.project,
+          branch: r.branch,
+          name: r.name,
+          status: r.status,
+          state: r.state,
+          started_at: r.started_at,
+          phase: index > 0 && total > 0 ? { index, total, title } : null,
+          schema_ok: r.schema_ok,
+          costUsd: r.costUsd,
+          tokens: r.tokens,
+          agents: r.agents,
+        };
+      });
   }
 }

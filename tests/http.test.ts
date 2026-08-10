@@ -21,6 +21,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // The SSE stream test leaves a connection open (by design — that is the
+  // long-lived /api/stream response) and `reader.cancel()` on the client does
+  // not synchronously tear down the server-side socket. Without this,
+  // server.close() waits forever for that connection to end.
+  server.closeAllConnections?.();
   await new Promise<void>((r) => server.close(() => r()));
 });
 
@@ -241,6 +246,25 @@ describe("GET /api/workflows", () => {
   it("keeps workflows OUT of the state blob (buildState must not get slower)", () => {
     const state = buildState(store) as any;
     expect(state.workflows).toBeUndefined();
+  });
+});
+
+describe("workflows on the stream", () => {
+  it("emits BOTH state and workflows on connect", async () => {
+    const res = await fetch(`${base}/api/stream`);
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let seen = dec.decode((await reader.read()).value);
+    if (!seen.includes("event: workflows")) seen += dec.decode((await reader.read()).value);
+    expect(seen).toContain("event: state");
+    expect(seen).toContain("event: workflows");
+    await reader.cancel();
+  });
+
+  it("exposes workflows_degraded as a top-level scalar, not nested under cost", () => {
+    const state = buildState(store) as any;
+    expect(typeof state.workflows_degraded).toBe("number");
+    expect(state.cost.workflows_degraded).toBeUndefined();
   });
 });
 

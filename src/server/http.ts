@@ -6,6 +6,7 @@ import { resolveRepoInfo } from "./resolve-project.ts";
 import type { EventType, HookEvent, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 import { tailUsage } from "./usage.ts";
+import { workflowsDegraded } from "./workflows.ts";
 import type { Store as StoreType } from "./store.ts";
 
 export interface AppDeps {
@@ -65,6 +66,9 @@ export function buildState(store: StoreType) {
     todos: store.listTodos(),
     activity: store.recentActivity(ACTIVITY_LIMIT),
     stats: store.toolStats(),
+    // A scalar sibling of sessions/todos/activity/stats/cost — NOT nested in cost,
+    // and never an array. buildState() is already 243ms; it must not get slower.
+    workflows_degraded: workflowsDegraded(),
     cost: {
       ...store.costSummary(startOfLocalDay(Date.now())),
       // All-time attribution for the historical breakdown panel.
@@ -176,6 +180,7 @@ export function createApp(deps: AppDeps) {
           connection: "keep-alive",
         });
         res.write(`event: state\ndata: ${JSON.stringify(buildState(store))}\n\n`);
+        res.write(`event: workflows\ndata: ${JSON.stringify(store.liveWorkflows())}\n\n`);
         sse.add(res);
         return;
       }
