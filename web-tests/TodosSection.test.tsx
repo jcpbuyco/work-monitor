@@ -25,9 +25,11 @@ describe("TodosSection", () => {
 
   it("caps the open list height with an inner scroll so the board stays visible", () => {
     render(<TodosSection todos={todos} />);
-    const scroller = screen.getByText("open1").closest('[class*="overflow-y-auto"]');
-    expect(scroller).not.toBeNull();
-    expect(scroller!.className).toContain("max-h-[40vh]");
+    const scroller = screen.getByTestId("todos-scroller");
+    expect(scroller.className).toContain("max-h-[40vh]");
+    expect(scroller.className).toContain("overflow-y-auto");
+    // The row title must stay INSIDE the capped scroller, not beside it.
+    expect(scroller.contains(screen.getByText("open1"))).toBe(true);
   });
 
   it("collapsing hides the open list", () => {
@@ -39,7 +41,25 @@ describe("TodosSection", () => {
   it("opening the Done link reveals the completed todo in the dialog", () => {
     render(<TodosSection todos={todos} />);
     expect(screen.queryByText("gone")).toBeNull();
-    fireEvent.click(screen.getByText(/Done \(1\)/));
+    fireEvent.click(screen.getByTestId("todos-done-link"));
     expect(screen.getByText("gone")).toBeDefined();
+  });
+});
+
+describe("TodosSection header", () => {
+  it("keeps the Done link reachable while the section is collapsed", () => {
+    // It moved out of the {!collapsed && …} branch and into the header.
+    render(<TodosSection todos={todos} />);
+    fireEvent.click(screen.getByRole("button", { name: /Todos/ }));
+    expect(screen.queryByText("open1")).toBeNull();
+    fireEvent.click(screen.getByTestId("todos-done-link"));
+    expect(screen.getByText("gone")).toBeDefined();
+  });
+
+  it("shows the bare empty state with no bordered shell", () => {
+    render(<TodosSection todos={[]} />);
+    const empty = screen.getByText("Nothing open. 🎉");
+    expect(empty.className).not.toContain("border");
+    expect(screen.queryByTestId("todos-scroller")).toBeNull();
   });
 });

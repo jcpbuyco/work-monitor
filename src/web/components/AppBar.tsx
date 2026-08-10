@@ -2,11 +2,39 @@ import type { State, LiveWorkflow } from "../types.ts";
 import { useTheme } from "../useTheme.ts";
 import { useTextSize } from "../useTextSize.ts";
 import { useMotion } from "../useMotion.ts";
+import { StatusGlyph, type GlyphKind } from "./StatusGlyph.tsx";
+import { Chip } from "./primitives.tsx";
 
-function Count({ dotClass, label, n }: { dotClass: string; label: string; n: number }) {
+/** Ghost control: no border, no fill, no colour. Every call site appends
+ *  EXACTLY ONE text colour — two `text-*` classes on one element are resolved
+ *  by stylesheet order, not by className order. */
+const GHOST =
+  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors duration-quick ease-quad hover:bg-surface-2 hover:text-ink";
+
+function Count({
+  testId,
+  kind,
+  label,
+  n,
+  escalate = false,
+}: {
+  testId: string;
+  kind: GlyphKind;
+  label: string;
+  n: number;
+  escalate?: boolean;
+}) {
+  // Tone IS the hierarchy: a zero count recedes on its own, with no branch in
+  // the markup. The one escalation in the whole app is a non-zero needs-you.
+  const tone =
+    escalate && n > 0
+      ? "rounded-full bg-attention/[0.08] px-2 py-0.5 text-attention"
+      : n > 0
+        ? "text-ink-2"
+        : "text-ink-4";
   return (
-    <span className="am-count inline-flex items-center gap-2 rounded-full border border-border bg-chip px-2.5 py-1 text-xs text-muted-foreground">
-      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
+    <span data-testid={testId} className={`am-count inline-flex items-center gap-1.5 text-xs ${tone}`}>
+      <StatusGlyph kind={kind} animate={false} />
       <span>{n} {label}</span>
     </span>
   );
@@ -21,78 +49,81 @@ export function AppBar({ state, workflows = [] }: { state: State; workflows?: Li
   const todoCount = state.todos.filter((t) => t.status === "todo").length;
 
   return (
-    <header className="sticky top-0 z-10 -mx-4 mb-2 flex flex-wrap items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur">
-      <div className="flex items-center gap-2 font-semibold tracking-tight text-foreground">
-        <span
-          className="h-2.5 w-2.5 rounded-[3px] bg-primary"
-          style={{ boxShadow: "0 0 0 3px hsl(var(--primary) / 0.18)" }}
-        />
-        agent-monitor
+    <header className="sticky top-0 z-20 -mx-6 flex h-12 items-center gap-4 border-b-hairline border-border-weak bg-surface-0/[0.72] px-6 backdrop-blur-[20px]">
+      <div className="flex items-center gap-2">
+        {/* the inline boxShadow glow ring is deleted — pure decoration */}
+        <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-accent" />
+        <span className="text-sm font-semibold tracking-tight text-ink">agent-monitor</span>
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        <Count key={`w-${working}`} dotClass="bg-working" label="working" n={working} />
-        <Count key={`n-${needsYou}`} dotClass="bg-attention" label="needs you" n={needsYou} />
-        <Count key={`t-${todoCount}`} dotClass="bg-attention" label="to do" n={todoCount} />
+
+      <span aria-hidden="true" className="h-4 w-px bg-border-weak" />
+
+      <div className="flex items-center gap-4">
+        {/* keyed on the COUNT only — never on the 1Hz clock (§5.5) */}
+        <Count key={`w-${working}`} testId="appbar-count-working" kind="working" label="working" n={working} />
+        <Count key={`n-${needsYou}`} testId="appbar-count-needs-you" kind="needs_you" label="needs you" n={needsYou} escalate />
+        <Count key={`t-${todoCount}`} testId="appbar-count-todo" kind="todo" label="to do" n={todoCount} />
       </div>
-      <div className="ml-auto flex items-center gap-2">
-        <a
-          href="#/cost"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
-        >
-          <span aria-hidden="true">$</span>
+
+      <div className="ml-auto flex items-center gap-1">
+        <a href="#/cost" data-press className={`${GHOST} text-ink-3`}>
+          <span aria-hidden="true" className="text-2xs text-ink-4">$</span>
           <span>Cost</span>
         </a>
-        <a
-          href="#/workflows"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
-        >
-          <span aria-hidden="true">⚙</span>
+        <a href="#/workflows" data-press className={`${GHOST} text-ink-3`}>
+          <span aria-hidden="true" className="text-2xs text-ink-4">⚙</span>
           <span>Workflows</span>
           {workflows.length > 0 && (
-            <span className="rounded-full bg-working/20 px-1.5 text-2xs text-working">{workflows.length}</span>
+            <Chip data-testid="appbar-wf-count" tone="working" round size="2xs" className="tabular-nums">
+              {workflows.length}
+            </Chip>
           )}
         </a>
-        <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
+
+        {/* the one control that keeps a border, because it is a joined pair.
+            No data-press: a 3% scale on a joined 28px control reads as wobble. */}
+        <div className="inline-flex h-7 items-center rounded-md border-hairline border-border">
           <button
             type="button"
             onClick={dec}
             disabled={!canDec}
             aria-label="Decrease text size"
-            className="flex h-full items-center px-2.5 text-sm leading-none transition hover:text-foreground disabled:opacity-40"
+            className="flex h-full items-center px-2.5 text-xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink disabled:opacity-40"
           >
             A−
           </button>
-          <span className="h-4 w-px bg-border" />
+          <span aria-hidden="true" className="h-4 w-px bg-border" />
           <button
             type="button"
             onClick={inc}
             disabled={!canInc}
             aria-label="Increase text size"
-            className="flex h-full items-center px-2.5 text-base leading-none transition hover:text-foreground disabled:opacity-40"
+            className="flex h-full items-center px-2.5 text-sm text-ink-3 transition-colors duration-quick ease-quad hover:text-ink disabled:opacity-40"
           >
             A+
           </button>
         </div>
+
         <button
           type="button"
+          data-press
           onClick={toggleMotion}
           aria-label="Toggle motion"
           aria-pressed={motionOn}
           title={motionOn ? "Animations on" : "Animations off"}
-          className={`inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none transition hover:text-foreground ${
-            motionOn ? "text-foreground" : "text-muted-foreground"
-          }`}
+          className={`${GHOST} ${motionOn ? "text-ink" : "text-ink-3"}`}
         >
-          <span aria-hidden="true">{motionOn ? "✨" : "⊘"}</span>
+          <span aria-hidden="true" className="text-2xs">{motionOn ? "✨" : "⊘"}</span>
           <span>Motion</span>
         </button>
         <button
           type="button"
+          data-press
           onClick={toggle}
           aria-label="Toggle theme"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
+          className={`${GHOST} text-ink-3`}
         >
-          <span aria-hidden="true">{theme === "dark" ? "☾" : "☀"}</span>
+          <span aria-hidden="true" className="text-2xs">{theme === "dark" ? "☾" : "☀"}</span>
           <span>{theme === "dark" ? "Dark" : "Light"}</span>
         </button>
       </div>

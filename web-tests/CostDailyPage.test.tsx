@@ -32,8 +32,8 @@ describe("CostDailyPage", () => {
     render(<CostDailyPage />);
     await screen.findByText("alpha");
     fireEvent.click(screen.getByRole("button", { name: /cost/i }));
-    const rows = screen.getAllByRole("row"); // [header, ...data]
-    expect(within(rows[1]).getByText("$9.00")).toBeTruthy(); // beta (9.0) now first
+    const rows = screen.getAllByTestId("cost-row"); // data rows only, no header
+    expect(within(rows[0]).getByText("$9.00")).toBeTruthy(); // beta (9.0) now first
   });
 
   it("refetches with the window's since param when the range changes", async () => {
@@ -55,5 +55,22 @@ describe("CostDailyPage", () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("boom")) as unknown as typeof fetch;
     render(<CostDailyPage />);
     expect(await screen.findByText(/couldn.t load/i)).toBeTruthy();
+  });
+
+  it("exposes exactly one button whose name matches /cost/i — the column header", async () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    await screen.findByText("alpha");
+    expect(screen.getAllByRole("button", { name: /cost/i }).length).toBe(1);
+    expect(screen.getByText("← Dashboard").tagName).toBe("A");
+    expect(screen.getByText("Cost by day").tagName).toBe("SPAN");
+  });
+
+  it("announces the loading state to assistive tech", () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    const loading = screen.getByText("Loading…");
+    expect(loading.getAttribute("role")).toBe("status");
+    expect(loading.getAttribute("aria-live")).toBe("polite");
   });
 });

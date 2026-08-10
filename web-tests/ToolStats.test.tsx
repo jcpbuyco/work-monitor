@@ -29,4 +29,12 @@ describe("ToolStats", () => {
     const { container } = render(<ToolStats stats={[]} />);
     expect(container.firstChild).toBeNull();
   });
+
+  it("draws a neutral proportional bar, not an accent one", () => {
+    const { container } = render(<ToolStats stats={stats} />);
+    const bars = container.querySelectorAll("[data-meter-bar]");
+    expect(bars.length).toBe(2);
+    expect((bars[0] as HTMLElement).className).toContain("bg-bar");
+    expect(container.innerHTML).not.toContain("bg-primary/10");
+  });
 });

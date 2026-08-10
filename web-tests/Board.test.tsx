@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { Board } from "../src/web/components/Board.tsx";
 import type { State } from "../src/web/types.ts";
 
@@ -68,5 +68,28 @@ describe("Board workflows strip", () => {
   it("does not warn when the server predates workflows_degraded (field absent)", () => {
     render(<Board state={state} />);
     expect(screen.queryByText(/workflow data looks off/i)).toBeNull();
+  });
+});
+
+describe("Board layout", () => {
+  it("orders the session groups needs-you, working, idle", () => {
+    const { container } = render(<Board state={state} />);
+    const ids = [...container.querySelectorAll('[data-testid^="session-group-"]')].map((e) =>
+      e.getAttribute("data-testid")
+    );
+    expect(ids).toEqual(["session-group-needs_you", "session-group-working", "session-group-idle"]);
+  });
+
+  it("still renders an empty group's header with a zero count — it is the board's legend", () => {
+    render(<Board state={state} />);
+    const idle = screen.getByTestId("session-group-idle");
+    expect(within(idle).getByText("Idle / done")).toBeTruthy();
+    expect(within(idle).getByText("0")).toBeTruthy();
+  });
+
+  it("puts the degraded banner first in main, above the sessions lane", () => {
+    const { container } = render(<Board state={{ ...state, workflows_degraded: 3 }} />);
+    const main = container.querySelector("main")!;
+    expect(main.firstElementChild!.textContent).toContain("workflow data looks off");
   });
 });

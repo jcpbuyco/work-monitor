@@ -49,11 +49,31 @@ describe("TodoCard", () => {
 
   it("clamps the note to a single line for a compact card", () => {
     renderCard();
-    expect(screen.getByText("a clamped note").className).toContain("line-clamp-1");
+    expect(screen.getByTestId("note").className).toContain("line-clamp-1");
   });
 
   it("is not draggable (no drag affordance)", () => {
     const { container } = renderCard();
     expect(container.querySelector(".cursor-grab")).toBeNull();
+  });
+});
+
+describe("TodoCard row", () => {
+  it("puts a todo glyph in the rail instead of a ✓ character", () => {
+    const { container } = renderCard();
+    const btn = screen.getByLabelText("Mark done");
+    expect(btn.textContent).toBe("");
+    expect(btn.querySelector('[data-glyph="todo"]')).toBeTruthy();
+    expect(btn.className).toContain("am-check"); // drives the hover check reveal
+    expect(container.querySelector(".w-rail")).toBeTruthy();
+  });
+
+  it("keeps delete in the DOM behind progressive disclosure, on the danger token", () => {
+    renderCard();
+    const del = screen.getByLabelText("Delete");
+    expect(del.className).toContain("opacity-0");
+    expect(del.className).toContain("group-hover:opacity-100");
+    expect(del.className).toContain("hover:text-danger");
+    expect(del.className).not.toContain("red-400"); // the app's last un-tokenized colour
   });
 });

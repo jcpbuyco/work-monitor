@@ -2,6 +2,12 @@ import type { Activity, Session } from "../types.ts";
 import { ago } from "../time.ts";
 import { prettyTool, toolDot, formatDur } from "../tools.ts";
 import { useFeedLimit } from "../useFeedLimit.ts";
+import { SectionHeader, Rail, ROW_BASE, ROW_TONE } from "./primitives.tsx";
+
+/** Bottom fade so the feed ends instead of being guillotined. React does not
+ *  auto-prefix maskImage, so BOTH properties are set to the SAME value. rem,
+ *  not px, so the fade scales with the text-size ladder. */
+const FADE = "linear-gradient(to bottom,#000 calc(100% - 1.5rem),transparent)";
 
 export function ActivityFeed({ activity, sessions }: { activity: Activity[]; sessions: Session[] }) {
   const { limit, setLimit, options } = useFeedLimit();
@@ -9,69 +15,70 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
   const rows = activity.slice(0, limit);
 
   return (
-    <section className="mt-7">
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <span className="inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <section className="mt-6">
+      <SectionHeader
+        label="⚡ Live activity"
+        leading={
           <span className="relative flex h-2 w-2" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+            <span className="am-ping absolute inline-flex h-full w-full rounded-full bg-accent/60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
           </span>
-          ⚡ Live activity
-        </span>
-        <div className="group relative inline-flex items-center">
-          <select
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            aria-label="Number of tool calls to show"
-            className="cursor-pointer appearance-none rounded-full border border-border bg-chip py-1 pl-3 pr-7 text-2xs text-muted-foreground transition hover:text-foreground"
-          >
-            {options.map((n) => (
-              <option key={n} value={n}>last {n}</option>
-            ))}
-          </select>
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 12 12"
-            className="pointer-events-none absolute right-2.5 h-2.5 w-2.5 text-muted-foreground/70 transition group-hover:text-foreground"
-          >
-            <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-      </div>
-
-      <div className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5">
-        {rows.length === 0 ? (
-          <div className="rounded-xl border border-border bg-card/50 px-3 py-6 text-center text-2xs text-muted-foreground">
-            Waiting for tool activity…
+        }
+        right={
+          <div className="group relative inline-flex items-center">
+            <select
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              aria-label="Number of tool calls to show"
+              className="h-6 cursor-pointer appearance-none rounded-md border-hairline border-border bg-transparent pl-2 pr-6 text-2xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink"
+            >
+              {options.map((n) => (
+                <option key={n} value={n}>last {n}</option>
+              ))}
+            </select>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 12 12"
+              className="pointer-events-none absolute right-2 h-2.5 w-2.5 text-ink-4"
+            >
+              <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
+        }
+      />
+
+      <div
+        className="max-h-[calc(100vh-8rem)] overflow-y-auto pr-0.5"
+        style={{ WebkitMaskImage: FADE, maskImage: FADE }}
+      >
+        {rows.length === 0 ? (
+          <div className="py-6 text-center text-2xs text-ink-4">Waiting for tool activity…</div>
         ) : (
-          <ul className="space-y-2">
+          <ul>
             {rows.map((a, i) => {
               // animationDelay → staggered cascade on load; viewTransitionName →
               // existing rows slide down when a newer call is inserted on top.
               const liStyle: Record<string, string> = {
-                animationDelay: `${Math.min(i, 10) * 30}ms`,
+                animationDelay: `${Math.min(i, 6) * 16}ms`,
                 viewTransitionName: `vt-a-${a.id}`,
               };
               return (
-              <li
-                key={a.id}
-                style={liStyle}
-                className="am-row-in rounded-lg border border-border bg-card/60 px-3 py-2 font-mono text-2xs shadow-card transition hover:bg-card-hover"
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(a.tool)}`} />
-                  <span className="shrink-0 font-semibold text-foreground">{prettyTool(a.tool)}</span>
-                  {a.dur != null && (
-                    <span className="shrink-0 tabular-nums text-muted-foreground/45">{formatDur(a.dur)}</span>
-                  )}
-                  <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/55">{ago(a.at)}</span>
-                </div>
-                <div className="mt-0.5 flex items-baseline gap-2 pl-3.5">
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground/80">{a.detail ?? ""}</span>
-                  <span className="shrink-0 text-muted-foreground/45">{projectFor(a.session_id)}</span>
-                </div>
-              </li>
+                <li key={a.id} style={liStyle} className={`am-row-in py-1 font-mono text-2xs ${ROW_BASE} ${ROW_TONE.default}`}>
+                  <div className="flex items-center">
+                    <Rail>
+                      <span className={`h-1.5 w-1.5 rounded-full ${toolDot(a.tool)}`} />
+                    </Rail>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="shrink-0 font-medium text-ink">{prettyTool(a.tool)}</span>
+                      {a.dur != null && <span className="shrink-0 tabular-nums text-ink-4">{formatDur(a.dur)}</span>}
+                      <span className="ml-auto shrink-0 tabular-nums text-ink-4">{ago(a.at)}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-baseline gap-2 pl-rail">
+                    <span className="min-w-0 flex-1 truncate text-ink-3">{a.detail ?? ""}</span>
+                    <span className="shrink-0 text-ink-4">{projectFor(a.session_id)}</span>
+                  </div>
+                </li>
               );
             })}
           </ul>

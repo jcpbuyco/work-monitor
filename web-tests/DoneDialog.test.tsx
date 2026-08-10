@@ -39,4 +39,16 @@ describe("DoneDialog", () => {
     fireEvent.click(screen.getByLabelText("Close"));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("marks each done row with the ended glyph in the rail, and no strikethrough", () => {
+    const { container } = render(<DoneDialog open done={[mk("a", 1)]} onClose={() => {}} />);
+    expect(container.querySelectorAll('[data-glyph="ended"]').length).toBe(1);
+    expect(screen.getByText("a").className).toContain("line-clamp-1");
+    expect(screen.getByText("a").className).not.toContain("line-through");
+  });
+
+  it("separates rows by rhythm, not by dividers", () => {
+    const { container } = render(<DoneDialog open done={[mk("a", 2), mk("b", 1)]} onClose={() => {}} />);
+    expect(container.querySelector(".divide-y")).toBeNull();
+  });
 });

@@ -73,8 +73,8 @@ describe("WorkflowsPage", () => {
     render(<WorkflowsPage />);
     await screen.findByText("research");
     fireEvent.click(screen.getByRole("button", { name: /cost/i }));
-    const rows = screen.getAllByRole("row");
-    expect(within(rows[1]).getByText("$9.00")).toBeTruthy(); // wf_b (9.0) first
+    const rows = screen.getAllByTestId("wf-row");
+    expect(within(rows[0]).getByText("$9.00")).toBeTruthy(); // wf_b (9.0) first
   });
 
   it("refetches with the window's since param when the range changes", async () => {
@@ -113,5 +113,24 @@ describe("WorkflowsPage", () => {
     mockFetch(RUNS);
     render(<WorkflowsPage />);
     expect(await screen.findByText(/format last verified on 2\.1\.226/)).toBeTruthy();
+  });
+
+  it("marks each run with a glyph that agrees with its status label", async () => {
+    mockFetch(RUNS);
+    const { container } = render(<WorkflowsPage />);
+    await screen.findByText("research");
+    expect(container.querySelector('[data-glyph="ended"]')).toBeTruthy(); // completed
+    expect(screen.getByText("completed").className).toContain("text-done");
+  });
+
+  it("keeps the totals row last in tbody with its 8 cells", async () => {
+    mockFetch(RUNS);
+    render(<WorkflowsPage />);
+    await screen.findByText("research");
+    const totals = screen.getByTestId("wf-totals");
+    expect(totals.querySelectorAll("td").length).toBe(8);
+    expect(totals.parentElement!.lastElementChild).toBe(totals);
+    // the caret must carry no text, or findByText("research") stops resolving
+    expect(screen.getAllByTestId("wf-row")[0].querySelector("svg")).toBeTruthy();
   });
 });

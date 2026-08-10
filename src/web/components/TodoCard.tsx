@@ -1,35 +1,50 @@
 import type { Todo } from "../types.ts";
 import { patchTodo, deleteTodo } from "../api.ts";
+import { StatusGlyph } from "./StatusGlyph.tsx";
+import { Rail, ROW_BASE, ROW_TONE } from "./primitives.tsx";
 
 export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void }) {
   // Stable name so marking done / deleting / adding tweens the list.
-  const cardStyle: Record<string, string> = { viewTransitionName: `vt-t-${t.id}` };
+  const style: Record<string, string> = { viewTransitionName: `vt-t-${t.id}` };
   return (
     <div
       onClick={() => onOpen?.(t)}
-      style={cardStyle}
-      className="am-fade-in mb-2 break-inside-avoid cursor-pointer rounded-lg border border-border bg-card p-2.5 shadow-card transition hover:bg-card-hover hover:shadow-card-hover"
+      style={style}
+      className={`am-fade-in group flex cursor-pointer items-center py-1.5 ${ROW_BASE} ${ROW_TONE.default}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <button
-            type="button"
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs leading-none text-muted-foreground transition hover:border-done/40 hover:bg-done/10 hover:text-done focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-done/50"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              patchTodo(t.id, { status: "done" });
-            }}
-            aria-label="Mark done"
-            title="Mark done"
-          >
-            ✓
-          </button>
-          <div className="font-medium text-foreground line-clamp-2">{t.title}</div>
-        </div>
+      <Rail>
         <button
           type="button"
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs leading-none text-muted-foreground transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
+          className="am-check inline-flex h-4 w-4 shrink-0 items-center justify-center text-ink-4 transition-colors duration-quick ease-quad hover:text-done"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            patchTodo(t.id, { status: "done" });
+          }}
+          aria-label="Mark done"
+          title="Mark done"
+        >
+          <StatusGlyph kind="todo" />
+        </button>
+      </Rail>
+
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+        {/* one-line rows want truncation, not line-clamp-2 */}
+        <span className="max-w-[46%] truncate text-sm font-medium text-ink">{t.title}</span>
+        {t.note && (
+          <span data-testid="note" className="line-clamp-1 min-w-0 flex-1 text-xs text-ink-4">
+            {t.note}
+          </span>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2.5 text-2xs">
+          {t.for_who && <span className="font-medium text-attention">→ {t.for_who}</span>}
+          {t.branch && <span className="text-ink-4">⎇ {t.branch}</span>}
+          {t.origin_project && <span className="text-ink-4">{t.origin_project}</span>}
+        </div>
+        {/* stays in the DOM — opacity does not affect getByLabelText */}
+        <button
+          type="button"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border-hairline border-transparent text-2xs leading-none text-ink-4 opacity-0 transition-opacity duration-quick ease-quad group-focus-within:opacity-100 group-hover:opacity-100 hover:border-danger/40 hover:bg-danger/[0.12] hover:text-danger"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
@@ -40,12 +55,6 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
         >
           ✕
         </button>
-      </div>
-      {t.note && <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">{t.note}</div>}
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs">
-        {t.for_who && <span className="font-semibold text-attention">→ {t.for_who}</span>}
-        {t.branch && <span className="text-muted-foreground">⎇ {t.branch}</span>}
-        {t.origin_project && <span className="text-muted-foreground/70">{t.origin_project}</span>}
       </div>
     </div>
   );

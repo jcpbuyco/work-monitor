@@ -10,10 +10,11 @@ import { CostPanel } from "./CostPanel.tsx";
 import { CostBreakdown } from "./CostBreakdown.tsx";
 import { WorkflowsSection } from "./WorkflowsSection.tsx";
 
-const SESSION_COLS: { id: Session["status"]; title: string; dot: string }[] = [
-  { id: "working", title: "Working", dot: "bg-working" },
-  { id: "needs_you", title: "Needs you", dot: "bg-attention" },
-  { id: "idle", title: "Idle / done", dot: "bg-idle" },
+/** Needs you first: the board's job is to tell you when it needs you. */
+const SESSION_COLS: { id: Session["status"]; title: string }[] = [
+  { id: "needs_you", title: "Needs you" },
+  { id: "working", title: "Working" },
+  { id: "idle", title: "Idle / done" },
 ];
 
 export function Board({ state, workflows = [] }: { state: State; workflows?: LiveWorkflow[] }) {
@@ -32,26 +33,26 @@ export function Board({ state, workflows = [] }: { state: State; workflows?: Liv
   const wfSessions = new Set(workflows.map((w) => w.session_id));
 
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-12">
+    <div className="mx-auto max-w-board px-6 pb-16">
       <AppBar state={state} workflows={workflows} />
 
-      <div className="mt-2 flex flex-col gap-6 lg:flex-row lg:items-start">
-        <main className="min-w-0 flex-1">
-          <TodosSection todos={state.todos} />
-
+      <div className="mt-3 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <main className="min-w-0 lg:pr-6">
+          {/* First in main, no top margin. Together with the needs_you row tint
+              these are the only two tinted surfaces in the whole app. */}
           {(state.workflows_degraded ?? 0) > 0 && (
-            <div className="mt-4 rounded-lg border border-attention/25 bg-attention/10 px-3 py-2 text-2xs text-attention">
+            <div className="flex h-8 items-center gap-2 rounded-md border-hairline border-attention/25 bg-attention/[0.07] px-2.5 text-2xs text-attention">
               ⚠ workflow data looks off — Claude Code may have changed format
             </div>
           )}
 
-          <WorkflowsSection workflows={workflows} />
-
+          {/* Sessions are the reason the page exists; the 40vh caps on Todos and
+              Workflows were compensating for them sitting third. */}
           <Lane label="Sessions" hint="auto — moves itself from agent hook events">
             {SESSION_COLS.map((c) => {
               const items = bySession(c.id);
               return (
-                <Column key={c.id} title={c.title} dot={c.dot} count={items.length}>
+                <Column key={c.id} title={c.title} dot={c.id} count={items.length}>
                   {items.map((s) => (
                     <SessionCard
                       key={s.id}
@@ -66,9 +67,14 @@ export function Board({ state, workflows = [] }: { state: State; workflows?: Liv
               );
             })}
           </Lane>
+
+          <WorkflowsSection workflows={workflows} />
+          <TodosSection todos={state.todos} />
         </main>
 
-        <aside className="lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
+        {/* One vertical hairline replaces four bordered card boxes. Below lg the
+            grid stacks and the border drops — lg: prefixes only. */}
+        <aside className="mt-6 lg:sticky lg:top-14 lg:mt-0 lg:border-l-hairline lg:border-border-weak lg:pl-6">
           <ToolStats stats={state.stats} />
           <CostPanel cost={state.cost} />
           <CostBreakdown cost={state.cost} />

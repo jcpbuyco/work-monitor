@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatUsd, formatTokens, prettyModel, costDailyRange, type CostWindow } from "../cost.ts";
 import { formatDuration, formatWhen } from "../time.ts";
-import { statusClass, statusKnown } from "../workflowStatus.ts";
+import { statusClass, statusKnown, statusGlyphKind } from "../workflowStatus.ts";
+import { PageHeader, Segmented, Chip, Chevron } from "./primitives.tsx";
+import { StatusGlyph } from "./StatusGlyph.tsx";
 import type { WorkflowRun, WorkflowAgentView } from "../types.ts";
 
 type SortKey = "when" | "workflow" | "project" | "status" | "duration" | "agents" | "tokens" | "cost";
@@ -120,135 +122,136 @@ export function WorkflowsPage() {
     });
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-12">
-      <header className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur">
-        <a href="#/" className="text-sm text-muted-foreground transition hover:text-foreground">
-          ← Dashboard
-        </a>
-        <span className="font-semibold tracking-tight text-foreground">Workflow runs</span>
-        <div className="ml-auto inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-sm text-muted-foreground">
-          {WINDOWS.map((w) => (
-            <button
-              key={String(w)}
-              type="button"
-              onClick={() => setRange(w)}
-              className={`flex h-full items-center px-3 leading-none transition hover:text-foreground ${
-                range === w ? "bg-chip text-foreground" : ""
-              }`}
-            >
-              {w === "all" ? "All" : `${w}d`}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="mx-auto max-w-board px-6 pb-16">
+      <PageHeader
+        title="Workflow runs"
+        right={
+          <Segmented
+            value={range}
+            onChange={setRange}
+            options={WINDOWS.map((w) => ({ value: w, label: w === "all" ? "All" : `${w}d` }))}
+          />
+        }
+      />
 
       {/* Same four states, in the same order, as CostDailyPage: error → loading →
           empty → table. Without the loading branch the totals row renders "0 runs"
           for one frame on every window change. */}
       {status === "error" ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">Couldn’t load workflow runs.</p>
+        <p className="py-16 text-center text-sm text-ink-3">Couldn’t load workflow runs.</p>
       ) : status === "loading" ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+        <p role="status" aria-live="polite" className="py-16 text-center text-sm text-ink-3">Loading…</p>
       ) : sorted.length === 0 ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">No workflow runs in this window.</p>
+        <p className="py-16 text-center text-sm text-ink-3">No workflow runs in this window.</p>
       ) : (
         <>
-        <table className="w-full border-collapse font-mono text-2xs">
-          <thead>
-            <tr className="border-b border-border text-left text-muted-foreground">
-              {COLS.map((c) => (
-                <th
-                  key={c.key}
-                  aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className={`px-2 py-1.5 font-semibold ${c.numeric ? "text-right" : ""}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(c)}
-                    className="inline-flex items-center gap-1 uppercase tracking-wider transition hover:text-foreground"
+          <table className="w-full border-collapse font-mono text-xs">
+            <thead>
+              <tr>
+                {COLS.map((c) => (
+                  <th
+                    key={c.key}
+                    aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+                    className={`sticky top-12 z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
                   >
-                    {c.label}
-                    {sort.key === c.key && <span aria-hidden="true">{sort.dir === "asc" ? "▲" : "▼"}</span>}
-                  </button>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r) => {
-              const label = r.status ?? r.state;
-              return [
-                <tr
-                  key={r.run_id}
-                  onClick={() => toggleOpen(r.run_id)}
-                  className="cursor-pointer border-b border-border/50 hover:bg-card-hover"
-                >
-                  <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{formatWhen(r.started_at)}</td>
-                  <td className="px-2 py-1 font-semibold text-foreground">
-                    {r.name ?? r.run_id}
-                    {!r.schema_ok && (
-                      <span className="ml-1.5 rounded-full border border-border bg-chip px-1.5 py-0.5 text-[0.65rem] text-muted-foreground">
-                        structure unavailable
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(c)}
+                      className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
+                    >
+                      {c.label}
+                      {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => {
+                const label = r.status ?? r.state;
+                return [
+                  <tr
+                    key={r.run_id}
+                    data-testid="wf-row"
+                    onClick={() => toggleOpen(r.run_id)}
+                    className="h-8 cursor-pointer border-b border-border-weak transition-colors duration-quick ease-quad hover:bg-surface-2"
+                  >
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{formatWhen(r.started_at)}</td>
+                    <td className="px-2 py-[0.3125rem] font-medium text-ink">
+                      {/* SVG only — no text content, or findByText("research") stops resolving */}
+                      <span className="mr-1.5 inline-flex align-[-0.1em]">
+                        <Chevron open={open.has(r.run_id)} />
                       </span>
-                    )}
-                  </td>
-                  <td className="px-2 py-1 text-muted-foreground">
-                    {r.project} · {r.branch ?? "—"}
-                  </td>
-                  <td data-status-known={String(statusKnown(label))} className={`px-2 py-1 ${statusClass(label)}`}>
-                    {label}
-                  </td>
-                  <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{formatDuration(r.duration_ms)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{r.agents.length}</td>
-                  <td className="px-2 py-1 text-right tabular-nums text-muted-foreground/70">{formatTokens(r.tokens)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums text-foreground">{formatUsd(r.costUsd)}</td>
-                </tr>,
-                open.has(r.run_id) ? (
-                  <tr key={`${r.run_id}-detail`} className="border-b border-border/50 bg-card/40">
-                    <td colSpan={COLS.length} className="px-3 py-2">
-                      {byPhase(r.agents).map((g) => (
-                        <div key={g.title} className="mb-2 last:mb-0">
-                          <div className="mb-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            {g.title}
-                          </div>
-                          {g.agents.map((a) => (
-                            <div key={a.agent_id} className="flex flex-wrap items-baseline gap-2 py-0.5">
-                              <span className="font-semibold text-foreground">{a.label ?? a.agent_id}</span>
-                              <span className="text-muted-foreground">{a.model ? prettyModel(a.model) : "—"}</span>
-                              <span className="text-muted-foreground">{a.state ?? "—"}</span>
-                              <span className="text-muted-foreground/70">attempt {a.attempt ?? 1}</span>
-                              <span className="text-muted-foreground/70">{formatDuration(a.duration_ms)}</span>
-                              <span className="tabular-nums text-muted-foreground/70">{formatTokens(a.tokens)}</span>
-                              <span className="tabular-nums text-foreground">{formatUsd(a.costUsd)}</span>
-                              {a.last_tool_summary && (
-                                <span className="truncate text-muted-foreground/70">▸ {a.last_tool_summary}</span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
+                      {r.name ?? r.run_id}
+                      {!r.schema_ok && (
+                        <Chip className="ml-1.5">structure unavailable</Chip>
+                      )}
                     </td>
-                  </tr>
-                ) : null,
-              ];
-            })}
-            <tr data-testid="wf-totals" className="border-t border-border font-semibold text-foreground">
-              <td className="px-2 py-1" />
-              <td className="px-2 py-1">{sorted.length} runs</td>
-              <td className="px-2 py-1" />
-              <td className="px-2 py-1" />
-              <td className="px-2 py-1" />
-              <td className="px-2 py-1 text-right tabular-nums">{totals.agents}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{formatTokens(totals.tokens)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{formatUsd(totals.cost)}</td>
-            </tr>
-          </tbody>
-        </table>
-        {sorted.find((r) => r.cc_version)?.cc_version && (
-          <p className="mt-3 px-2 text-2xs text-muted-foreground/70">
-            format last verified on {sorted.find((r) => r.cc_version)!.cc_version}
-          </p>
-        )}
+                    <td className="px-2 py-[0.3125rem] text-ink-3">
+                      {r.project} · {r.branch ?? "—"}
+                    </td>
+                    {/* `label` MUST stay a direct text child of the <td>:
+                        testing-library's getByText reads only an element's own
+                        text nodes, so wrapping it in a span would move both
+                        `data-status-known` assertions off the matched element
+                        (WorkflowsPage.test:57-59). The glyph is a sibling. */}
+                    <td data-status-known={String(statusKnown(label))} className={`px-2 py-[0.3125rem] ${statusClass(label)}`}>
+                      <span className="mr-1.5 inline-flex align-[-0.1em]">
+                        <StatusGlyph kind={statusGlyphKind(label)} animate={false} />
+                      </span>
+                      {label}
+                    </td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{formatDuration(r.duration_ms)}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{r.agents.length}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink">{formatUsd(r.costUsd)}</td>
+                  </tr>,
+                  open.has(r.run_id) ? (
+                    <tr key={`${r.run_id}-detail`} className="border-b border-border-weak bg-surface-1">
+                      <td colSpan={COLS.length} className="px-3 py-2">
+                        {byPhase(r.agents).map((g) => (
+                          <div key={g.title} className="mb-2 last:mb-0">
+                            <div className="text-3xs uppercase tracking-caps text-ink-4">{g.title}</div>
+                            {/* the rail one more time, now as a tree: a hairline
+                                connecting agents under their phase */}
+                            <div className="ml-rail border-l-hairline border-border-weak pl-3">
+                              {g.agents.map((a) => (
+                                <div key={a.agent_id} className="flex h-6 flex-wrap items-center gap-3 text-2xs">
+                                  <span className="font-medium text-ink">{a.label ?? a.agent_id}</span>
+                                  <span className="text-ink-3">{a.model ? prettyModel(a.model) : "—"}</span>
+                                  <span className="text-ink-3">{a.state ?? "—"}</span>
+                                  <span className="text-ink-4">attempt {a.attempt ?? 1}</span>
+                                  <span className="text-ink-4">{formatDuration(a.duration_ms)}</span>
+                                  <span className="tabular-nums slashed-zero text-ink-4">{formatTokens(a.tokens)}</span>
+                                  <span className="tabular-nums slashed-zero text-ink">{formatUsd(a.costUsd)}</span>
+                                  {a.last_tool_summary && <span className="truncate text-working/70">▸ {a.last_tool_summary}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+              <tr data-testid="wf-totals" className="border-t border-border bg-surface-1 font-semibold text-ink">
+                <td className="px-2 py-[0.3125rem]" />
+                <td className="px-2 py-[0.3125rem]">{sorted.length} runs</td>
+                <td className="px-2 py-[0.3125rem]" />
+                <td className="px-2 py-[0.3125rem]" />
+                <td className="px-2 py-[0.3125rem]" />
+                <td className="px-2 py-[0.3125rem] text-right tabular-nums">{totals.agents}</td>
+                <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatTokens(totals.tokens)}</td>
+                <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatUsd(totals.cost)}</td>
+              </tr>
+            </tbody>
+          </table>
+          {sorted.find((r) => r.cc_version)?.cc_version && (
+            <p className="mt-3 px-2 text-2xs text-ink-4">
+              format last verified on {sorted.find((r) => r.cc_version)!.cc_version}
+            </p>
+          )}
         </>
       )}
     </div>
