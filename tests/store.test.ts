@@ -87,6 +87,34 @@ describe("Store sessions", () => {
     expect(store.getSession("s1")!.branch).toBe("feat/x");
   });
 
+  it("preserves current_intent through the store when a later prompt is a synthetic task-notification", () => {
+    store.applyEvent(
+      "s1",
+      reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch,
+      1000
+    );
+    store.applyEvent(
+      "s1",
+      reduceEvent({ wm_event_type: "prompt", session_id: "s1", prompt: "Refactor checkout" }, 2000).patch,
+      2000
+    );
+    expect(store.getSession("s1")!.current_intent).toBe("Refactor checkout");
+
+    store.applyEvent(
+      "s1",
+      reduceEvent(
+        {
+          wm_event_type: "prompt",
+          session_id: "s1",
+          prompt: "<task-notification>\n<task-id>abc</task-id>\n<status>completed</status>\n</task-notification>",
+        },
+        3000
+      ).patch,
+      3000
+    );
+    expect(store.getSession("s1")!.current_intent).toBe("Refactor checkout");
+  });
+
   it("idempotently adds the sessions.branch column to a pre-existing table", () => {
     const db = new Database(":memory:");
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
