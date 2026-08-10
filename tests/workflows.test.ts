@@ -496,10 +496,8 @@ describe("scanWorkflows", () => {
     // Steady state: the unparseable manifest must not count as "new" forever,
     // or Step 4 would broadcast an SSE event every 5s until the run dir ages out.
     expect(scanWorkflows(store, NOW + 10_000).changed).toBe(false);
-    // Extend across several more ticks: index.ts's broadcast is gated on
-    // `if (changed) sse.broadcast('workflows', live)`, so `changed: false` here IS
-    // the "no broadcast" guarantee — a corrupt manifest that stays corrupt must
-    // never re-trigger the SSE `workflows` event on every 5s tick.
+    // Extend across several more ticks. The broadcast-level guarantee is pinned
+    // separately by the workflowTick counting-stub tests; this covers the scan layer.
     expect(scanWorkflows(store, NOW + 15_000).changed).toBe(false);
     expect(scanWorkflows(store, NOW + 20_000).changed).toBe(false);
   });
