@@ -1,5 +1,5 @@
 import type { HookEvent, SessionPatch } from "./types.ts";
-import { projectFromCwd, truncate, deriveCurrentTask } from "./derive.ts";
+import { projectFromCwd, truncate, deriveCurrentTask, isSyntheticPrompt } from "./derive.ts";
 
 export function reduceEvent(
   event: HookEvent,
@@ -22,7 +22,7 @@ export function reduceEvent(
     case "prompt":
       patch.status = "working";
       patch.attention_reason = null;
-      if (typeof event.prompt === "string") {
+      if (typeof event.prompt === "string" && !isSyntheticPrompt(event.prompt)) {
         patch.current_intent = truncate(event.prompt);
       }
       break;

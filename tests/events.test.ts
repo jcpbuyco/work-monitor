@@ -34,6 +34,33 @@ describe("reduceEvent", () => {
     expect(patch.attention_reason).toBeNull();
   });
 
+  it("prompt with <task-notification> XML does not overwrite current_intent (synthetic)", () => {
+    const { patch } = reduceEvent(
+      base({
+        wm_event_type: "prompt",
+        prompt:
+          "<task-notification>\n<task-id>abc</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n</task-notification>",
+      }),
+      NOW
+    );
+    expect(patch.status).toBe("working");
+    expect(patch.attention_reason).toBeNull();
+    expect(patch.current_intent).toBeUndefined();
+    expect("current_intent" in patch).toBe(false);
+  });
+
+  it("prompt with leading whitespace before <task-notification> is still detected as synthetic", () => {
+    const { patch } = reduceEvent(
+      base({
+        wm_event_type: "prompt",
+        prompt: "\n  <task-notification>\n<task-id>abc</task-id>\n</task-notification>",
+      }),
+      NOW
+    );
+    expect(patch.current_intent).toBeUndefined();
+    expect("current_intent" in patch).toBe(false);
+  });
+
   it("todo_update -> working, sets current_task from tool_input.todos", () => {
     const { patch } = reduceEvent(
       base({

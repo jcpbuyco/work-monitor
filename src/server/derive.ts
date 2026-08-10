@@ -18,6 +18,18 @@ interface TodoItem {
   activeForm?: string;
 }
 
+// Claude Code's background-task/workflow subsystem fires UserPromptSubmit for
+// synthetic "task finished" notifications too, injecting this XML wrapper as
+// the prompt text with no other marker distinguishing it from a real,
+// human-typed prompt. Keyed only off the one shape actually observed in real
+// data — see investigation notes for the survey across stored prompt events.
+const SYNTHETIC_PROMPT_PREFIXES = ["<task-notification>"];
+
+export function isSyntheticPrompt(prompt: string): boolean {
+  const t = prompt.trimStart();
+  return SYNTHETIC_PROMPT_PREFIXES.some((p) => t.startsWith(p));
+}
+
 export function deriveCurrentTask(todos: TodoItem[] | undefined): string | null {
   if (!todos || todos.length === 0) return null;
   const total = todos.length;
