@@ -1,7 +1,18 @@
 import { describe, it, expect } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sessionDirFor, deriveRunState, parseManifest, parseJournal } from "../src/server/workflows.ts";
+import { tmpdir } from "node:os";
+import {
+  sessionDirFor,
+  deriveRunState,
+  parseManifest,
+  parseJournal,
+  parseAgentMeta,
+  parseAgentHeader,
+  parseScriptMeta,
+  findScriptFile,
+  findScriptAcrossSlugs,
+} from "../src/server/workflows.ts";
 import { WF_QUIET_MS } from "../src/server/config.ts";
 
 export const FIX = join(import.meta.dir, "fixtures", "workflows");
@@ -181,5 +192,89 @@ describe("parseJournal", () => {
 
   it("returns an empty map for an empty journal", () => {
     expect(parseJournal([], { manifestPresent: false }).agents.size).toBe(0);
+  });
+});
+
+describe("parseAgentMeta", () => {
+  it("reads the bare model alias from the 65-byte form", () => {
+    const m = parseAgentMeta(fixture("agent-meta-with-model.json"));
+    expect(m.agent_type).toBe("workflow-subagent");
+    expect(typeof m.model).toBe("string"); // e.g. "sonnet" — canonicalModel() handles it
+  });
+  it("returns model: null for the 48-byte form (32 of 116 files omit it — not an edge case)", () => {
+    expect(parseAgentMeta(fixture("agent-meta-no-model.json")).model).toBeNull();
+  });
+  it("returns nulls rather than throwing on malformed JSON", () => {
+    expect(parseAgentMeta("{nope")).toEqual({ agent_type: null, model: null });
+  });
+});
+
+describe("parseAgentHeader", () => {
+  it("pulls cc_version, the first message.model, and a 160-char prompt preview", () => {
+    const h = parseAgentHeader(fixture("agent-head.jsonl"));
+    expect(h.cc_version).toMatch(/^\d+\.\d+\.\d+$/); // 2.1.226 on recent runs
+    expect(h.model).toBe("claude-sonnet-5"); // first line carrying message.model
+    expect(h.prompt_preview!.length).toBeLessThanOrEqual(160);
+    expect(h.prompt_preview!.startsWith("Implement a bug fix")).toBe(true);
+  });
+  it("returns nulls for an empty or unparseable head", () => {
+    expect(parseAgentHeader("")).toEqual({ cc_version: null, model: null, prompt_preview: null });
+    expect(parseAgentHeader("{not json\n")).toEqual({ cc_version: null, model: null, prompt_preview: null });
+  });
+});
+
+describe("parseScriptMeta", () => {
+  it("extracts the workflow name and phase skeleton from the script source", () => {
+    const s = parseScriptMeta(fixture("script-with-phases.js"));
+    expect(s.name).toBe("workflows-monitoring-research");
+    expect(s.phases).toEqual([{ title: "Explore", detail: "codebase map, docs research, on-disk artifacts" }]);
+  });
+  it("returns empty phases when the source has no meta block", () => {
+    expect(parseScriptMeta("console.log('hi')")).toEqual({ name: null, phases: [] });
+  });
+});
+
+describe("script lookup", () => {
+  /** projects root ≙ ~/.claude/projects: <root>/<slug>/<sessionId>/workflows/scripts */
+  function makeProjects(opts: { underOwnSlug?: boolean; underSibling?: boolean }) {
+    const root = mkdtempSync(join(tmpdir(), "am-scripts-"));
+    const own = join(root, "-home-u-repo", "sess-1");
+    const sibling = join(root, "-home-u-repo-sub", "sess-1");
+    mkdirSync(join(own, "workflows", "scripts"), { recursive: true });
+    mkdirSync(join(sibling, "workflows", "scripts"), { recursive: true });
+    if (opts.underOwnSlug) writeFileSync(join(own, "workflows", "scripts", "research-wf_1.js"), fixture("script-with-phases.js"));
+    if (opts.underSibling) writeFileSync(join(sibling, "workflows", "scripts", "research-wf_1.js"), fixture("script-with-phases.js"));
+    return { root, sessionDir: own };
+  }
+
+  it("finds the script under the session's own dir, matching by the -<runId>.js suffix", () => {
+    const { sessionDir } = makeProjects({ underOwnSlug: true });
+    expect(findScriptFile(sessionDir, "wf_1")).toBe(join(sessionDir, "workflows", "scripts", "research-wf_1.js"));
+    expect(findScriptFile(sessionDir, "wf_other")).toBeNull(); // suffix match, never a prefix
+  });
+
+  it("returns null rather than throwing when the scripts dir does not exist", () => {
+    expect(findScriptFile("/no/such/session", "wf_1")).toBeNull();
+  });
+
+  it("resolves a script parked under a SIBLING slug with the same sessionId (C9's 3 split runs)", () => {
+    const { root, sessionDir } = makeProjects({ underSibling: true });
+    expect(findScriptFile(sessionDir, "wf_1")).toBeNull(); // the primary lookup misses
+    expect(findScriptAcrossSlugs(sessionDir, "wf_1")).toBe(
+      join(root, "-home-u-repo-sub", "sess-1", "workflows", "scripts", "research-wf_1.js")
+    );
+  });
+
+  it("returns null when no slug holds a script for that run (2 of 20 runs have none)", () => {
+    const { sessionDir } = makeProjects({});
+    expect(findScriptAcrossSlugs(sessionDir, "wf_1")).toBeNull();
+  });
+
+  it("never looks outside the projects root or at another sessionId", () => {
+    const { root, sessionDir } = makeProjects({ underSibling: true });
+    // Same runId, different session → not ours. The glob is pinned to both.
+    mkdirSync(join(root, "-home-u-other", "sess-2", "workflows", "scripts"), { recursive: true });
+    writeFileSync(join(root, "-home-u-other", "sess-2", "workflows", "scripts", "research-wf_9.js"), "x");
+    expect(findScriptAcrossSlugs(sessionDir, "wf_9")).toBeNull();
   });
 });

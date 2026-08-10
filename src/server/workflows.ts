@@ -1,4 +1,7 @@
+import { readdirSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { WF_QUIET_MS } from "./config.ts";
+import { truncate } from "./derive.ts";
 
 /** A session's on-disk directory is its transcript path minus `.jsonl` — exact
  *  for 20 of 20 surveyed runs (C9). Never recompute the project slug from cwd. */
@@ -240,4 +243,121 @@ export function parseJournal(
     }
   }
   return { agents, unknownTypes };
+}
+
+/** `agent-<id>.meta.json` is 48–65 bytes: {agentType, spawnDepth, model?}.
+ *  `model` is usually a bare alias and is DISPLAY ONLY — never a pricing input,
+ *  which always reads `message.model` off the transcript line. */
+export function parseAgentMeta(text: string): { agent_type: string | null; model: string | null } {
+  let o: any;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return { agent_type: null, model: null };
+  }
+  return { agent_type: str(o?.agentType), model: str(o?.model) };
+}
+
+/** Read what we need from the head of an agent transcript: the Claude Code
+ *  `version` (for the "format last verified on X" badge), the first line
+ *  carrying a `message.model` (the fallback when the meta file omits `model` —
+ *  32 of 116 do), and the prompt preview.
+ *
+ *  `head` is the first few KB of the file; pass whatever you have. */
+export function parseAgentHeader(head: string): {
+  cc_version: string | null;
+  model: string | null;
+  prompt_preview: string | null;
+} {
+  let cc_version: string | null = null;
+  let model: string | null = null;
+  let prompt_preview: string | null = null;
+
+  for (const ln of head.split("\n")) {
+    if (!ln.trim()) continue;
+    let o: any;
+    try {
+      o = JSON.parse(ln);
+    } catch {
+      continue; // a clipped final line is expected when `head` is a byte slice
+    }
+    if (!cc_version) cc_version = str(o?.version);
+    if (!model) model = str(o?.message?.model);
+    if (!prompt_preview) {
+      const content = o?.message?.content;
+      let text: string | null = null;
+      if (typeof content === "string") text = content;
+      else if (Array.isArray(content)) {
+        const part = content.find((c: any) => typeof c?.text === "string");
+        text = str(part?.text);
+      }
+      // 160 MUST be passed explicitly — truncate()'s default is MAX_INTENT_LEN (140).
+      if (text) prompt_preview = truncate(text, 160);
+    }
+    if (cc_version && model && prompt_preview) break;
+  }
+  return { cc_version, model, prompt_preview };
+}
+
+/** The workflow script is the ONLY live source of phase titles. It is plain JS
+ *  with an `export const meta = { name, description, phases: [{title, detail}] }`
+ *  header, so this is a deliberately shallow regex read of that header — not a
+ *  parser. Best-effort: 2 of 20 runs have no script at all and 3 more have one
+ *  only under a sibling project slug, which we deliberately do NOT search (§1.3).
+ *  A miss costs a phase label on a live run; the completed run gets full phases
+ *  from its manifest anyway. */
+export function parseScriptMeta(text: string): { name: string | null; phases: Phase[] } {
+  const head = text.slice(0, 4000);
+  const name = /name:\s*['"]([^'"]*)['"]/.exec(head)?.[1] ?? null;
+  const phases: Phase[] = [];
+  const open = head.indexOf("phases:");
+  if (open >= 0) {
+    const close = head.indexOf("]", open);
+    const block = head.slice(open, close >= 0 ? close + 1 : undefined);
+    const re = /title:\s*['"]([^'"]*)['"](?:\s*,\s*detail:\s*['"]([^'"]*)['"])?/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(block)) !== null) phases.push({ title: m[1], detail: m[2] ?? null });
+  }
+  return { name, phases };
+}
+
+/** ENOENT → empty, never a throw. Task 12's scanner reuses this. */
+function readdirSafe(p: string): string[] {
+  try {
+    return readdirSync(p);
+  } catch {
+    return [];
+  }
+}
+
+/** Primary script lookup, matched by the `-<runId>.js` SUFFIX — never by the
+ *  manifest's `scriptPath`, whose filename is unreliable (C11). One readdir of a
+ *  small dir; cheap enough to run on every ACTIVE tick. 15 of 20 runs hit here. */
+export function findScriptFile(sessionDir: string, runId: string): string | null {
+  const dir = join(sessionDir, "workflows", "scripts");
+  const hit = readdirSafe(dir).find((n) => n.endsWith(`-${runId}.js`));
+  return hit ? join(dir, hit) : null;
+}
+
+/** Fallback for C9's split: when a session's cwd moves into a subdirectory, Claude
+ *  Code writes that run's script under a DIFFERENT project slug carrying the SAME
+ *  sessionId (3 of 20 runs). Equivalent to the glob
+ *  `~/.claude/projects/*<sessionId>/workflows/scripts/*-<runId>.js`, with the
+ *  projects root derived by path structure — <sessionDir> is
+ *  <root>/<slug>/<sessionId>, so the root is two levels up. That keeps the search
+ *  inside the tree that already holds the run and needs no config (the same
+ *  resolve-by-structure rule the backfill uses).
+ *
+ *  Pinned to ONE sessionId and ONE runId: a readdir per slug, never a tree walk.
+ *  The CALLER is responsible for running this at most once per run (Task 12) —
+ *  it must never land on a steady-state 5s tick. */
+export function findScriptAcrossSlugs(sessionDir: string, runId: string): string | null {
+  const sessionId = basename(sessionDir);
+  const projectsRoot = resolve(sessionDir, "..", "..");
+  for (const slug of readdirSafe(projectsRoot)) {
+    const dir = join(projectsRoot, slug, sessionId, "workflows", "scripts");
+    const hit = readdirSafe(dir).find((n) => n.endsWith(`-${runId}.js`));
+    if (hit) return join(dir, hit);
+  }
+  return null;
 }
