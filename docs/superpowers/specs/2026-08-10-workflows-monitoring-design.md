@@ -131,7 +131,7 @@ is a display field only and is never used to detect retries (§1.3 rule 2 does t
                     │                                                │
                     └── 60s SWEEP (untouched) ─► tailUsage() ────────┘
                                                                      │
-   sse.broadcast("workflows", liveRuns) ◄── changed? ────────────────┤
+   sse.broadcast("workflows", liveRuns) ◄── payload differs? ────────┤
    sse.broadcast("state", …)            ◄── 60s cadence ─────────────┘
                                                      GET /api/workflows ──► #/workflows
 ```
@@ -141,7 +141,7 @@ Five units:
 | Unit | File | Role |
 |---|---|---|
 | Parsers | `src/server/workflows.ts` (new) | pure: `sessionDirFor`, `parseManifest`, `parseJournal`, `parseAgentMeta`, `parseScriptMeta`, `deriveRunState`; plus the two path lookups `findScriptFile` / `findScriptAcrossSlugs` (§1.3) |
-| Scanner | `src/server/workflows.ts` | impure: `scanWorkflows(store, now)` → `{ changed, live }` |
+| Scanner | `src/server/workflows.ts` | impure: `scanWorkflows(store, now)` → `{ changed }` (bookkeeping only — the broadcast gate is `workflowTick`'s payload diff, §3.1) |
 | Tail core | `src/server/usage.ts` | `takeUsage(store, {path, offset, sessionId, runId, agentId})`, used by both paths; `tailUsage()` becomes a wrapper over it |
 | Store | `src/server/store.ts` | `upsertWorkflowRun`, `upsertWorkflowAgent`, `runsToScan`, `workflowHistory`, `liveWorkflows` |
 | Web | `WorkflowsSection`, `WorkflowRunCard`, `WorkflowsPage` (new, in `src/web/components/`) | live strip + history page |
@@ -295,12 +295,19 @@ A **second** `setInterval` in `src/server/index.ts`. The existing 60s sweep is
 **untouched** — existing behaviour and tests stay valid.
 
 ```ts
-if (WORKFLOWS_ENABLED) setInterval(() => {
+if (WORKFLOWS_ENABLED) setInterval(() => workflowTick(store, sse, Date.now()), WF_TICK_MS);
+
+// workflows.ts — the tick body lives here so it is testable without the server:
+export function workflowTick(store, hub, now) {
   try {
-    const { changed, live } = scanWorkflows(store, Date.now());
-    if (changed) sse.broadcast("workflows", live);
+    scanWorkflows(store, now);                       // `changed` is NOT the gate (§3.1)
+    const payload = store.liveWorkflows(now);
+    const serialized = JSON.stringify(payload);
+    if (lastBroadcast === serialized) return;        // identical payload ⇒ silence
+    lastBroadcast = serialized;
+    hub.broadcast("workflows", payload);
   } catch (err) { if (logOnce("wf-scan", err)) bumpDegraded(); }
-}, WF_TICK_MS);
+}
 ```
 
 The whole tick is inside one `try/catch` (the `toolStats()` precedent) so a workflow
@@ -436,19 +443,44 @@ Two independent signals — **structure** and **motion** — deliberately not co
    one, so without this it would read "running" forever.
 5. **PID registry rejected** (C8). mtime is strictly better and costs nothing.
 
-`last_seen_at` means **"the run dir's mtime, OR the newest mtime among the run's
-`agent-*.jsonl`/`journal.jsonl` files, as of the last tick that saw it"**, not "the
-tick that last looked". It only advances when the disk does — never a fabricated
-`now` reading, on growth or otherwise; otherwise rules 2 and 4 could never fire. The
-scanner's own in-pass state cache and "quiet" check MUST derive from this exact
-persisted value too, never from the raw dir mtime alone — the two are incapable of
-disagreeing only because there is a single source of truth for both.
+`last_seen_at` is **the blend**:
+
+```
+last_seen_at = max(run dir mtime, journal.jsonl mtime, every agent-*.jsonl mtime)
+```
+
+— as of the last tick that looked *properly*, not "the tick that last looked". It
+only advances when the disk does; never a fabricated `now` reading, on growth or
+otherwise, or rules 2 and 4 could never fire.
+
+**That one number is also the full-pass trigger.** A run gets a full pass when its
+blend exceeds the persisted value, **or** an agent file's size exceeds its stored
+`offset`, **or** the manifest is newly present / newly rewritten (`manifest_mtime`,
+below). Nothing else. In particular the trigger must **not** be the raw dir mtime:
+an ordinary long-running workflow's dir is touched once, at creation, and never
+again, so a journal append — or a transcript append — would be invisible, and every
+agent the journal records before its transcript exists would never be ingested.
+
+Every full pass persists `last_seen_at` = that same blend. **The quiet path — the
+cheap re-stat that early-returns — persists nothing at all**, and needs no rule to
+say so: "quiet" now *means* the blend did not advance, so there is by construction
+nothing new to write.
+
+`manifest_seen` is **sticky and always read from the persisted row**. This pass's
+parse result (`!!manifest`) says only whether the manifest was readable *this
+second*; it must never feed state derivation, at run level or agent level. A
+manifest that parsed once and then becomes unreadable (permissions, a half-replaced
+file) leaves the run **settled** — it logs once under a `:manifest-read` key,
+degrades the counter once, and changes nothing else. Treating that momentary `null`
+as "no manifest" would flip the run settled → orphaned → settled on alternating
+ticks and, because an orphan is never "settled", would also bypass the early return
+forever.
 
 The manifest lives **outside** the run dir, so neither its arrival nor an in-place
 rewrite moves the run dir's mtime. `manifest_mtime` — the manifest's mtime as of the
 last parse (§2) — carries that signal instead: `manifestMtime > manifest_mtime` is a
-re-parse trigger alongside "dir moved", "an agent file grew" and "manifest newly
-present", and the stored value is refreshed on every parse. That is what catches
+re-parse trigger alongside "the blend advanced", "an agent file grew" and "manifest
+newly present", and the stored value is refreshed on every parse. That is what catches
 C6's rewrite (`failed` at 09:27:58 → `completed` at 09:41:16, run dir untouched)
 without overloading `last_seen_at`, whose definition stays exactly as above. A run
 whose stored `manifest_mtime` is NULL while a manifest exists re-parses once and
@@ -619,7 +651,7 @@ one careless `pushState()` in the fast tick regresses the whole dashboard.
 uses `es.addEventListener`, so this costs nothing new:
 
 ```ts
-sse.broadcast("workflows", liveRuns);   // only when scanWorkflows returns changed
+sse.broadcast("workflows", liveRuns);   // only when the serialized payload differs
 ```
 
 `GET /api/stream` emits **both** on connect:
@@ -651,10 +683,42 @@ interface LiveWorkflow {
 - `costUsd`/`tokens` at both levels come from the `usage` rollup (§2), never the
   manifest.
 
-Broadcast **only on change**, using the same `changed === true` boolean contract
-`tailUsage()` already uses. "Changed" is any difference in the serialized payload:
-a new/removed run, a state transition, or a moved token/cost total. A tick that only
-re-stats and finds nothing broadcasts nothing.
+**Broadcast = payload diff, and nothing else.** Every tick, after the scan, the tick
+computes `store.liveWorkflows(now)`, serializes it, and compares that string against
+the last one broadcast (a single module-level value; production has one `Store` for
+the process lifetime). It broadcasts — and updates the remembered string — **only
+when the two differ**. The scanner's `changed` boolean is *not* the gate; it stays as
+internal bookkeeping ("did this pass write anything durable") and nothing else keys
+off it.
+
+That is the whole contract, and it is deliberately the *only* one. Two earlier
+attempts broadcast off signals *adjacent* to the payload — a remembered derived state
+per run, an "un-settled" flag out of the scanner — and both failed the same way: the
+signal and the payload were computed from different inputs, so they disagreed. One
+flip-flopped every tick (19 identical-payload broadcasts measured over 20); the other
+latched onto a false transition and masked the real one forever. Diffing the thing
+actually being sent has nothing left to disagree with, and the two hard cases fall
+out for free:
+
+- An `ACTIVE → SETTLED` (or `running → orphaned`) flip caused **purely by the passage
+  of time**, with nothing on disk moving, changes the payload — the state is derived
+  at read time — so it broadcasts, with no separate transition cache.
+- A transcript that grows every tick without changing cost or state does **not**
+  change the payload, so it stays silent, however many full passes the disk motion
+  legitimately forces.
+
+The cost of this on a quiet tick is what makes it affordable: `liveWorkflows()`
+applies the settled predicate **in SQL**, so a fully-settled system pays one query
+that returns no rows (nothing is hydrated) plus a string compare. `buildState()`'s
+243ms never comes near the 5s tick.
+
+Two properties the payload **must** keep for the diff to be sound, both true today:
+its serialization is stable (key order fixed by construction, row order by the
+`ORDER BY` clauses), and **no field is derived from `now`** except the discrete
+`state`. Elapsed/"running for" figures are computed client-side from `started_at`
+(the board already re-renders at 1Hz via `useNow`). A clock-derived field in the
+payload would make every tick a change and turn this into an unconditional 5s
+broadcast.
 
 `buildState()` gains exactly one **top-level** scalar: `workflows_degraded: number`
 (§5) — a sibling of `sessions`/`todos`/`activity`/`stats`/`cost`, not nested inside
@@ -813,7 +877,14 @@ structure only. This is the split the rest of this section is defending.
    against the `usage` token rollup for that `run_id`, evaluated once per run when it
    is **both** `manifest_seen = 1` **and** settled (never while ACTIVE, where the
    manifest total is legitimately ahead of what has been tailed), and skipped when
-   `total_tokens_reported` is NULL or 0. Uses the §2 `TOKEN_SUM` expression:
+   `total_tokens_reported` is NULL or 0. Because the disk-motion trigger of §1.4 is
+   false by definition on the tick a run goes quiet, a run watched from ACTIVE gets
+   **one forced full pass** when it first reads settled — and that shot is **spent on
+   that one attempt whatever it finds**. If the manifest turns out to be unreadable
+   the check is skipped, logged once and counted once toward `workflows_degraded`;
+   it is a best-effort diagnostic, and re-forcing a pass every 5s forever waiting for
+   a manifest that may never become readable is a worse failure than not running it.
+   Uses the §2 `TOKEN_SUM` expression:
 
    ```sql
    SELECT SUM(input_tokens + output_tokens + cache_read_tokens +
