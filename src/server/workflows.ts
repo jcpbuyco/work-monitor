@@ -721,7 +721,10 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     error,
     // Before a manifest exists, the dir's birthtime is the best start we have
     // (~42s early on a sample); mtimeMs is the fallback where birthtime is 0.
-    started_at: manifest?.started_at ?? Math.round(dirStat.birthtimeMs || dirStat.mtimeMs),
+    // On a pass where the manifest is unreadable, send null so upsert's COALESCE
+    // keeps the stored manifest startTime; the dir birthtime is only a first-sight
+    // fallback — it must never overwrite a value the manifest already provided.
+    started_at: manifest?.started_at ?? (prev ? null : Math.round(dirStat.birthtimeMs || dirStat.mtimeMs)),
     ended_at: manifest?.ended_at ?? null,
     duration_ms: manifest?.duration_ms ?? null,
     agent_count: manifest?.agent_count ?? null,

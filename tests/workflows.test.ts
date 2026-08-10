@@ -965,6 +965,40 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     chmodSync(manifestPath, 0o600); // leave the temp tree removable
   });
 
+  it("a forced pass with an unreadable manifest keeps manifest-derived facts: agent state stays done, started_at survives (sticky manifestSeen)", () => {
+    resetDegraded();
+    // ax exists only in the journal, started-without-result. With a manifest
+    // EVER seen (sticky), that reads as 'done'; only this pass's `!!manifest`
+    // would read it as 'running'.
+    const journal = JSON.stringify({ type: "started", key: "v2:ax1", agentId: "ax" }) + "\n";
+    const { store, runDir, sessionDir } = makeRun({
+      agents: ["a1"],
+      journal,
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json"),
+    });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const born = NOW - 2 * WF_QUIET_MS; // quiet from a standing start
+    for (const p of [runDir, join(runDir, "agent-a1.jsonl"), join(runDir, "journal.jsonl"), manifestPath]) setMtime(p, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: manifest parses
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1);
+    // getWorkflowRun returns scan columns only — read started_at straight off the row.
+    const startedAtOf = () =>
+      (store.db.query("SELECT started_at FROM workflow_runs WHERE run_id='wf_t1'").get() as { started_at: number | null }).started_at;
+    const startedAt = startedAtOf();
+    expect(startedAt).toBe(1786345861147); // the manifest fixture's startTime, not the dir birthtime
+    const stateOfAx = () =>
+      (store.db.query("SELECT state FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='ax'").get() as { state: string } | null)?.state;
+    expect(stateOfAx()).toBe("done");
+
+    chmodSync(manifestPath, 0o000);
+    workflowTick(store, hub, NOW + 5_000); // the §5.8 forced pass — manifest unreadable
+    // Manifest-derived facts must not degrade on an unreadable pass:
+    expect(stateOfAx()).toBe("done"); // persisted manifest_seen feeds state, not `!!manifest`
+    expect(startedAtOf()).toBe(startedAt); // COALESCE keeps the manifest startTime
+    chmodSync(manifestPath, 0o600); // leave the temp tree removable
+  });
+
   it("a journal-only append triggers a full pass, ingests the new agent, advances last_seen_at, and broadcasts exactly once (rejection defect ii)", () => {
     const jline = (o: Record<string, string>) => JSON.stringify(o) + "\n";
     const { store, runDir } = makeRun({
