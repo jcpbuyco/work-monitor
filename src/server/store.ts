@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTodoInput } from "./types.ts";
 import type { Tokens } from "./pricing.ts";
+import { deriveRunState } from "./workflows.ts";
 
 const SESSION_COLS =
   "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at";
@@ -113,6 +114,49 @@ export interface WorkflowRunScanRow {
   status: string | null;
   last_seen_at: number | null;
   session_status: string;
+}
+
+export interface WorkflowAgentView {
+  agent_id: string;
+  label: string | null;
+  phase_index: number | null;
+  phase_title: string | null;
+  idx: number | null;
+  model: string | null;
+  state: string | null;
+  attempt: number | null;
+  last_tool: string | null;
+  last_tool_summary: string | null;
+  prompt_preview: string | null;
+  started_at: number | null;
+  ended_at: number | null;
+  duration_ms: number | null;
+  tool_calls: number | null;
+  tokens: number;
+  costUsd: number;
+}
+
+export interface WorkflowRun {
+  run_id: string;
+  session_id: string;
+  project: string;
+  branch: string | null;
+  name: string | null;
+  summary: string | null;
+  status: string | null;
+  state: string;
+  error: string | null;
+  started_at: number | null;
+  ended_at: number | null;
+  duration_ms: number | null;
+  agent_count: number | null;
+  phases: { title: string; detail: string | null }[];
+  cc_version: string | null;
+  schema_ok: boolean;
+  total_tokens_reported: number | null;
+  costUsd: number;
+  tokens: number;
+  agents: WorkflowAgentView[];
 }
 
 export class Store {
@@ -654,5 +698,136 @@ export class Store {
     this.db
       .query(`UPDATE workflow_agents SET offset = $o WHERE run_id = $run AND agent_id = $agent`)
       .run({ $o: offset, $run: runId, $agent: agentId });
+  }
+
+  /** Turn raw workflow_runs rows into API views: parse `phases` back from JSON,
+   *  derive the liveness state, and join the per-agent usage rollup. Per-agent
+   *  tokens and cost are NOT stored — they are derived from `usage`, so there is
+   *  one priced source of truth and it works live, before any manifest exists. */
+  private hydrateWorkflowRuns(rows: Record<string, any>[], now: number): WorkflowRun[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.run_id as string);
+    const ph = ids.map((_, i) => `$r${i}`).join(", ");
+    const params: Record<string, string> = {};
+    ids.forEach((id, i) => (params[`$r${i}`] = id));
+
+    const rollup = this.db
+      .query(
+        `SELECT run_id, agent_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+         FROM usage WHERE run_id IN (${ph}) GROUP BY run_id, agent_id`
+      )
+      .all(params) as { run_id: string; agent_id: string | null; cost: number; tokens: number }[];
+    const byAgent = new Map<string, { cost: number; tokens: number }>();
+    const byRun = new Map<string, { cost: number; tokens: number }>();
+    for (const r of rollup) {
+      byAgent.set(`${r.run_id} ${r.agent_id ?? ""}`, { cost: r.cost, tokens: r.tokens });
+      const t = byRun.get(r.run_id) ?? { cost: 0, tokens: 0 };
+      byRun.set(r.run_id, { cost: t.cost + r.cost, tokens: t.tokens + r.tokens });
+    }
+
+    const agentRows = this.db
+      .query(`SELECT * FROM workflow_agents WHERE run_id IN (${ph}) ORDER BY run_id, idx, agent_id`)
+      .all(params) as Record<string, any>[];
+    const agentsByRun = new Map<string, WorkflowAgentView[]>();
+    for (const a of agentRows) {
+      const roll = byAgent.get(`${a.run_id} ${a.agent_id}`) ?? { cost: 0, tokens: 0 };
+      const list = agentsByRun.get(a.run_id) ?? [];
+      list.push({
+        agent_id: a.agent_id,
+        label: a.label,
+        phase_index: a.phase_index,
+        phase_title: a.phase_title,
+        idx: a.idx,
+        model: a.model,
+        state: a.state,
+        attempt: a.attempt,
+        last_tool: a.last_tool,
+        last_tool_summary: a.last_tool_summary,
+        prompt_preview: a.prompt_preview,
+        started_at: a.started_at,
+        ended_at: a.ended_at,
+        duration_ms: a.duration_ms,
+        tool_calls: a.tool_calls,
+        costUsd: roll.cost,
+        tokens: roll.tokens,
+      });
+      agentsByRun.set(a.run_id, list);
+    }
+
+    const sessionStatus = new Map(
+      (this.db.query(`SELECT id, status FROM sessions`).all() as { id: string; status: string }[]).map((s) => [
+        s.id,
+        s.status,
+      ])
+    );
+
+    return rows.map((r) => {
+      let phases: { title: string; detail: string | null }[] = [];
+      try {
+        if (r.phases) phases = JSON.parse(r.phases as string);
+      } catch {
+        phases = [];
+      }
+      const roll = byRun.get(r.run_id) ?? { cost: 0, tokens: 0 };
+      return {
+        run_id: r.run_id,
+        session_id: r.session_id,
+        project: r.project ?? "unknown", // matches costByProject's bucket
+        branch: r.branch ?? null,
+        name: r.name,
+        summary: r.summary,
+        status: r.status,
+        state: deriveRunState(
+          {
+            manifest_seen: r.manifest_seen === 1,
+            status: r.status,
+            last_seen_at: r.last_seen_at,
+            session_status: sessionStatus.get(r.session_id) ?? "ended",
+          },
+          now
+        ),
+        error: r.error,
+        started_at: r.started_at,
+        ended_at: r.ended_at,
+        duration_ms: r.duration_ms,
+        agent_count: r.agent_count,
+        phases,
+        cc_version: r.cc_version,
+        schema_ok: r.schema_ok === 1,
+        total_tokens_reported: r.total_tokens_reported,
+        costUsd: roll.cost,
+        tokens: roll.tokens,
+        agents: agentsByRun.get(r.run_id) ?? [],
+      };
+    });
+  }
+
+  /** Completed + in-flight runs for the history page, newest first. `since`/`until`
+   *  filter on `started_at` (since inclusive, until exclusive), matching
+   *  rangeClause()'s convention; runs with a NULL start drop out whenever either
+   *  bound is given. `limit` caps RUNS, not agents, and is clamped to 1..500.
+   *  Agents are embedded: one endpoint, one round trip, no per-row expand fetch. */
+  workflowHistory(
+    opts: { since?: number; until?: number; limit?: number } = {},
+    now: number = Date.now()
+  ): WorkflowRun[] {
+    const conds: string[] = [];
+    const params: Record<string, number> = {};
+    if (opts.since !== undefined) {
+      conds.push("started_at >= $since");
+      params.$since = opts.since;
+    }
+    if (opts.until !== undefined) {
+      conds.push("started_at < $until");
+      params.$until = opts.until;
+    }
+    const limit = Math.min(500, Math.max(1, Math.round(opts.limit ?? 100)));
+    const rows = this.db
+      .query(
+        `SELECT * FROM workflow_runs ${conds.length ? `WHERE ${conds.join(" AND ")}` : ""}
+         ORDER BY started_at DESC LIMIT ${limit}`
+      )
+      .all(params) as Record<string, any>[];
+    return this.hydrateWorkflowRuns(rows, now);
   }
 }
