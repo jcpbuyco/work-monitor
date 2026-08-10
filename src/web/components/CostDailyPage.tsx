@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatUsd, formatTokens, formatDay, costDailyRange, type CostWindow } from "../cost.ts";
+import { PageHeader, Segmented } from "./primitives.tsx";
 
 interface Row {
   project: string;
@@ -67,51 +68,41 @@ export function CostDailyPage() {
     );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pb-12">
-      <header className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur">
-        <a href="#/" className="text-sm text-muted-foreground transition hover:text-foreground">
-          ← Dashboard
-        </a>
-        <span className="font-semibold tracking-tight text-foreground">Cost by day</span>
-        <div className="ml-auto inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-sm text-muted-foreground">
-          {WINDOWS.map((w) => (
-            <button
-              key={String(w)}
-              type="button"
-              onClick={() => setRange(w)}
-              className={`flex h-full items-center px-3 leading-none transition hover:text-foreground ${
-                range === w ? "bg-chip text-foreground" : ""
-              }`}
-            >
-              {w === "all" ? "All" : `${w}d`}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="mx-auto max-w-page px-6 pb-16">
+      <PageHeader
+        title="Cost by day"
+        right={
+          <Segmented
+            value={range}
+            onChange={setRange}
+            options={WINDOWS.map((w) => ({ value: w, label: w === "all" ? "All" : `${w}d` }))}
+          />
+        }
+      />
 
       {status === "error" ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">Couldn't load cost data.</p>
+        <p className="py-16 text-center text-sm text-ink-3">Couldn't load cost data.</p>
       ) : status === "loading" ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">Loading…</p>
+        <p role="status" aria-live="polite" className="py-16 text-center text-sm text-ink-3">Loading…</p>
       ) : sorted.length === 0 ? (
-        <p className="px-2 py-8 text-center text-sm text-muted-foreground">No usage in this window.</p>
+        <p className="py-16 text-center text-sm text-ink-3">No usage in this window.</p>
       ) : (
-        <table className="w-full border-collapse font-mono text-2xs">
+        <table className="w-full border-collapse font-mono text-xs">
           <thead>
-            <tr className="border-b border-border text-left text-muted-foreground">
+            <tr>
               {COLS.map((c) => (
                 <th
                   key={c.key}
                   aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className={`px-2 py-1.5 font-semibold ${c.numeric ? "text-right" : ""}`}
+                  className={`sticky top-12 z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
                 >
                   <button
                     type="button"
                     onClick={() => toggleSort(c)}
-                    className="inline-flex items-center gap-1 uppercase tracking-wider transition hover:text-foreground"
+                    className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
                   >
                     {c.label}
-                    {sort.key === c.key && <span aria-hidden="true">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                    {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
                   </button>
                 </th>
               ))}
@@ -119,12 +110,16 @@ export function CostDailyPage() {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={`${r.project}/${r.branch ?? ""}/${r.day}`} data-testid="cost-row" className="border-b border-border/50">
-                <td className="px-2 py-1 font-semibold text-foreground">{r.project}</td>
-                <td className="px-2 py-1 text-muted-foreground">{r.branch ?? "—"}</td>
-                <td className="px-2 py-1 text-muted-foreground">{formatDay(r.day)}</td>
-                <td className="px-2 py-1 text-right tabular-nums text-foreground">{formatUsd(r.costUsd)}</td>
-                <td className="px-2 py-1 text-right tabular-nums text-muted-foreground/70">{formatTokens(r.tokens)}</td>
+              <tr
+                key={`${r.project}/${r.branch ?? ""}/${r.day}`}
+                data-testid="cost-row"
+                className="h-8 border-b border-border-weak transition-colors duration-quick ease-quad hover:bg-surface-2"
+              >
+                <td className="px-2 py-[0.3125rem] font-medium text-ink">{r.project}</td>
+                <td className="px-2 py-[0.3125rem] text-ink-3">{r.branch ?? "—"}</td>
+                <td className="px-2 py-[0.3125rem] text-ink-3">{formatDay(r.day)}</td>
+                <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink">{formatUsd(r.costUsd)}</td>
+                <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</td>
               </tr>
             ))}
           </tbody>

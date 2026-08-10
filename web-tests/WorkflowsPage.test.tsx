@@ -114,4 +114,23 @@ describe("WorkflowsPage", () => {
     render(<WorkflowsPage />);
     expect(await screen.findByText(/format last verified on 2\.1\.226/)).toBeTruthy();
   });
+
+  it("marks each run with a glyph that agrees with its status label", async () => {
+    mockFetch(RUNS);
+    const { container } = render(<WorkflowsPage />);
+    await screen.findByText("research");
+    expect(container.querySelector('[data-glyph="ended"]')).toBeTruthy(); // completed
+    expect(screen.getByText("completed").className).toContain("text-done");
+  });
+
+  it("keeps the totals row last in tbody with its 8 cells", async () => {
+    mockFetch(RUNS);
+    render(<WorkflowsPage />);
+    await screen.findByText("research");
+    const totals = screen.getByTestId("wf-totals");
+    expect(totals.querySelectorAll("td").length).toBe(8);
+    expect(totals.parentElement!.lastElementChild).toBe(totals);
+    // the caret must carry no text, or findByText("research") stops resolving
+    expect(screen.getAllByTestId("wf-row")[0].querySelector("svg")).toBeTruthy();
+  });
 });

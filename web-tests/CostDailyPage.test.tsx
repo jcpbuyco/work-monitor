@@ -56,4 +56,21 @@ describe("CostDailyPage", () => {
     render(<CostDailyPage />);
     expect(await screen.findByText(/couldn.t load/i)).toBeTruthy();
   });
+
+  it("exposes exactly one button whose name matches /cost/i — the column header", async () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    await screen.findByText("alpha");
+    expect(screen.getAllByRole("button", { name: /cost/i }).length).toBe(1);
+    expect(screen.getByText("← Dashboard").tagName).toBe("A");
+    expect(screen.getByText("Cost by day").tagName).toBe("SPAN");
+  });
+
+  it("announces the loading state to assistive tech", () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    const loading = screen.getByText("Loading…");
+    expect(loading.getAttribute("role")).toBe("status");
+    expect(loading.getAttribute("aria-live")).toBe("polite");
+  });
 });
