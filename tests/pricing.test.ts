@@ -41,6 +41,22 @@ describe("costOf", () => {
     expect(costOf("sonnet", { ...zero, output: 1_000_000 })).toBeCloseTo(15, 6);
     expect(costOf("haiku", { ...zero, input: 1_000_000 })).toBeCloseTo(1, 6);
   });
+
+  it("prices the 5-series models (the $786 bug this fix exists for)", () => {
+    expect(costOf("claude-opus-5", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(5 + 25, 6);
+    expect(costOf("claude-sonnet-5", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(3 + 15, 6);
+  });
+
+  it("keeps bare haiku priced at the 4-5 tier (regression: do not 'finish the job')", () => {
+    expect(costOf("haiku", { ...zero, input: 1_000_000 })).toBeCloseTo(1, 6);
+  });
+
+  it("keeps the alias tier rates unchanged after the re-point", () => {
+    // 5/25 and 3/15 are the same between the 4-series and 5-series tiers, so
+    // these values must survive the alias move — assert non-zero, don't delete.
+    expect(costOf("opus", { ...zero, input: 1_000_000 })).toBeCloseTo(5, 6);
+    expect(costOf("sonnet", { ...zero, output: 1_000_000 })).toBeCloseTo(15, 6);
+  });
 });
 
 describe("canonicalModel", () => {
@@ -48,8 +64,10 @@ describe("canonicalModel", () => {
     expect(canonicalModel("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5");
   });
   it("maps bare family aliases to a canonical id", () => {
-    expect(canonicalModel("opus")).toBe("claude-opus-4-8");
-    expect(canonicalModel("sonnet")).toBe("claude-sonnet-4-6");
+    expect(canonicalModel("opus")).toBe("claude-opus-5");
+    expect(canonicalModel("sonnet")).toBe("claude-sonnet-5");
+    // haiku is deliberately NOT re-pointed: there is no claude-haiku-5 rate,
+    // so re-pointing it would send every bare `haiku` to the $0 unknown branch.
     expect(canonicalModel("haiku")).toBe("claude-haiku-4-5");
   });
   it("passes canonical and unknown ids through unchanged", () => {

@@ -13,6 +13,8 @@ interface Rate {
 
 // Published list prices (USD / MTok). Keep current as models change.
 const RATES: Record<string, Rate> = {
+  "claude-opus-5": { input: 5, output: 25 },
+  "claude-sonnet-5": { input: 3, output: 15 },
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
   "claude-opus-4-6": { input: 5, output: 25 },
@@ -27,8 +29,10 @@ const RATES: Record<string, Rate> = {
 // Bare family aliases that transcripts sometimes emit (e.g. from subagents),
 // mapped to a current canonical id of the right pricing tier.
 const FAMILY_ALIAS: Record<string, string> = {
-  opus: "claude-opus-4-8",
-  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-5",
+  sonnet: "claude-sonnet-5",
+  // NOT re-pointed: there is no claude-haiku-5 rate, so pointing `haiku` at one
+  // would send it to costOf's unknown-model branch and cost it $0.
   haiku: "claude-haiku-4-5",
   fable: "claude-fable-5",
   mythos: "claude-mythos-5",
