@@ -165,4 +165,14 @@ describe("Store usage rows", () => {
     expect(rows[0].project).toBe("unknown");
     expect(rows[0].branch).toBeNull();
   });
+
+  it("records run_id and agent_id when given, NULL when not", () => {
+    store.recordUsage({ uuid: "w1", sessionId: "s1", model: "claude-opus-5", tokens: tok(10), at: 1, cost: 1, runId: "wf_1", agentId: "a1" });
+    store.recordUsage({ uuid: "p1", sessionId: "s1", model: "claude-opus-5", tokens: tok(10), at: 1, cost: 1 });
+    const rows = store.db.query("SELECT message_uuid, run_id, agent_id FROM usage ORDER BY message_uuid").all();
+    expect(rows).toEqual([
+      { message_uuid: "p1", run_id: null, agent_id: null },
+      { message_uuid: "w1", run_id: "wf_1", agent_id: "a1" },
+    ]);
+  });
 });

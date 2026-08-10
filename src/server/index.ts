@@ -8,7 +8,8 @@ import { SseHub } from "./sse.ts";
 import { createApp, buildState, type AppDeps } from "./http.ts";
 import { tailUsage } from "./usage.ts";
 import { repriceFiveSeries, REPRICE_MARKER } from "./reprice.ts";
-import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS } from "./config.ts";
+import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS, WF_TICK_MS, WORKFLOWS_ENABLED } from "./config.ts";
+import { scanWorkflows, backfillWorkflows, logOnce, bumpDegraded } from "./workflows.ts";
 
 const store = new Store(openDb(DB_PATH));
 const sse = new SseHub();
@@ -61,12 +62,39 @@ setInterval(() => {
   if (changed) pushState();
 }, SWEEP_INTERVAL_MS);
 
+// A SECOND interval, deliberately separate from the 60s sweep: a live run must
+// feel live. This tick must NEVER call pushState() — buildState() is 243ms and a
+// 5s full-state broadcast would burn ~5% CPU permanently. Usage it records
+// therefore does not reach the cost panels until the next 60s sweep; that
+// asymmetry is accepted.
+if (WORKFLOWS_ENABLED) {
+  setInterval(() => {
+    try {
+      scanWorkflows(store, Date.now());
+    } catch (err) {
+      // A whole-tick failure is one cause, not one per 5s: logOnce returns true
+      // only when it actually logged, and the counter follows it (§5.5).
+      if (logOnce("wf-scan", err)) bumpDegraded();
+    }
+  }, WF_TICK_MS);
+}
+
 // One-shot: reprice the pre-existing $0.00 5-series rows (spec §0b). Gated behind
 // AM_REPRICE=1 for the manual first run and guarded by a marker so a restart
 // cannot re-run it.
 if (process.env.AM_REPRICE === "1" && !store.getMeta(REPRICE_MARKER)) {
   const r = repriceFiveSeries(store, Date.now());
   console.log(`[reprice] sessions=${r.sessions} deleted=${r.deleted} re-tailed=${r.recorded}`);
+}
+
+if (WORKFLOWS_ENABLED) {
+  try {
+    const t0 = Date.now();
+    const { runs } = backfillWorkflows(store, t0);
+    console.log(`[wf-backfill] runs=${runs} in ${Date.now() - t0}ms`);
+  } catch (err) {
+    if (logOnce("wf-backfill", err)) bumpDegraded();
+  }
 }
 
 server.listen(PORT, HOST, () => {

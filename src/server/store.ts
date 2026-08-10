@@ -60,6 +60,61 @@ export function summarizeTool(tool: string | null, input: unknown): string | nul
   return s.length > 100 ? s.slice(0, 99) + "…" : s;
 }
 
+export interface WorkflowRunUpsert {
+  run_id: string;
+  session_id: string;
+  dir: string;
+  name?: string | null;
+  summary?: string | null;
+  status?: string | null;
+  error?: string | null;
+  started_at?: number | null;
+  ended_at?: number | null;
+  duration_ms?: number | null;
+  agent_count?: number | null;
+  phases?: string | null;
+  cc_version?: string | null;
+  manifest_seen?: boolean;
+  /** The manifest file's mtime as of the parse that produced this upsert. A
+   *  rewritten manifest (C6) advances it without touching the run dir, which is
+   *  how scanRun knows to re-parse (§1.4). */
+  manifest_mtime?: number | null;
+  last_seen_at?: number | null;
+  schema_ok?: boolean;
+  total_tokens_reported?: number | null;
+}
+
+export interface WorkflowAgentUpsert {
+  run_id: string;
+  agent_id: string;
+  label?: string | null;
+  phase_index?: number | null;
+  phase_title?: string | null;
+  idx?: number | null;
+  model?: string | null;
+  state?: string | null;
+  attempt?: number | null;
+  journal_key?: string | null;
+  last_tool?: string | null;
+  last_tool_summary?: string | null;
+  prompt_preview?: string | null;
+  started_at?: number | null;
+  ended_at?: number | null;
+  duration_ms?: number | null;
+  tool_calls?: number | null;
+}
+
+export interface WorkflowRunScanRow {
+  run_id: string;
+  session_id: string;
+  dir: string;
+  manifest_seen: number;
+  manifest_mtime: number | null;
+  status: string | null;
+  last_seen_at: number | null;
+  session_status: string;
+}
+
 export class Store {
   constructor(public db: Database) {}
 
@@ -231,6 +286,8 @@ export class Store {
     tokens: Tokens;
     at: number;
     cost: number;
+    runId?: string;
+    agentId?: string;
   }): boolean {
     // Stamp the session's then-current project/branch so historical cost can be
     // attributed without a join (and survives the session row being mutated later).
@@ -239,10 +296,12 @@ export class Store {
       .query(
         `INSERT OR IGNORE INTO usage
            (message_uuid, session_id, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at)
+            cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
+            run_id, agent_id)
          VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
                  (SELECT project FROM sessions WHERE id = $s),
-                 (SELECT branch FROM sessions WHERE id = $s), $at)`
+                 (SELECT branch FROM sessions WHERE id = $s), $at,
+                 $run, $agent)`
       )
       .run({
         $u: u.uuid,
@@ -255,6 +314,8 @@ export class Store {
         $c1: u.tokens.cache_create_1h,
         $cost: u.cost,
         $at: u.at,
+        $run: u.runId ?? null,
+        $agent: u.agentId ?? null,
       });
     return res.changes > 0;
   }
@@ -444,5 +505,154 @@ export class Store {
   deleteTodo(id: string): boolean {
     const res = this.db.query(`DELETE FROM todos WHERE id = $id`).run({ $id: id });
     return res.changes > 0;
+  }
+
+  // --- workflows ---------------------------------------------------------
+
+  /** Insert-or-enrich a run row. `project`/`branch` are stamped from the owning
+   *  session at FIRST sight only (matching recordUsage's convention) and never
+   *  re-stamped. Every other column takes the new value when it is non-null and
+   *  keeps the stored one otherwise, so a tick that knows less (no manifest yet)
+   *  cannot blank what an earlier tick learned. */
+  upsertWorkflowRun(r: WorkflowRunUpsert): void {
+    this.db
+      .query(
+        `INSERT INTO workflow_runs
+           (run_id, session_id, project, branch, name, summary, status, error, started_at, ended_at,
+            duration_ms, agent_count, phases, cc_version, manifest_seen, manifest_mtime, last_seen_at,
+            dir, schema_ok, total_tokens_reported)
+         VALUES ($run, $sess,
+                 (SELECT project FROM sessions WHERE id = $sess),
+                 (SELECT branch FROM sessions WHERE id = $sess),
+                 $name, $summary, $status, $error, $started, $ended, $dur, $count, $phases, $ver,
+                 $manifest, $mmtime, $seen, $dir, $ok, $reported)
+         ON CONFLICT(run_id) DO UPDATE SET
+           name = COALESCE(excluded.name, workflow_runs.name),
+           summary = COALESCE(excluded.summary, workflow_runs.summary),
+           status = COALESCE(excluded.status, workflow_runs.status),
+           error = excluded.error,
+           started_at = COALESCE(excluded.started_at, workflow_runs.started_at),
+           ended_at = COALESCE(excluded.ended_at, workflow_runs.ended_at),
+           duration_ms = COALESCE(excluded.duration_ms, workflow_runs.duration_ms),
+           agent_count = COALESCE(excluded.agent_count, workflow_runs.agent_count),
+           phases = COALESCE(excluded.phases, workflow_runs.phases),
+           cc_version = COALESCE(excluded.cc_version, workflow_runs.cc_version),
+           manifest_seen = MAX(excluded.manifest_seen, workflow_runs.manifest_seen),
+           manifest_mtime = COALESCE(excluded.manifest_mtime, workflow_runs.manifest_mtime),
+           last_seen_at = COALESCE(excluded.last_seen_at, workflow_runs.last_seen_at),
+           dir = excluded.dir,
+           schema_ok = excluded.schema_ok,
+           total_tokens_reported = COALESCE(excluded.total_tokens_reported, workflow_runs.total_tokens_reported)`
+      )
+      .run({
+        $run: r.run_id,
+        $sess: r.session_id,
+        $name: r.name ?? null,
+        $summary: r.summary ?? null,
+        $status: r.status ?? null,
+        $error: r.error ?? null,
+        $started: r.started_at ?? null,
+        $ended: r.ended_at ?? null,
+        $dur: r.duration_ms ?? null,
+        $count: r.agent_count ?? null,
+        $phases: r.phases ?? null,
+        $ver: r.cc_version ?? null,
+        $manifest: r.manifest_seen ? 1 : 0,
+        // Only a pass that actually stat'd the manifest passes this; a plain
+        // re-stat tick leaves it null and COALESCE keeps the stored value.
+        $mmtime: r.manifest_mtime ?? null,
+        $seen: r.last_seen_at ?? null,
+        $dir: r.dir,
+        $ok: r.schema_ok === false ? 0 : 1,
+        $reported: r.total_tokens_reported ?? null,
+      });
+  }
+
+  /** Insert-or-enrich an agent row. `offset` is deliberately absent from this
+   *  method — it is owned by setWorkflowAgentOffset so enrichment can never
+   *  rewind the tail position. */
+  upsertWorkflowAgent(a: WorkflowAgentUpsert): void {
+    this.db
+      .query(
+        `INSERT INTO workflow_agents
+           (run_id, agent_id, label, phase_index, phase_title, idx, model, state, attempt, journal_key,
+            last_tool, last_tool_summary, prompt_preview, started_at, ended_at, duration_ms, tool_calls, offset)
+         VALUES ($run, $agent, $label, $pidx, $ptitle, $idx, $model, $state, $attempt, $key,
+                 $tool, $tsum, $prompt, $started, $ended, $dur, $calls, 0)
+         ON CONFLICT(run_id, agent_id) DO UPDATE SET
+           label = COALESCE(excluded.label, workflow_agents.label),
+           phase_index = COALESCE(excluded.phase_index, workflow_agents.phase_index),
+           phase_title = COALESCE(excluded.phase_title, workflow_agents.phase_title),
+           idx = COALESCE(excluded.idx, workflow_agents.idx),
+           model = COALESCE(excluded.model, workflow_agents.model),
+           state = COALESCE(excluded.state, workflow_agents.state),
+           attempt = COALESCE(excluded.attempt, workflow_agents.attempt),
+           journal_key = COALESCE(excluded.journal_key, workflow_agents.journal_key),
+           last_tool = COALESCE(excluded.last_tool, workflow_agents.last_tool),
+           last_tool_summary = COALESCE(excluded.last_tool_summary, workflow_agents.last_tool_summary),
+           prompt_preview = COALESCE(excluded.prompt_preview, workflow_agents.prompt_preview),
+           started_at = COALESCE(excluded.started_at, workflow_agents.started_at),
+           ended_at = COALESCE(excluded.ended_at, workflow_agents.ended_at),
+           duration_ms = COALESCE(excluded.duration_ms, workflow_agents.duration_ms),
+           tool_calls = COALESCE(excluded.tool_calls, workflow_agents.tool_calls)`
+      )
+      .run({
+        $run: a.run_id,
+        $agent: a.agent_id,
+        $label: a.label ?? null,
+        $pidx: a.phase_index ?? null,
+        $ptitle: a.phase_title ?? null,
+        $idx: a.idx ?? null,
+        $model: a.model ?? null,
+        $state: a.state ?? null,
+        $attempt: a.attempt ?? null,
+        $key: a.journal_key ?? null,
+        $tool: a.last_tool ?? null,
+        $tsum: a.last_tool_summary ?? null,
+        $prompt: a.prompt_preview ?? null,
+        $started: a.started_at ?? null,
+        $ended: a.ended_at ?? null,
+        $dur: a.duration_ms ?? null,
+        $calls: a.tool_calls ?? null,
+      });
+  }
+
+  private static readonly WF_SCAN_COLS = `r.run_id, r.session_id, r.dir, r.manifest_seen,
+    r.manifest_mtime, r.status, r.last_seen_at, COALESCE(s.status, 'ended') AS session_status`;
+
+  getWorkflowRun(runId: string): WorkflowRunScanRow | null {
+    const row = this.db
+      .query(
+        `SELECT ${Store.WF_SCAN_COLS} FROM workflow_runs r
+         LEFT JOIN sessions s ON s.id = r.session_id WHERE r.run_id = $run`
+      )
+      .get({ $run: runId });
+    return (row as WorkflowRunScanRow) ?? null;
+  }
+
+  /** Runs worth touching this tick: never-seen ones plus anything whose dir moved
+   *  after `cutoff` (= now - WF_RECHECK_MS). Beyond that window a run is final,
+   *  which bounds the re-stat cost regardless of how much history accumulates.
+   *  A purged owning session reads as 'ended' so deriveRunState calls it orphaned. */
+  workflowRunsToScan(cutoff: number): WorkflowRunScanRow[] {
+    return this.db
+      .query(
+        `SELECT ${Store.WF_SCAN_COLS} FROM workflow_runs r
+         LEFT JOIN sessions s ON s.id = r.session_id
+         WHERE r.last_seen_at IS NULL OR r.last_seen_at > $cutoff`
+      )
+      .all({ $cutoff: cutoff }) as WorkflowRunScanRow[];
+  }
+
+  workflowAgentOffsets(runId: string): { agent_id: string; offset: number }[] {
+    return this.db
+      .query(`SELECT agent_id, offset FROM workflow_agents WHERE run_id = $run ORDER BY agent_id`)
+      .all({ $run: runId }) as { agent_id: string; offset: number }[];
+  }
+
+  setWorkflowAgentOffset(runId: string, agentId: string, offset: number): void {
+    this.db
+      .query(`UPDATE workflow_agents SET offset = $o WHERE run_id = $run AND agent_id = $agent`)
+      .run({ $o: offset, $run: runId, $agent: agentId });
   }
 }

@@ -172,6 +172,47 @@ describe("Store sessions", () => {
     migrate(db); // second run must not throw or duplicate
     expect(has()).toBe(1);
   });
+
+  it("idempotently creates workflow_runs and workflow_agents on a pre-existing DB", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const hasTable = (n: string) =>
+      (db.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='${n}'`).all() as unknown[]).length;
+    expect(hasTable("workflow_runs")).toBe(1);
+    expect(hasTable("workflow_agents")).toBe(1);
+    // manifest_mtime is what makes an in-place manifest rewrite (C6) re-parse;
+    // the run dir's mtime never moves for it, so nothing else would notice.
+    const runCols = (db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[]).map((c) => c.name);
+    expect(runCols).toContain("manifest_mtime");
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable("workflow_runs")).toBe(1);
+    expect(hasTable("workflow_agents")).toBe(1);
+  });
+
+  it("idempotently adds usage.run_id and usage.agent_id to a pre-existing usage table", () => {
+    const db = new Database(":memory:");
+    // A usage table predating the workflow columns.
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    migrate(db);
+    const has = (col: string) =>
+      (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
+    expect(has("run_id")).toBe(1);
+    expect(has("agent_id")).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has("run_id")).toBe(1);
+    expect(has("agent_id")).toBe(1);
+  });
+
+  it("stores an unknown workflow status verbatim (no enum, no CHECK)", () => {
+    store.db
+      .query(
+        `INSERT INTO workflow_runs (run_id, session_id, status, dir) VALUES ('wf_x', 's1', 'brand-new-status', '/tmp/x')`
+      )
+      .run();
+    const row = store.db.query("SELECT status FROM workflow_runs WHERE run_id = 'wf_x'").get() as { status: string };
+    expect(row.status).toBe("brand-new-status");
+  });
 });
 
 describe("Store todos", () => {
@@ -235,5 +276,90 @@ describe("Store todos", () => {
     expect(status("a")).toBe("todo");
     expect(status("b")).toBe("todo");
     expect(status("c")).toBe("done");
+  });
+});
+
+describe("Store workflows", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  it("inserts a run, then enriches it without clobbering earlier non-null fields", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", last_seen_at: 100 });
+    store.upsertWorkflowRun({
+      run_id: "wf_1", session_id: "s1", dir: "/d/wf_1",
+      name: "research", status: "completed", manifest_seen: true, last_seen_at: 200,
+      phases: JSON.stringify([{ title: "Explore", detail: null }]),
+    });
+    const row = store.db.query("SELECT * FROM workflow_runs WHERE run_id = 'wf_1'").get() as any;
+    expect(row.name).toBe("research");
+    expect(row.status).toBe("completed");
+    expect(row.manifest_seen).toBe(1);
+    expect(row.last_seen_at).toBe(200);
+    // A later tick that knows less must not blank what an earlier one learned.
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", last_seen_at: 300 });
+    const after = store.db.query("SELECT name, status, last_seen_at FROM workflow_runs WHERE run_id = 'wf_1'").get() as any;
+    expect(after.name).toBe("research");
+    expect(after.last_seen_at).toBe(300);
+  });
+
+  it("stamps project/branch from the owning session at first sight and keeps them", () => {
+    store.applyEvent("s1", { status: "working", project: "alpha", branch: "feat/x", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", last_seen_at: 1 });
+    store.applyEvent("s1", { branch: "main", last_activity_at: 2 }, 2); // session moves on
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", last_seen_at: 2 });
+    const row = store.db.query("SELECT project, branch FROM workflow_runs WHERE run_id = 'wf_1'").get();
+    expect(row).toEqual({ project: "alpha", branch: "feat/x" });
+  });
+
+  it("leaves project/branch NULL for a run whose session row does not exist", () => {
+    store.upsertWorkflowRun({ run_id: "wf_2", session_id: "ghost", dir: "/d/wf_2", last_seen_at: 1 });
+    const row = store.db.query("SELECT project, branch FROM workflow_runs WHERE run_id = 'wf_2'").get();
+    expect(row).toEqual({ project: null, branch: null });
+  });
+
+  it("upserts agents idempotently and never resets a stored byte offset", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running" });
+    store.setWorkflowAgentOffset("wf_1", "a1", 4096);
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "done", label: "read:saga" });
+    const row = store.db.query("SELECT state, label, offset FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'").get() as any;
+    expect(row.state).toBe("done");
+    expect(row.label).toBe("read:saga");
+    expect(row.offset).toBe(4096); // the tail position survives enrichment
+    expect(store.workflowAgentOffsets("wf_1")).toEqual([{ agent_id: "a1", offset: 4096 }]);
+  });
+
+  it("workflowRunsToScan returns recent runs with the owning session's status joined in", () => {
+    store.applyEvent("live", { status: "working", last_activity_at: 1 }, 1);
+    store.applyEvent("dead", { status: "ended", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_recent", session_id: "live", dir: "/d/a", last_seen_at: 5_000 });
+    store.upsertWorkflowRun({ run_id: "wf_ended", session_id: "dead", dir: "/d/b", last_seen_at: 5_000 });
+    store.upsertWorkflowRun({ run_id: "wf_old", session_id: "live", dir: "/d/c", last_seen_at: 100 });
+
+    const rows = store.workflowRunsToScan(1_000).sort((a, b) => a.run_id.localeCompare(b.run_id));
+    expect(rows.map((r) => r.run_id)).toEqual(["wf_ended", "wf_recent"]); // wf_old is past the cutoff
+    expect(rows.find((r) => r.run_id === "wf_ended")!.session_status).toBe("ended");
+    expect(rows.find((r) => r.run_id === "wf_recent")!.session_status).toBe("working");
+  });
+
+  it("treats a purged owning session as ended so its runs read orphaned", () => {
+    store.upsertWorkflowRun({ run_id: "wf_x", session_id: "ghost", dir: "/d/x", last_seen_at: 5_000 });
+    expect(store.workflowRunsToScan(0)[0].session_status).toBe("ended");
+  });
+
+  it("carries manifest_mtime on the scan row so an in-place rewrite can be detected (C6)", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", manifest_seen: true, manifest_mtime: 111, last_seen_at: 1 });
+    expect(store.getWorkflowRun("wf_1")!.manifest_mtime).toBe(111);
+    // A tick that only re-stat'd the dir must not blank what the last parse stored.
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", last_seen_at: 2 });
+    expect(store.getWorkflowRun("wf_1")!.manifest_mtime).toBe(111);
+    // A re-parse after the rewrite advances it.
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", manifest_seen: true, manifest_mtime: 222, last_seen_at: 3 });
+    expect(store.getWorkflowRun("wf_1")!.manifest_mtime).toBe(222);
+  });
+
+  it("getWorkflowRun returns null for an unknown run", () => {
+    expect(store.getWorkflowRun("nope")).toBeNull();
   });
 });
