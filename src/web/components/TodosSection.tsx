@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Todo } from "../types.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
+import { SectionHeader } from "./primitives.tsx";
 import { TodoCard } from "./TodoCard.tsx";
 import { TodoModal } from "./TodoModal.tsx";
 import { DoneDialog } from "./DoneDialog.tsx";
@@ -14,45 +15,38 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
   const done = todos.filter((t) => t.status === "done");
 
   return (
-    <section className="mt-7">
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          aria-expanded={!collapsed}
-          className="inline-flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition hover:text-foreground"
-        >
-          <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
-          ★ Todos ({open.length})
-        </button>
-        <span className="rounded-full border border-border bg-chip px-2 py-0.5 text-2xs text-muted-foreground">
-          ✓ to complete · ✕ to delete
-        </span>
-      </div>
+    <section className="mt-6">
+      <SectionHeader
+        label={`★ Todos (${open.length})`}
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        right={
+          <>
+            <span className="text-2xs text-ink-4">✓ to complete · ✕ to delete</span>
+            <button
+              type="button"
+              data-testid="todos-done-link"
+              onClick={() => setDoneOpen(true)}
+              className="text-2xs font-semibold text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
+            >
+              ✓ Done ({done.length}) →
+            </button>
+          </>
+        }
+      />
 
       {!collapsed && (
         <div className="am-fade-in">
           {open.length === 0 ? (
-            <div className="rounded-xl border border-border bg-card/50 p-4 text-2xs text-muted-foreground">
-              Nothing open. 🎉
-            </div>
+            <div className="py-3 text-xs text-ink-4">Nothing open. 🎉</div>
           ) : (
             <div data-testid="todos-scroller" className="max-h-[40vh] overflow-y-auto pr-1">
-              <div className="columns-1 gap-2 sm:columns-2 xl:columns-3">
-                {open.map((t) => (
-                  <TodoCard key={t.id} t={t} onOpen={setSelected} />
-                ))}
-              </div>
+              {/* the columns-1 sm:columns-2 xl:columns-3 masonry is deleted */}
+              {open.map((t) => (
+                <TodoCard key={t.id} t={t} onOpen={setSelected} />
+              ))}
             </div>
           )}
-          <button
-            type="button"
-            data-testid="todos-done-link"
-            onClick={() => setDoneOpen(true)}
-            className="mt-1 text-2xs font-semibold text-muted-foreground transition hover:text-foreground"
-          >
-            ✓ Done ({done.length}) →
-          </button>
         </div>
       )}
 

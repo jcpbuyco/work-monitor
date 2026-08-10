@@ -45,3 +45,21 @@ describe("TodosSection", () => {
     expect(screen.getByText("gone")).toBeDefined();
   });
 });
+
+describe("TodosSection header", () => {
+  it("keeps the Done link reachable while the section is collapsed", () => {
+    // It moved out of the {!collapsed && …} branch and into the header.
+    render(<TodosSection todos={todos} />);
+    fireEvent.click(screen.getByRole("button", { name: /Todos/ }));
+    expect(screen.queryByText("open1")).toBeNull();
+    fireEvent.click(screen.getByTestId("todos-done-link"));
+    expect(screen.getByText("gone")).toBeDefined();
+  });
+
+  it("shows the bare empty state with no bordered shell", () => {
+    render(<TodosSection todos={[]} />);
+    const empty = screen.getByText("Nothing open. 🎉");
+    expect(empty.className).not.toContain("border");
+    expect(screen.queryByTestId("todos-scroller")).toBeNull();
+  });
+});
