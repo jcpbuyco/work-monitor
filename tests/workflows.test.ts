@@ -15,6 +15,7 @@ import {
   findScriptFile,
   findScriptAcrossSlugs,
   scanWorkflows,
+  workflowTick,
   workflowsDegraded,
   resetDegraded,
   backfillWorkflows,
@@ -495,6 +496,98 @@ describe("scanWorkflows", () => {
     // Steady state: the unparseable manifest must not count as "new" forever,
     // or Step 4 would broadcast an SSE event every 5s until the run dir ages out.
     expect(scanWorkflows(store, NOW + 10_000).changed).toBe(false);
+    // Extend across several more ticks. The broadcast-level guarantee is pinned
+    // separately by the workflowTick counting-stub tests; this covers the scan layer.
+    expect(scanWorkflows(store, NOW + 15_000).changed).toBe(false);
+    expect(scanWorkflows(store, NOW + 20_000).changed).toBe(false);
+  });
+});
+
+describe("scanWorkflows + liveWorkflows (Minor A: live is no longer scanWorkflows's concern)", () => {
+  it("scanWorkflows returns changed only — the live payload is NOT computed or returned here", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    setMtime(runDir, NOW - 1000);
+    const first = scanWorkflows(store, NOW);
+    expect(first).toEqual({ changed: true }); // no `live` key at all
+    // The same data is still reachable — just via store.liveWorkflows(), which is
+    // the one place that pays for it (and only workflowTick calls it, on change).
+    const live = store.liveWorkflows(NOW);
+    expect(live.map((w) => w.run_id)).toEqual(["wf_t1"]);
+    expect(live[0].costUsd).toBeCloseTo(5, 6);
+    expect(live[0].agents[0].agent_id).toBe("a1");
+  });
+
+  it("store.liveWorkflows() returns empty once every run has settled", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    const again = scanWorkflows(store, NOW);
+    expect(again.changed).toBe(false);
+    expect(store.liveWorkflows(NOW)).toEqual([]);
+  });
+});
+
+describe("workflowTick (the gate that used to live, untested, at index.ts:76)", () => {
+  /** A counting stub — the whole point is a hub typed structurally off nothing
+   *  but `broadcast(event, payload)`, so no SseHub/server/HTTP is needed to prove
+   *  the gate. */
+  function countingHub() {
+    const calls: { event: string; payload: unknown }[] = [];
+    return {
+      calls,
+      broadcast(event: string, payload: unknown) {
+        calls.push({ event, payload });
+      },
+    };
+  }
+
+  it("broadcasts on the discovery tick(s) only, then ZERO more over a permanently-corrupt manifest", () => {
+    resetDegraded();
+    const { store } = makeRun({
+      agents: ["a1"],
+      // Truncated JSON never parses — parseManifest returns null every pass, so
+      // this run can never reach schema_ok and never stops being "new" in the
+      // one way that matters: it must still converge to changed=false (see the
+      // "converges to changed=false" scanWorkflows test above for the same fixture).
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json").slice(0, 400),
+    });
+    const hub = countingHub();
+
+    workflowTick(store, hub, NOW); // discovery: run + manifest are new
+    const afterDiscovery = hub.calls.length;
+    expect(afterDiscovery).toBeGreaterThan(0); // the discovery tick DID broadcast
+
+    workflowTick(store, hub, NOW + 5_000);
+    workflowTick(store, hub, NOW + 10_000);
+    workflowTick(store, hub, NOW + 15_000);
+    // Three more ticks over a manifest that never stops being corrupt: not one
+    // additional broadcast. An unconditional `hub.broadcast(...)` on every tick
+    // would fail this assertion while still passing every other test in the file.
+    expect(hub.calls.length).toBe(afterDiscovery);
+  });
+
+  it("broadcasts exactly once for a tick where usage was genuinely appended to a transcript", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    // Kept RECENT (not quiet) throughout, deliberately — a settled run is
+    // filtered out of liveWorkflows() entirely (by design: the strip shows only
+    // unsettled runs), which would make the payload assertion below vacuous.
+    // Recency is what keeps this run "running" so the broadcast payload actually
+    // carries it.
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    workflowTick(store, countingHub(), NOW); // discovery, off to the side
+
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // pure re-stat: nothing moved
+    expect(hub.calls.length).toBe(0);
+
+    appendFileSync(join(runDir, "agent-a1.jsonl"), agentLine("u-late"));
+    setMtime(runDir, recent); // an append never touches the dir mtime (rule 3's hedge)
+    workflowTick(store, hub, NOW);
+    expect(hub.calls.length).toBe(1);
+    expect(hub.calls[0].event).toBe("workflows");
+    const payload = hub.calls[0].payload as { run_id: string }[];
+    expect(payload.map((w) => w.run_id)).toContain("wf_t1");
   });
 });
 

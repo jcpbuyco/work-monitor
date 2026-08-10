@@ -41,3 +41,17 @@ describe("SessionCard cost line", () => {
     expect(container.textContent).not.toContain("tok");
   });
 });
+
+describe("SessionCard workflow badge", () => {
+  afterEach(cleanup);
+
+  it("shows a wf badge when the session owns a live run", () => {
+    render(<SessionCard s={base} wf />);
+    expect(screen.getByTitle("owns a live workflow run")).toBeTruthy();
+  });
+
+  it("omits the badge by default", () => {
+    render(<SessionCard s={base} />);
+    expect(screen.queryByTitle("owns a live workflow run")).toBeNull();
+  });
+});

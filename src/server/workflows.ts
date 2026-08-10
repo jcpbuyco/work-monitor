@@ -590,7 +590,13 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
 }
 
 /** One tick. Discovery is per-session `readdir` (~100µs), never a glob — the only
- *  global glob in this feature is the one-time startup backfill. */
+ *  global glob in this feature is the one-time startup backfill.
+ *
+ *  Returns `changed` ONLY — no `live` payload. Computing `store.liveWorkflows()`
+ *  costs 4 SQL queries, and the vast majority of ticks find nothing new; paying
+ *  for it here would mean paying it on every 5s tick regardless of whether
+ *  anyone ever looks at the result. That cost belongs to whoever actually needs
+ *  the list — `workflowTick()`, and only on the branch where `changed` is true. */
 export function scanWorkflows(store: Store, now: number): { changed: boolean } {
   let changed = false;
   const targets = new Map<string, RunTarget>();
@@ -617,6 +623,35 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
     }
   }
   return { changed };
+}
+
+/** Structural hub type: only what a 5s tick needs to publish a change, so tests
+ *  can pass a plain counting stub instead of a real SseHub (or anything else
+ *  that happens to have a `broadcast` method — that's the point of typing this
+ *  structurally rather than importing SseHub itself). */
+export interface BroadcastHub {
+  broadcast(event: string, payload: unknown): void;
+}
+
+/** One 5s tick, in full: scan every run, and broadcast the live list ONLY when
+ *  something changed. A tick that just re-stats and finds nothing sends
+ *  nothing — and, per scanWorkflows' contract above, never even computes the
+ *  live payload in that case. `store.liveWorkflows(now)` is called from THIS
+ *  gated branch, not from scanWorkflows.
+ *
+ *  Never calls pushState()/broadcasts "state": buildState() is 243ms and a 5s
+ *  full-state broadcast would burn ~5% CPU permanently. Usage this tick records
+ *  therefore does not reach the cost panels until the next 60s sweep; that
+ *  asymmetry is accepted. This is the one place index.ts's setInterval calls into. */
+export function workflowTick(store: Store, hub: BroadcastHub, now: number): void {
+  try {
+    const { changed } = scanWorkflows(store, now);
+    if (changed) hub.broadcast("workflows", store.liveWorkflows(now));
+  } catch (err) {
+    // Unchanged from Task 13: the counter is gated on logOnce's boolean, so a
+    // tick that fails every 5s counts once, not 720 times an hour (§5.5).
+    if (logOnce("wf-scan", err)) bumpDegraded();
+  }
 }
 
 /** One-time startup pass over every run dir on disk. This is the ONLY place a

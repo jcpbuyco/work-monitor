@@ -5,6 +5,7 @@ import { openDb } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import { SseHub } from "../src/server/sse.ts";
 import { createApp, buildState } from "../src/server/http.ts";
+import { resetDegraded, bumpDegraded } from "../src/server/workflows.ts";
 
 let server: Server;
 let base: string;
@@ -21,6 +22,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // The SSE stream test leaves a connection open (by design — that is the
+  // long-lived /api/stream response) and `reader.cancel()` on the client does
+  // not synchronously tear down the server-side socket. Without this,
+  // server.close() waits forever for that connection to end.
+  server.closeAllConnections?.();
   await new Promise<void>((r) => server.close(() => r()));
 });
 
@@ -241,6 +247,31 @@ describe("GET /api/workflows", () => {
   it("keeps workflows OUT of the state blob (buildState must not get slower)", () => {
     const state = buildState(store) as any;
     expect(state.workflows).toBeUndefined();
+  });
+});
+
+describe("workflows on the stream", () => {
+  it("emits BOTH state and workflows on connect", async () => {
+    const res = await fetch(`${base}/api/stream`);
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let seen = dec.decode((await reader.read()).value);
+    if (!seen.includes("event: workflows")) seen += dec.decode((await reader.read()).value);
+    expect(seen).toContain("event: state");
+    expect(seen).toContain("event: workflows");
+    await reader.cancel();
+  });
+
+  it("exposes workflows_degraded as a top-level scalar reflecting the shared counter, not nested under cost", () => {
+    // `typeof === "number"` alone would pass for a hardcoded `workflows_degraded: 0`
+    // in buildState() — drive the counter to a known, non-zero value through its
+    // own public API and assert buildState() reflects that EXACT value, proving
+    // it is actually wired to workflowsDegraded() and not a stub.
+    resetDegraded();
+    bumpDegraded(3);
+    const state = buildState(store) as any;
+    expect(state.workflows_degraded).toBe(3);
+    expect(state.cost.workflows_degraded).toBeUndefined();
   });
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatUsd, formatTokens, prettyModel, costDailyRange, type CostWindow } from "../cost.ts";
 import { formatDuration, formatWhen } from "../time.ts";
+import { statusClass, statusKnown } from "../workflowStatus.ts";
 import type { WorkflowRun, WorkflowAgentView } from "../types.ts";
 
 type SortKey = "when" | "workflow" | "project" | "status" | "duration" | "agents" | "tokens" | "cost";
@@ -16,17 +17,6 @@ const COLS: { key: SortKey; label: string; numeric: boolean }[] = [
   { key: "tokens", label: "Tokens", numeric: true },
   { key: "cost", label: "Cost", numeric: true },
 ];
-
-// Known statuses get a colour; anything else renders grey rather than being
-// rejected — Claude Code's vocabulary has already grown once ("failed").
-const STATUS_CLASS: Record<string, string> = {
-  completed: "text-working",
-  running: "text-working",
-  failed: "text-attention",
-  killed: "text-attention",
-  orphaned: "text-muted-foreground",
-  settled: "text-muted-foreground",
-};
 
 function sortValue(r: WorkflowRun, key: SortKey): number | string {
   switch (key) {
@@ -162,6 +152,7 @@ export function WorkflowsPage() {
       ) : sorted.length === 0 ? (
         <p className="px-2 py-8 text-center text-sm text-muted-foreground">No workflow runs in this window.</p>
       ) : (
+        <>
         <table className="w-full border-collapse font-mono text-2xs">
           <thead>
             <tr className="border-b border-border text-left text-muted-foreground">
@@ -186,7 +177,6 @@ export function WorkflowsPage() {
           <tbody>
             {sorted.map((r) => {
               const label = r.status ?? r.state;
-              const known = Object.prototype.hasOwnProperty.call(STATUS_CLASS, label);
               return [
                 <tr
                   key={r.run_id}
@@ -205,7 +195,7 @@ export function WorkflowsPage() {
                   <td className="px-2 py-1 text-muted-foreground">
                     {r.project} · {r.branch ?? "—"}
                   </td>
-                  <td data-status-known={String(known)} className={`px-2 py-1 ${STATUS_CLASS[label] ?? "text-muted-foreground/70"}`}>
+                  <td data-status-known={String(statusKnown(label))} className={`px-2 py-1 ${statusClass(label)}`}>
                     {label}
                   </td>
                   <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{formatDuration(r.duration_ms)}</td>
@@ -254,6 +244,12 @@ export function WorkflowsPage() {
             </tr>
           </tbody>
         </table>
+        {sorted.find((r) => r.cc_version)?.cc_version && (
+          <p className="mt-3 px-2 text-2xs text-muted-foreground/70">
+            format last verified on {sorted.find((r) => r.cc_version)!.cc_version}
+          </p>
+        )}
+        </>
       )}
     </div>
   );

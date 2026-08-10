@@ -244,4 +244,34 @@ describe("Store usage rows", () => {
     expect(r.tokens).toBe(0);
     expect(r.agents).toEqual([]);
   });
+
+  it("liveWorkflows returns unsettled runs only, with rollups and a 1-based phase pill", () => {
+    const T = 1_700_000_000_000;
+    seedRun(store, "wf_live", T);
+    // Warm dir -> running; the same run an hour later is settled and drops out.
+    const live = store.liveWorkflows(T + 1000);
+    expect(live.length).toBe(1);
+    expect(live[0].run_id).toBe("wf_live");
+    expect(live[0].state).toBe("running");
+    expect(live[0].costUsd).toBeCloseTo(4, 6);
+    expect(live[0].tokens).toBe(40);
+    expect(live[0].agents.length).toBe(2);
+    // phases.length is 2 and the highest agent phase_index is 2 -> "Phase 2/2 · Judge"
+    expect(live[0].phase).toEqual({ index: 2, total: 2, title: "Judge" });
+    expect(store.liveWorkflows(T + 60 * 60 * 1000)).toEqual([]);
+  });
+
+  it("liveWorkflows keeps an orphaned run visible and reports phase: null with no phases", () => {
+    store.upsertWorkflowRun({ run_id: "wf_orph", session_id: "ghost", dir: "/d/o", started_at: 1000, last_seen_at: 1000 });
+    const live = store.liveWorkflows(2000);
+    expect(live.length).toBe(1);
+    expect(live[0].state).toBe("orphaned"); // no manifest, purged session
+    expect(live[0].phase).toBeNull();
+    expect(live[0].project).toBe("unknown"); // COALESCE, matching costByProject
+  });
+
+  it("liveWorkflows drops runs older than the 24h recheck window", () => {
+    store.upsertWorkflowRun({ run_id: "wf_ancient", session_id: "p", dir: "/d/a", started_at: 1, last_seen_at: 1 });
+    expect(store.liveWorkflows(1 + 25 * 60 * 60 * 1000)).toEqual([]);
+  });
 });
