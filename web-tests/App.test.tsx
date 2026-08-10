@@ -13,7 +13,7 @@ vi.mock("../src/web/api.ts", () => ({
 
 afterEach(cleanup);
 beforeEach(() => {
-  global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ rows: [] }) }) as unknown as typeof fetch;
+  global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ rows: [], runs: [] }) }) as unknown as typeof fetch;
 });
 
 describe("App routing", () => {
@@ -29,5 +29,12 @@ describe("App routing", () => {
     const App = (await import("../src/web/App.tsx")).default;
     render(<App />);
     expect(await screen.findByText("agent-monitor")).toBeTruthy(); // AppBar title
+  });
+
+  it("renders the workflows page at #/workflows", async () => {
+    window.location.hash = "#/workflows";
+    const App = (await import("../src/web/App.tsx")).default;
+    render(<App />);
+    expect(await screen.findByText("Workflow runs")).toBeTruthy();
   });
 });

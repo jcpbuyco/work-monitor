@@ -152,6 +152,22 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
+      // --- workflow run history; pull, not streamed (live runs use the SSE
+      // `workflows` event instead — buildState() is 243ms and must not grow) ---
+      if (method === "GET" && path === "/api/workflows") {
+        const num = (v: string | null): number | undefined => {
+          const n = v == null ? NaN : Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const runs = store.workflowHistory({
+          since: num(url.searchParams.get("since")),
+          until: num(url.searchParams.get("until")),
+          limit: num(url.searchParams.get("limit")),
+        });
+        json(res, 200, { runs });
+        return;
+      }
+
       // --- SSE ---
       if (method === "GET" && path === "/api/stream") {
         res.writeHead(200, {

@@ -175,4 +175,73 @@ describe("Store usage rows", () => {
       { message_uuid: "w1", run_id: "wf_1", agent_id: "a1" },
     ]);
   });
+
+  /** A run with two agents: a1 cost $3 / 30 tok, a2 cost $1 / 10 tok. */
+  function seedRun(store: Store, runId: string, startedAt: number) {
+    store.applyEvent("p", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({
+      run_id: runId, session_id: "p", dir: `/d/${runId}`, name: "research", status: "completed",
+      manifest_seen: true, last_seen_at: startedAt, started_at: startedAt, duration_ms: 1234,
+      agent_count: 2, total_tokens_reported: 99,
+      phases: JSON.stringify([{ title: "Explore", detail: "d" }, { title: "Judge", detail: null }]),
+    });
+    store.upsertWorkflowAgent({ run_id: runId, agent_id: "a1", label: "map", phase_index: 1, phase_title: "Explore", state: "done" });
+    store.upsertWorkflowAgent({ run_id: runId, agent_id: "a2", label: "judge", phase_index: 2, phase_title: "Judge", state: "abandoned" });
+    store.recordUsage({ uuid: `${runId}-1`, sessionId: "p", model: "claude-opus-5", tokens: tok(30), at: startedAt, cost: 3, runId, agentId: "a1" });
+    store.recordUsage({ uuid: `${runId}-2`, sessionId: "p", model: "claude-opus-5", tokens: tok(10), at: startedAt, cost: 1, runId, agentId: "a2" });
+  }
+
+  it("workflowHistory embeds agents with their usage rollups and a run total", () => {
+    const T = 1_700_000_000_000;
+    seedRun(store, "wf_a", T);
+    const runs = store.workflowHistory({}, T + 60 * 60 * 1000);
+    expect(runs.length).toBe(1);
+    const r = runs[0];
+    expect(r.costUsd).toBeCloseTo(4, 6);
+    expect(r.tokens).toBe(40);
+    expect(r.project).toBe("alpha");
+    expect(r.phases).toEqual([{ title: "Explore", detail: "d" }, { title: "Judge", detail: null }]);
+    expect(r.schema_ok).toBe(true);
+    expect(r.agents.map((a) => a.agent_id).sort()).toEqual(["a1", "a2"]);
+    const a1 = r.agents.find((a) => a.agent_id === "a1")!;
+    expect(a1.costUsd).toBeCloseTo(3, 6);
+    expect(a1.tokens).toBe(30);
+    expect(a1.phase_title).toBe("Explore");
+  });
+
+  it("workflowHistory derives run state from liveness, not from the stored status", () => {
+    const T = 1_700_000_000_000;
+    seedRun(store, "wf_a", T);
+    expect(store.workflowHistory({}, T + 60 * 60 * 1000)[0].state).toBe("settled");
+    expect(store.workflowHistory({}, T + 1000)[0].state).toBe("running"); // dir still warm
+  });
+
+  it("workflowHistory filters on started_at (since inclusive, until exclusive) and drops NULL starts when bounded", () => {
+    const T = 1_700_000_000_000;
+    seedRun(store, "wf_a", T);
+    seedRun(store, "wf_b", T + 5000);
+    store.upsertWorkflowRun({ run_id: "wf_null", session_id: "p", dir: "/d/n" }); // started_at NULL
+    expect(store.workflowHistory({}, T).map((r) => r.run_id)).toContain("wf_null"); // unbounded includes it
+    expect(store.workflowHistory({ since: T + 1 }, T).map((r) => r.run_id)).toEqual(["wf_b"]);
+    expect(store.workflowHistory({ until: T + 1 }, T).map((r) => r.run_id)).toEqual(["wf_a"]);
+  });
+
+  it("workflowHistory orders newest-first and clamps limit to 1..500", () => {
+    const T = 1_700_000_000_000;
+    seedRun(store, "wf_a", T);
+    seedRun(store, "wf_b", T + 5000);
+    expect(store.workflowHistory({}, T).map((r) => r.run_id)).toEqual(["wf_b", "wf_a"]);
+    expect(store.workflowHistory({ limit: 1 }, T).map((r) => r.run_id)).toEqual(["wf_b"]); // limit caps RUNS
+    expect(store.workflowHistory({ limit: 0 }, T).length).toBe(1); // clamped up to 1
+    expect(store.workflowHistory({ limit: 99999 }, T).length).toBe(2); // clamped down to 500
+  });
+
+  it("workflowHistory buckets a run with no resolvable project under 'unknown' and yields 0s with no usage", () => {
+    store.upsertWorkflowRun({ run_id: "wf_ghost", session_id: "ghost", dir: "/d/g", started_at: 1 });
+    const r = store.workflowHistory({}, 2)[0];
+    expect(r.project).toBe("unknown");
+    expect(r.costUsd).toBe(0);
+    expect(r.tokens).toBe(0);
+    expect(r.agents).toEqual([]);
+  });
 });
