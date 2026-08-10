@@ -7,6 +7,7 @@ import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { createApp, buildState, type AppDeps } from "./http.ts";
 import { tailUsage } from "./usage.ts";
+import { repriceFiveSeries, REPRICE_MARKER } from "./reprice.ts";
 import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS } from "./config.ts";
 
 const store = new Store(openDb(DB_PATH));
@@ -59,6 +60,14 @@ setInterval(() => {
   }
   if (changed) pushState();
 }, SWEEP_INTERVAL_MS);
+
+// One-shot: reprice the pre-existing $0.00 5-series rows (spec §0b). Gated behind
+// AM_REPRICE=1 for the manual first run and guarded by a marker so a restart
+// cannot re-run it.
+if (process.env.AM_REPRICE === "1" && !store.getMeta(REPRICE_MARKER)) {
+  const r = repriceFiveSeries(store, Date.now());
+  console.log(`[reprice] sessions=${r.sessions} deleted=${r.deleted} re-tailed=${r.recorded}`);
+}
 
 server.listen(PORT, HOST, () => {
   console.log(`am-server listening on http://${HOST}:${PORT}`);
