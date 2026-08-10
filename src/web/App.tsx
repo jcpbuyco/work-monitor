@@ -5,6 +5,7 @@ import { runViewTransition } from "./viewTransition.ts";
 import { Board } from "./components/Board.tsx";
 import { useHashRoute } from "./useHashRoute.ts";
 import { CostDailyPage } from "./components/CostDailyPage.tsx";
+import { WorkflowsPage } from "./components/WorkflowsPage.tsx";
 
 export default function App() {
   const [state, setState] = useState<State>({
@@ -30,5 +31,7 @@ export default function App() {
   }, []);
 
   const route = useHashRoute();
-  return route === "#/cost" ? <CostDailyPage /> : <Board state={state} />;
+  if (route === "#/cost") return <CostDailyPage />;
+  if (route === "#/workflows") return <WorkflowsPage />;
+  return <Board state={state} />;
 }

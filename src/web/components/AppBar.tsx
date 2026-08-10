@@ -42,6 +42,13 @@ export function AppBar({ state }: { state: State }) {
           <span aria-hidden="true">$</span>
           <span>Cost</span>
         </a>
+        <a
+          href="#/workflows"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-muted px-3 text-sm leading-none text-muted-foreground transition hover:text-foreground"
+        >
+          <span aria-hidden="true">⚙</span>
+          <span>Workflows</span>
+        </a>
         <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
           <button
             type="button"
