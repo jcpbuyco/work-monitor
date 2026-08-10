@@ -66,7 +66,7 @@ setInterval(() => {
 // feel live. This tick must NEVER call pushState() — buildState() is 243ms and a
 // 5s full-state broadcast would burn ~5% CPU permanently. Usage it records
 // therefore does not reach the cost panels until the next 60s sweep; that
-// asymmetry is accepted. The scan-then-gated-broadcast logic itself lives in
+// asymmetry is accepted. The scan-then-diff-then-broadcast logic itself lives in
 // workflowTick() (workflows.ts), where it can be exercised by a test without
 // importing this file (see tests/workflows.test.ts's "workflowTick" suite).
 if (WORKFLOWS_ENABLED) {

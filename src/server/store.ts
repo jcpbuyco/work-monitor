@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTodoInput } from "./types.ts";
 import type { Tokens } from "./pricing.ts";
 import { deriveRunState } from "./workflows.ts";
-import { WF_RECHECK_MS } from "./config.ts";
+import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
 
 const SESSION_COLS =
   "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at";
@@ -854,15 +854,23 @@ export class Store {
    *  so a run whose files move again flips back to running.
    *
    *  This is the ONLY payload the 5s tick broadcasts. It must never grow into a
-   *  buildState()-sized query. */
+   *  buildState()-sized query — which is why the settled predicate is applied
+   *  HERE, in SQL, rather than left to the `.filter()` below: a heavy workflow
+   *  day can leave many settled runs inside the 24h window, and hydrating all
+   *  of them (per-agent usage rollup, workflow_agents fetch, sessions scan)
+   *  just to throw the results away is exactly the buildState()-sized cost
+   *  this method must never grow into. The condition mirrors deriveRunState's
+   *  "settled" branch exactly (manifest_seen && quiet); the `.filter()` stays
+   *  as a defensive backstop, not the primary mechanism. */
   liveWorkflows(now: number = Date.now()): LiveWorkflow[] {
     const rows = this.db
       .query(
         `SELECT * FROM workflow_runs
-         WHERE last_seen_at IS NULL OR last_seen_at > $cutoff
+         WHERE (last_seen_at IS NULL OR last_seen_at > $cutoff)
+           AND NOT (manifest_seen = 1 AND (last_seen_at IS NULL OR last_seen_at < $quiet))
          ORDER BY started_at DESC`
       )
-      .all({ $cutoff: now - WF_RECHECK_MS }) as Record<string, any>[];
+      .all({ $cutoff: now - WF_RECHECK_MS, $quiet: now - WF_QUIET_MS }) as Record<string, any>[];
 
     return this.hydrateWorkflowRuns(rows, now)
       .filter((r) => r.state !== "settled")

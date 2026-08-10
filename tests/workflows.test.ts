@@ -1,5 +1,14 @@
 import { describe, it, expect } from "bun:test";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, appendFileSync, utimesSync, rmSync } from "node:fs";
+import {
+  readFileSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  appendFileSync,
+  utimesSync,
+  rmSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/server/store.ts";
@@ -341,6 +350,23 @@ function makeRun(opts: { agents: string[]; journal?: string; manifest?: string; 
 const setMtime = (p: string, ms: number) => utimesSync(p, ms / 1000, ms / 1000);
 
 describe("scanWorkflows", () => {
+  it("resolves model from an agent transcript header via the REAL scan path, even when it starts past 8KB (finding 4)", () => {
+    // agent-head.jsonl is a real (anonymized) transcript: message.model doesn't
+    // appear until byte 22,544 — the first three lines (user + two attachments)
+    // alone run past a fixed 8KB header window. The agent's meta.json (written
+    // by makeRun) carries no model, so this is the fallback path the fixture
+    // for parseAgentHeader alone doesn't exercise (that test feeds the parser
+    // the whole file directly; this one goes through the scanner's real
+    // bounded read).
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    writeFileSync(join(runDir, "agent-a1.jsonl"), fixture("agent-head.jsonl"));
+    scanWorkflows(store, NOW);
+    const row = store.db
+      .query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'")
+      .get() as { model: string | null };
+    expect(row.model).toBe("claude-sonnet-5");
+  });
+
   it("tails every agent transcript against the PARENT session, stamping run_id/agent_id", () => {
     const { store } = makeRun({ agents: ["a1", "a2"] });
     expect(scanWorkflows(store, NOW).changed).toBe(true);
@@ -388,6 +414,34 @@ describe("scanWorkflows", () => {
     expect(scanWorkflows(store, NOW).changed).toBe(true);
     const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
     expect(total.c).toBe(2);
+  });
+
+  it("un-settles the DERIVED STATE, not just the scanner's re-scan, when a file grows without a dir-mtime change (finding 3 redo)", () => {
+    // Spec §1.4 (redo wording): last_seen_at is dir mtime OR the newest mtime
+    // among the run's agent-*.jsonl/journal files — pure disk truth. `grew`
+    // forces scanRun to keep tailing (asserted above), but last_seen_at (what
+    // deriveRunState actually reads) must also reflect that motion via the
+    // FILE's own mtime, or the run keeps reading "settled" and vanishes from
+    // liveWorkflows() while it is still spending. The appended file's mtime is
+    // set EXPLICITLY here (not left to appendFileSync's real wall-clock
+    // stamp): NOW is a fixed fictitious future timestamp, so a genuinely
+    // "just now" real mtime would itself read as ancient disk history and the
+    // test would falsely pass/fail independent of the fix.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const quiet = NOW - 60 * 60 * 1000;
+    setMtime(runDir, quiet);
+    setMtime(agentPath, quiet);
+    scanWorkflows(store, NOW); // discovery: manifest present + stale dir+file ⇒ settles immediately
+    expect(store.liveWorkflows(NOW)).toEqual([]);
+
+    appendFileSync(agentPath, agentLine("u-late"));
+    setMtime(agentPath, NOW); // the append IS the disk-truth motion (rule 3's hedge)
+    setMtime(runDir, quiet); // the dir itself is never touched, exactly as on disk
+    scanWorkflows(store, NOW);
+    const live = store.liveWorkflows(NOW);
+    expect(live.map((w) => w.run_id)).toContain("wf_t1");
+    expect(live.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
   });
 
   it("keeps tailing after a manifest appears — a manifest is terminal for STRUCTURE only (C6)", () => {
@@ -485,6 +539,33 @@ describe("scanWorkflows", () => {
     expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
   });
 
+  it("logs a SECOND, unrelated failure cause on the same run rather than swallowing it (finding 8)", () => {
+    // The manifest-parse-failure key (workflows.ts's line ~577) and the
+    // thrown-scan-error key (scanWorkflows' catch) both used the BARE run id,
+    // so whichever cause hit first permanently suppressed logOnce — and hence
+    // bumpDegraded() — for the other, for the rest of the process lifetime.
+    resetDegraded();
+    const { store, runDir } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json").slice(0, 400), // truncated -> parse failure
+    });
+    // Pin the dir mtime relative to NOW (matching every other test's pattern)
+    // so the run stays inside the 24h WF_RECHECK_MS window across the 20
+    // ticks below — real wall-clock mtime would otherwise already be "older"
+    // than NOW - WF_RECHECK_MS, since NOW is a fixed fictitious timestamp.
+    setMtime(runDir, NOW - 1000);
+    scanWorkflows(store, NOW); // cause 1: manifest parse failure
+    expect(workflowsDegraded()).toBe(1);
+
+    rmSync(runDir, { recursive: true, force: true }); // cause 2: statSync(t.dir) now throws every tick
+    let tick = NOW;
+    for (let i = 0; i < 20; i++) {
+      tick += 5_000;
+      scanWorkflows(store, tick);
+    }
+    expect(workflowsDegraded()).toBe(2); // a genuinely different cause must still get its own bump
+  });
+
   it("converges to changed=false on a manifest that exists but never parses (no 5s re-scan loop)", () => {
     resetDegraded();
     const { store } = makeRun({
@@ -500,6 +581,30 @@ describe("scanWorkflows", () => {
     // separately by the workflowTick counting-stub tests; this covers the scan layer.
     expect(scanWorkflows(store, NOW + 15_000).changed).toBe(false);
     expect(scanWorkflows(store, NOW + 20_000).changed).toBe(false);
+  });
+
+  it("evaluates the §5.8 no-tokens cross-check for a run discovered while ACTIVE, not just a backfilled one (findings 5 & 7)", () => {
+    // No agent-*.jsonl files at all — stands in for a Claude Code format break
+    // (e.g. a transcript filename convention change AGENT_RE misses); either
+    // way the effect is the same, zero usage rows despite a manifest reporting
+    // real tokens burned.
+    resetDegraded();
+    const manifestRaw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    expect(manifestRaw.totalTokens).toBeGreaterThan(0); // sanity: fixture really reports tokens
+    const { store, runDir } = makeRun({ agents: [], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    scanWorkflows(store, NOW); // discovered while ACTIVE: manifest lands, dir just moved
+    expect(workflowsDegraded()).toBe(0); // not quiet yet — no false positive while legitimately ahead
+    const usageRows = store.db.query("SELECT COUNT(*) AS c FROM usage WHERE run_id='wf_t1'").get() as { c: number };
+    expect(usageRows.c).toBe(0);
+
+    // WF_QUIET_MS elapses with nothing on disk moving — exactly the tick the
+    // cheap-re-stat early return would otherwise always take, skipping the one
+    // check §5 has for silently-wrong cost.
+    const later = NOW + WF_QUIET_MS + 5_000;
+    scanWorkflows(store, later);
+    expect(workflowsDegraded()).toBe(1);
   });
 });
 
@@ -524,6 +629,35 @@ describe("scanWorkflows + liveWorkflows (Minor A: live is no longer scanWorkflow
     const again = scanWorkflows(store, NOW);
     expect(again.changed).toBe(false);
     expect(store.liveWorkflows(NOW)).toEqual([]);
+  });
+
+  it("excludes a settled run in SQL, never paying to hydrate it (finding 6)", () => {
+    // liveWorkflows() must not select every row in the 24h WF_RECHECK_MS window
+    // and filter settled ones out in JS afterward — that pays the per-agent
+    // usage rollup, workflow_agents fetch and sessions scan for rows that get
+    // thrown away. The settled predicate belongs in the WHERE clause.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000);
+    scanWorkflows(store, NOW);
+    expect(store.liveWorkflows(NOW)).toEqual([]); // sanity: it really is settled
+
+    let queryCount = 0;
+    const origQuery = store.db.query.bind(store.db);
+    (store.db as unknown as { query: typeof store.db.query }).query = ((sql: string) => {
+      queryCount++;
+      return origQuery(sql);
+    }) as typeof store.db.query;
+    try {
+      store.liveWorkflows(NOW);
+    } finally {
+      store.db.query = origQuery;
+    }
+    // Before the fix: workflow_runs SELECT + usage rollup + workflow_agents +
+    // sessions — four queries paid for a run that gets discarded by a JS
+    // `.filter()`. After: the settled run never leaves the WHERE clause, so
+    // hydrateWorkflowRuns short-circuits on an empty row set and only the
+    // first query ever runs.
+    expect(queryCount).toBe(1);
   });
 });
 
@@ -588,6 +722,333 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     expect(hub.calls[0].event).toBe("workflows");
     const payload = hub.calls[0].payload as { run_id: string }[];
     expect(payload.map((w) => w.run_id)).toContain("wf_t1");
+  });
+
+  it("broadcasts a running->settled transition caused purely by the passage of time (findings 1&2)", () => {
+    // Nothing on disk ever moves again after discovery — dir mtime, manifest
+    // mtime and every agent file stay exactly as they were — but WF_QUIET_MS of
+    // wall-clock time passes. deriveRunState flips the run to "settled" at READ
+    // time; the client must be told, or the board shows a finished run forever.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+
+    const later = NOW + WF_QUIET_MS + 5_000;
+    workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
+    expect(hub.calls.length).toBe(2);
+    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    expect(second.map((w) => w.run_id)).not.toContain("wf_t1"); // settled runs drop out
+  });
+
+  it("broadcasts a running->orphaned transition caused purely by the passage of time (findings 1&2)", () => {
+    // Same defect, manifest-less case: the run never disappears (liveWorkflows
+    // keeps orphans visible) but the client's copy must stop reading "running".
+    const { store, runDir } = makeRun({ agents: ["a1"] }); // no manifest
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+
+    const later = NOW + WF_QUIET_MS + 5_000;
+    workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
+    expect(hub.calls.length).toBe(2);
+    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    expect(second.find((w) => w.run_id === "wf_t1")?.state).toBe("orphaned");
+  });
+
+  // --- finding-3 REDO: three rejection timelines from the adversarial re-verify
+  // of cb071f9 (existingAgentGrew / effectiveLastSeenAt). last_seen_at must be
+  // pure disk truth (dir mtime OR the newest mtime among the run's
+  // agent-*.jsonl/journal files) — never a fabricated `now` reading — and the
+  // scanner's in-pass state cache must derive from that SAME value, never from
+  // the raw dir mtime alone.
+
+  it("growth un-settles once, then only a REAL quiet period settles — not a stale-dir false alarm (finding-3 redo, timeline 1)", () => {
+    // An ordinary long-running workflow: its run DIR is touched once, at
+    // creation, and never again — only the agent transcript's mtime moves as
+    // it grows (rule 3). `born` stands in for "long enough ago that the dir's
+    // OWN mtime alone already reads as quiet", which is true of any workflow
+    // that has been running for longer than WF_QUIET_MS.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const born = NOW - 2 * WF_QUIET_MS;
+    setMtime(runDir, born);
+    setMtime(agentPath, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: dir AND file already old ⇒ settles immediately
+    expect(hub.calls.length).toBe(1);
+    expect(store.liveWorkflows(NOW)).toEqual([]); // sanity: really settled at discovery
+
+    // A real append: the agent file's mtime moves to NOW (disk truth) while
+    // the run DIR's mtime is left exactly where it was — an append to an
+    // already-tracked transcript never bumps the dir (rule 3's hedge).
+    appendFileSync(agentPath, agentLine("u-grow"));
+    setMtime(agentPath, NOW);
+    setMtime(runDir, born); // dir stays put, exactly as on disk
+    workflowTick(store, hub, NOW);
+    expect(hub.calls.length).toBe(2); // un-settle: real usage landed AND the state flipped back to running
+    const grown = hub.calls[1].payload as { run_id: string; state: string }[];
+    expect(grown.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+
+    // Walk the clock forward in ordinary 5s ticks with NOTHING further
+    // touched on disk. The rejected fix broadcast a premature "settled"
+    // transition on the very NEXT tick — 5s after growth, nowhere near a real
+    // quiet window — because its state cache read the raw, permanently-stale
+    // dir mtime while the value actually persisted (and later read by
+    // liveWorkflows) was something else entirely; having flipped once, the
+    // cache then never noticed the REAL settle at WF_QUIET_MS either. A
+    // correct implementation must not broadcast again until a genuine
+    // WF_QUIET_MS has elapsed since the growth.
+    let tick = NOW;
+    let firstBroadcastElapsed: number | null = null;
+    while (tick < NOW + WF_QUIET_MS + 10_000) {
+      tick += 5_000;
+      const before = hub.calls.length;
+      workflowTick(store, hub, tick);
+      if (hub.calls.length !== before && firstBroadcastElapsed === null) firstBroadcastElapsed = tick - NOW;
+    }
+    expect(firstBroadcastElapsed).not.toBeNull();
+    expect(firstBroadcastElapsed!).toBeGreaterThanOrEqual(WF_QUIET_MS); // not a moment sooner
+    expect(hub.calls.length).toBe(3); // exactly one settle broadcast across the whole walk
+    const settled = hub.calls[2].payload as { run_id: string }[];
+    expect(settled.map((w) => w.run_id)).not.toContain("wf_t1"); // settled runs drop out of the live strip
+
+    // Further ticks over the same, now-frozen disk state: silence.
+    workflowTick(store, hub, tick + 5_000);
+    workflowTick(store, hub, tick + 10_000);
+    expect(hub.calls.length).toBe(3);
+  });
+
+  it("per-tick non-usage growth keeps the run running without rebroadcasting an unchanged payload (finding-3 redo, timeline 2)", () => {
+    // Regression measured against the rejected fix: 19 identical-payload
+    // broadcasts over 20 ticks, caused by the scanner's pre-pass state check
+    // reading the raw dir mtime (permanently stale for an ordinary
+    // long-running workflow — see timeline 1) while the value actually
+    // persisted read something else entirely. Disk-truth last_seen_at
+    // genuinely advances every tick here (each append moves the agent file's
+    // real mtime) — the run must stay "running" throughout — but since
+    // neither the cost nor the truly derived state ever changes after the
+    // initial un-settle, none of the remaining ticks may broadcast.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const born = NOW - 2 * WF_QUIET_MS; // dir touched once, long ago (rule 3)
+    setMtime(runDir, born);
+    setMtime(agentPath, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: already quiet from a standing start ⇒ settled
+    expect(hub.calls.length).toBe(1);
+
+    let tick = NOW;
+    for (let i = 0; i < 20; i++) {
+      tick += 5_000;
+      // A complete line with no `message.usage` — parseUsageLine() prices
+      // nothing, so takeUsage() advances the offset but never records.
+      appendFileSync(agentPath, JSON.stringify({ uuid: `heartbeat-${i}`, type: "tool_result" }) + "\n");
+      setMtime(agentPath, tick); // disk truth: this file really was touched now
+      setMtime(runDir, born); // the dir itself is never touched by an append (rule 3)
+      workflowTick(store, hub, tick);
+    }
+    expect(hub.calls.length).toBe(2); // one un-settle broadcast (tick 1), then dead silence for 19 more
+    expect(store.liveWorkflows(tick).find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+  });
+
+  it("a transcript with a permanently incomplete final line settles once and goes silent, despite size > offset forever (finding-3 redo, timeline 3)", () => {
+    // Regression measured against the rejected fix: existingAgentGrew stayed
+    // true forever (size > offset never resolves for an unterminated final
+    // line), so the run never settled — 132 broadcasts and a phantom
+    // "running" card pinned indefinitely.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    setMtime(runDir, NOW);
+    setMtime(agentPath, NOW);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: running, the one complete line fully consumed
+    expect(hub.calls.length).toBe(1);
+
+    // The write that never finishes: appended WITHOUT a trailing newline, so
+    // takeUsage's search for a complete line never succeeds — size grows past
+    // the stored offset, but the offset can never advance past it. Disk truth
+    // exactly as it happens for real: a process that dies or stalls mid-write.
+    appendFileSync(agentPath, JSON.stringify({ uuid: "partial", message: { model: "claude-opus-5" } })); // no trailing "\n"
+    const wroteAt = NOW + 5_000;
+    setMtime(agentPath, wroteAt); // this is the LAST time the file is ever touched
+    setMtime(runDir, NOW); // the dir itself never moves (rule 3)
+    workflowTick(store, hub, wroteAt);
+    expect(hub.calls.length).toBe(1); // not yet quiet, nothing new recorded, no transition
+
+    // WF_QUIET_MS elapses with the file's mtime FROZEN at `wroteAt` (no
+    // further writes, ever) — the run must settle exactly once...
+    const settleTick = wroteAt + WF_QUIET_MS + 5_000;
+    workflowTick(store, hub, settleTick);
+    expect(hub.calls.length).toBe(2);
+    const settled = hub.calls[1].payload as { run_id: string }[];
+    expect(settled.map((w) => w.run_id)).not.toContain("wf_t1");
+
+    // ...and NEVER un-settle again: size > offset holds forever (the offset
+    // can never advance past an unterminated final line), but that must never
+    // be read as liveness. 20 more ticks, dead silent.
+    let tick = settleTick;
+    for (let i = 0; i < 20; i++) {
+      tick += 5_000;
+      workflowTick(store, hub, tick);
+    }
+    expect(hub.calls.length).toBe(2); // no phantom "running" card, no broadcast storm
+  });
+
+  // --- the two defects the re-verify of 38c81b9 rejected. Both come from the
+  // same root cause: the full-pass decision and the broadcast decision hung off
+  // signals OTHER than "did the disk move" / "did the payload change", so each
+  // could disagree with the disk (and with each other).
+
+  it("a manifest that parsed once and then becomes unreadable never re-triggers a full pass or a broadcast (rejection defect i)", () => {
+    resetDegraded();
+    const { store, runDir, sessionDir } = makeRun({
+      agents: ["a1"],
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json"),
+    });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const born = NOW - 2 * WF_QUIET_MS; // quiet from a standing start
+    setMtime(runDir, born);
+    setMtime(agentPath, born);
+    setMtime(manifestPath, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: manifest parses, run is settled
+    expect(hub.calls.length).toBe(1);
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1);
+
+    // The manifest is still THERE — statSync succeeds and its mtime never moves
+    // — but it can no longer be READ (a permission flip, a half-replaced file,
+    // an FS hiccup). Nothing about the RUN changed: it is quiet, settled, and
+    // must stay that way. `!!manifest` (this pass's parse result) is now false
+    // while the PERSISTED manifest_seen is still 1, and only the persisted one
+    // may feed state.
+    chmodSync(manifestPath, 0o000);
+
+    let fullPasses = 0;
+    const upsert = store.upsertWorkflowRun.bind(store);
+    store.upsertWorkflowRun = (r) => {
+      fullPasses++;
+      upsert(r);
+    };
+
+    // One full pass is legitimately still owed: the §5.8 cross-check gets a
+    // single forced pass when a tracked run first reads settled. It must
+    // consume that shot HERE, on its one attempt, even though the manifest it
+    // wanted to read is unreadable — otherwise it re-forces a pass forever.
+    workflowTick(store, hub, NOW + 5_000);
+    expect(fullPasses).toBe(1);
+    const degradedAfterOneShot = workflowsDegraded();
+    expect(degradedAfterOneShot).toBeGreaterThan(0); // the skip IS reported...
+
+    // ...and then nothing, ever again: no full pass, no broadcast, no degraded
+    // bump, and no flip-flop between "settled" (persisted manifest_seen) and
+    // "orphaned" (this pass's failed read).
+    let tick = NOW + 5_000;
+    for (let i = 0; i < 25; i++) {
+      tick += 5_000;
+      workflowTick(store, hub, tick);
+    }
+    expect(fullPasses).toBe(1);
+    expect(hub.calls.length).toBe(1);
+    expect(workflowsDegraded()).toBe(degradedAfterOneShot); // once per run, not per tick
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1); // sticky
+    expect(store.liveWorkflows(tick)).toEqual([]); // still settled, never orphaned
+    chmodSync(manifestPath, 0o600); // leave the temp tree removable
+  });
+
+  it("a forced pass with an unreadable manifest keeps manifest-derived facts: agent state stays done, started_at survives (sticky manifestSeen)", () => {
+    resetDegraded();
+    // ax exists only in the journal, started-without-result. With a manifest
+    // EVER seen (sticky), that reads as 'done'; only this pass's `!!manifest`
+    // would read it as 'running'.
+    const journal = JSON.stringify({ type: "started", key: "v2:ax1", agentId: "ax" }) + "\n";
+    const { store, runDir, sessionDir } = makeRun({
+      agents: ["a1"],
+      journal,
+      manifest: fixture("wf_eb7bf7e8-8a5.manifest.json"),
+    });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const born = NOW - 2 * WF_QUIET_MS; // quiet from a standing start
+    for (const p of [runDir, join(runDir, "agent-a1.jsonl"), join(runDir, "journal.jsonl"), manifestPath]) setMtime(p, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: manifest parses
+    expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1);
+    // getWorkflowRun returns scan columns only — read started_at straight off the row.
+    const startedAtOf = () =>
+      (store.db.query("SELECT started_at FROM workflow_runs WHERE run_id='wf_t1'").get() as { started_at: number | null }).started_at;
+    const startedAt = startedAtOf();
+    expect(startedAt).toBe(1786345861147); // the manifest fixture's startTime, not the dir birthtime
+    const stateOfAx = () =>
+      (store.db.query("SELECT state FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='ax'").get() as { state: string } | null)?.state;
+    expect(stateOfAx()).toBe("done");
+
+    chmodSync(manifestPath, 0o000);
+    workflowTick(store, hub, NOW + 5_000); // the §5.8 forced pass — manifest unreadable
+    // Manifest-derived facts must not degrade on an unreadable pass:
+    expect(stateOfAx()).toBe("done"); // persisted manifest_seen feeds state, not `!!manifest`
+    expect(startedAtOf()).toBe(startedAt); // COALESCE keeps the manifest startTime
+    chmodSync(manifestPath, 0o600); // leave the temp tree removable
+  });
+
+  it("a journal-only append triggers a full pass, ingests the new agent, advances last_seen_at, and broadcasts exactly once (rejection defect ii)", () => {
+    const jline = (o: Record<string, string>) => JSON.stringify(o) + "\n";
+    const { store, runDir } = makeRun({
+      agents: ["a1"],
+      journal:
+        jline({ type: "started", key: "v2:k1", agentId: "a1" }) +
+        jline({ type: "result", key: "v2:k1", agentId: "a1" }),
+    });
+    const journalPath = join(runDir, "journal.jsonl");
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const t0 = NOW - 1_000; // recent: the run is genuinely live
+    setMtime(runDir, t0);
+    setMtime(agentPath, t0);
+    setMtime(journalPath, t0);
+
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    expect(store.getWorkflowRun("wf_t1")!.last_seen_at).toBe(t0);
+
+    workflowTick(store, hub, NOW + 5_000); // nothing moved
+    expect(hub.calls.length).toBe(1);
+
+    // The workflow spawns a second agent. The JOURNAL records it first — the
+    // transcript file does not exist yet — so the only thing that moves on disk
+    // is journal.jsonl's OWN mtime: appending to a file inside the run dir
+    // never bumps the DIR's mtime, and no agent transcript grew past its
+    // stored offset. Keying the full pass off the dir mtime alone loses this
+    // append entirely (and with it every agent that never gets a transcript).
+    appendFileSync(journalPath, jline({ type: "started", key: "v2:k2", agentId: "a2" }));
+    const appendedAt = NOW + 7_000;
+    setMtime(journalPath, appendedAt);
+    setMtime(runDir, t0);
+    setMtime(agentPath, t0);
+
+    workflowTick(store, hub, NOW + 10_000);
+    expect(hub.calls.length).toBe(2); // exactly one broadcast for one real change
+    const payload = hub.calls[1].payload as { run_id: string; agents: { agent_id: string }[] }[];
+    expect(payload.find((w) => w.run_id === "wf_t1")!.agents.map((a) => a.agent_id).sort()).toEqual(["a1", "a2"]);
+    const n = store.db.query("SELECT COUNT(*) AS c FROM workflow_agents WHERE run_id='wf_t1'").get() as { c: number };
+    expect(n.c).toBe(2);
+    // The journal's mtime is part of the blend, so the persisted value advances
+    // to it — which is what makes the NEXT tick's quiet check correct by
+    // construction instead of by a second, separately-maintained signal.
+    expect(store.getWorkflowRun("wf_t1")!.last_seen_at).toBe(appendedAt);
+
+    // Steady state again: the blend stops advancing, so the ticks go quiet.
+    workflowTick(store, hub, NOW + 15_000);
+    workflowTick(store, hub, NOW + 20_000);
+    expect(hub.calls.length).toBe(2);
   });
 });
 
