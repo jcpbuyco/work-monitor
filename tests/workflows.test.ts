@@ -589,6 +589,46 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     const payload = hub.calls[0].payload as { run_id: string }[];
     expect(payload.map((w) => w.run_id)).toContain("wf_t1");
   });
+
+  it("broadcasts a running->settled transition caused purely by the passage of time (findings 1&2)", () => {
+    // Nothing on disk ever moves again after discovery — dir mtime, manifest
+    // mtime and every agent file stay exactly as they were — but WF_QUIET_MS of
+    // wall-clock time passes. deriveRunState flips the run to "settled" at READ
+    // time; the client must be told, or the board shows a finished run forever.
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+
+    const later = NOW + WF_QUIET_MS + 5_000;
+    workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
+    expect(hub.calls.length).toBe(2);
+    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    expect(second.map((w) => w.run_id)).not.toContain("wf_t1"); // settled runs drop out
+  });
+
+  it("broadcasts a running->orphaned transition caused purely by the passage of time (findings 1&2)", () => {
+    // Same defect, manifest-less case: the run never disappears (liveWorkflows
+    // keeps orphans visible) but the client's copy must stop reading "running".
+    const { store, runDir } = makeRun({ agents: ["a1"] }); // no manifest
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery
+    expect(hub.calls.length).toBe(1);
+    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
+
+    const later = NOW + WF_QUIET_MS + 5_000;
+    workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
+    expect(hub.calls.length).toBe(2);
+    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    expect(second.find((w) => w.run_id === "wf_t1")?.state).toBe("orphaned");
+  });
 });
 
 describe("backfillWorkflows", () => {

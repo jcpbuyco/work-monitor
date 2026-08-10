@@ -40,6 +40,15 @@ export function deriveRunState(
  *  pricing.ts. Keys are run ids — once per run, not per tick (§5.5). */
 const warnedRuns = new Set<string>();
 
+/** Last derived state (`running`/`settled`/`orphaned`) broadcast for each run,
+ *  keyed per Store so tests using fresh in-memory stores never see another
+ *  test's residual state. deriveRunState is a pure function of stored fields
+ *  and `now` — the ACTIVE→SETTLED (and running→orphaned) transition fires
+ *  purely from the passage of time, with nothing on disk moving, so it can
+ *  only be caught by comparing against a remembered previous value (§1.4,
+ *  §3.1 "a state transition" is a change that must broadcast). */
+const lastRunState = new WeakMap<Store, Map<string, "running" | "settled" | "orphaned">>();
+
 /** Process-lifetime counter of parse failures, unknown journal line types and
  *  zero-agent manifests. Surfaced as `workflows_degraded` in buildState (§5.9).
  *  Resetting on restart is intended: a restart is how you clear the banner.
@@ -459,7 +468,36 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   }
 
   const dirMoved = !prev || prev.last_seen_at == null || mtime > prev.last_seen_at;
-  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten) return false; // cheap re-stat only
+
+  // Rule 1.4 / §3.1: the ACTIVE→SETTLED (and running→orphaned) transition is
+  // purely time-based — WF_QUIET_MS elapses with nothing on disk moving — so
+  // none of the disk-motion checks above ever see it. Compare the freshly
+  // derived state against the last one we computed for this run and treat a
+  // flip as a change even when nothing else did; otherwise a finished run
+  // never gets re-broadcast and stays "running" on the client forever
+  // (findings 1 & 2).
+  let stateCache = lastRunState.get(store);
+  if (!stateCache) {
+    stateCache = new Map();
+    lastRunState.set(store, stateCache);
+  }
+  let stateChanged = false;
+  let derivedState: "running" | "settled" | "orphaned" | null = null;
+  if (prev) {
+    derivedState = deriveRunState(
+      {
+        manifest_seen: !!prev.manifest_seen,
+        status: prev.status,
+        last_seen_at: mtime,
+        session_status: prev.session_status,
+      },
+      now
+    );
+    stateChanged = stateCache.get(t.run_id) !== derivedState;
+    stateCache.set(t.run_id, derivedState);
+  }
+
+  if (prev && !dirMoved && !grew && !manifestNew && !manifestRewritten) return stateChanged; // cheap re-stat only
 
   const manifest = manifestExists ? parseManifest(readFileSafe(manifestPath)) : null;
   let error: string | null = null;
@@ -569,6 +607,21 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     schema_ok: !error,
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
+
+  // Refresh the state cache with what was just written, so the next tick's
+  // cheap-re-stat comparison (above) starts from an accurate baseline instead
+  // of the pre-scan value. `session_status` isn't otherwise needed on this
+  // path (the scanner deliberately never calls deriveRunState for its own
+  // purposes — see the NOTE above); `prev`'s is close enough for a freshly
+  // discovered or just-rescanned run, and any drift self-corrects on the very
+  // next tick once `prev` is re-read from the row this upsert just wrote.
+  stateCache.set(
+    t.run_id,
+    deriveRunState(
+      { manifest_seen: !!manifest, status: manifest?.status ?? null, last_seen_at: mtime, session_status: prev?.session_status ?? "working" },
+      now
+    )
+  );
 
   // Cross-check §5.8 — PRESENCE, not proportion. Claude Code's `totalTokens` is
   // not comparable to our rollup (24x–276x across 19 manifests), so the only
