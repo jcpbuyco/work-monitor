@@ -71,6 +71,50 @@ export function migrate(db: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id);
     CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      run_id                TEXT PRIMARY KEY,
+      session_id            TEXT NOT NULL,
+      project               TEXT,
+      branch                TEXT,
+      name                  TEXT,
+      summary               TEXT,
+      status                TEXT,
+      error                 TEXT,
+      started_at            INTEGER,
+      ended_at              INTEGER,
+      duration_ms           INTEGER,
+      agent_count           INTEGER,
+      phases                TEXT,
+      cc_version            TEXT,
+      manifest_seen         INTEGER NOT NULL DEFAULT 0,
+      manifest_mtime        INTEGER,
+      last_seen_at          INTEGER,
+      dir                   TEXT NOT NULL,
+      schema_ok             INTEGER NOT NULL DEFAULT 1,
+      total_tokens_reported INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at);
+    CREATE TABLE IF NOT EXISTS workflow_agents (
+      run_id            TEXT NOT NULL,
+      agent_id          TEXT NOT NULL,
+      label             TEXT,
+      phase_index       INTEGER,
+      phase_title       TEXT,
+      idx               INTEGER,
+      model             TEXT,
+      state             TEXT,
+      attempt           INTEGER,
+      journal_key       TEXT,
+      last_tool         TEXT,
+      last_tool_summary TEXT,
+      prompt_preview    TEXT,
+      started_at        INTEGER,
+      ended_at          INTEGER,
+      duration_ms       INTEGER,
+      tool_calls        INTEGER,
+      offset            INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (run_id, agent_id)
+    );
   `);
   // Idempotent: add columns added after the initial schema to pre-existing DBs.
   const sessionCols = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
@@ -91,6 +135,13 @@ export function migrate(db: Database): void {
   if (!usageCols.some((c) => c.name === "branch")) {
     db.exec("ALTER TABLE usage ADD COLUMN branch TEXT;");
   }
+  if (!usageCols.some((c) => c.name === "run_id")) {
+    db.exec("ALTER TABLE usage ADD COLUMN run_id TEXT;");
+  }
+  if (!usageCols.some((c) => c.name === "agent_id")) {
+    db.exec("ALTER TABLE usage ADD COLUMN agent_id TEXT;");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);");
   // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
   db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);
 }

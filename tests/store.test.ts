@@ -172,6 +172,47 @@ describe("Store sessions", () => {
     migrate(db); // second run must not throw or duplicate
     expect(has()).toBe(1);
   });
+
+  it("idempotently creates workflow_runs and workflow_agents on a pre-existing DB", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const hasTable = (n: string) =>
+      (db.query(`SELECT name FROM sqlite_master WHERE type='table' AND name='${n}'`).all() as unknown[]).length;
+    expect(hasTable("workflow_runs")).toBe(1);
+    expect(hasTable("workflow_agents")).toBe(1);
+    // manifest_mtime is what makes an in-place manifest rewrite (C6) re-parse;
+    // the run dir's mtime never moves for it, so nothing else would notice.
+    const runCols = (db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[]).map((c) => c.name);
+    expect(runCols).toContain("manifest_mtime");
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable("workflow_runs")).toBe(1);
+    expect(hasTable("workflow_agents")).toBe(1);
+  });
+
+  it("idempotently adds usage.run_id and usage.agent_id to a pre-existing usage table", () => {
+    const db = new Database(":memory:");
+    // A usage table predating the workflow columns.
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    migrate(db);
+    const has = (col: string) =>
+      (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
+    expect(has("run_id")).toBe(1);
+    expect(has("agent_id")).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has("run_id")).toBe(1);
+    expect(has("agent_id")).toBe(1);
+  });
+
+  it("stores an unknown workflow status verbatim (no enum, no CHECK)", () => {
+    store.db
+      .query(
+        `INSERT INTO workflow_runs (run_id, session_id, status, dir) VALUES ('wf_x', 's1', 'brand-new-status', '/tmp/x')`
+      )
+      .run();
+    const row = store.db.query("SELECT status FROM workflow_runs WHERE run_id = 'wf_x'").get() as { status: string };
+    expect(row.status).toBe("brand-new-status");
+  });
 });
 
 describe("Store todos", () => {
