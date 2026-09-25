@@ -121,7 +121,11 @@ export function buildState(store: StoreType) {
     // A scalar sibling of sessions/todos/activity/stats/cost — NOT nested in cost,
     // and never an array. buildState() must stay under 50ms warm (§1.3;
     // scripts/profile-state.ts measures it) - it must not get slower.
-    workflows_degraded: workflowsDegraded(),
+    // §3: the process-lifetime counter (non-run causes: a broadcast that threw,
+    // a background sweep that failed) plus the persisted, 24h-windowed count of
+    // RUNS with a degraded parsing cause -- the latter survives a restart, the
+    // former resets on one (see workflows.ts's `bumpRunDegraded` doc).
+    workflows_degraded: workflowsDegraded() + store.degradedRunCount(Date.now()),
     cost: {
       ...store.costSummary(startOfLocalDay(Date.now())),
       // All-time attribution for the historical breakdown panel.
@@ -206,6 +210,7 @@ export function createApp(deps: AppDeps) {
           durationMs: cols.durationMs,
           agentId: cols.agentId,
           harness: cols.harness,
+          toolSummary: cols.toolSummary,
         });
         if (type === "stop" || type === "session_end") {
           const info = store.getTailInfo(sessionId);
@@ -243,20 +248,36 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
-      // --- workflow run history; pull, not streamed (live runs use the SSE
+      // --- workflow run LIST; pull, not streamed (live runs use the SSE
       // `workflows` event instead - buildState() must stay under 50ms warm
-      // (§1.3) and must not grow) ---
+      // (§1.3) and must not grow). §3: runs WITHOUT their per-agent array (see
+      // `store.workflowList`'s doc for why), plus `q`/`limit`/`offset`/`total`. ---
       if (method === "GET" && path === "/api/workflows") {
         const num = (v: string | null): number | undefined => {
           const n = v == null ? NaN : Number(v);
           return Number.isFinite(n) ? n : undefined;
         };
-        const runs = store.workflowHistory({
+        const q = url.searchParams.get("q");
+        const { runs, total } = store.workflowList({
+          q: q && q.trim() ? q.trim() : undefined,
           since: num(url.searchParams.get("since")),
           until: num(url.searchParams.get("until")),
           limit: num(url.searchParams.get("limit")),
+          offset: num(url.searchParams.get("offset")),
         });
-        json(res, 200, { runs });
+        json(res, 200, { runs, total });
+        return;
+      }
+
+      // --- one workflow run, WITH its agents (§3) ---
+      const workflowRunMatch = path.match(/^\/api\/workflows\/([^/]+)$/);
+      if (method === "GET" && workflowRunMatch) {
+        const run = store.workflowRunDetail(decodeURIComponent(workflowRunMatch[1]));
+        if (!run) {
+          json(res, 404, { error: "not found" });
+          return;
+        }
+        json(res, 200, run);
         return;
       }
 
@@ -268,7 +289,12 @@ export function createApp(deps: AppDeps) {
           connection: "keep-alive",
         });
         res.write(`event: state\ndata: ${JSON.stringify(buildState(store))}\n\n`);
-        res.write(`event: workflows\ndata: ${JSON.stringify(store.liveWorkflows())}\n\n`);
+        // §3: the wire shape is {runs, last_run} -- see workflowTick's own doc
+        // comment in workflows.ts for why that assembly isn't inside
+        // `Store.liveWorkflows` itself.
+        res.write(
+          `event: workflows\ndata: ${JSON.stringify({ runs: store.liveWorkflows(), last_run: store.lastSettledRun() })}\n\n`
+        );
         sse.add(res);
         return;
       }

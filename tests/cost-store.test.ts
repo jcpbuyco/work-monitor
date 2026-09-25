@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { openDb } from "../src/server/db.ts";
 import { Store } from "../src/server/store.ts";
 import type { Tokens } from "../src/server/pricing.ts";
+import { WF_QUIET_MS } from "../src/server/config.ts";
 
 const tok = (input: number): Tokens => ({ input, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 });
 
@@ -404,5 +405,148 @@ describe("Store usage rows", () => {
   it("liveWorkflows drops runs older than the 24h recheck window", () => {
     store.upsertWorkflowRun({ run_id: "wf_ancient", session_id: "p", dir: "/d/a", started_at: 1, last_seen_at: 1 });
     expect(store.liveWorkflows(1 + 25 * 60 * 60 * 1000)).toEqual([]);
+  });
+
+  it("§3: normalises a left-behind progress/running agent to killed when the RUN's own status is killed or failed", () => {
+    const T = 1_700_000_000_000;
+    store.applyEvent("p", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_k", session_id: "p", dir: "/d/wf_k", status: "killed", manifest_seen: true, last_seen_at: T, started_at: T });
+    store.upsertWorkflowAgent({ run_id: "wf_k", agent_id: "a1", state: "progress" });
+    store.upsertWorkflowAgent({ run_id: "wf_k", agent_id: "a2", state: "running" });
+    store.upsertWorkflowAgent({ run_id: "wf_k", agent_id: "a3", state: "error" }); // untouched
+    store.upsertWorkflowAgent({ run_id: "wf_k", agent_id: "a4", state: "done" }); // untouched
+    const r = store.workflowHistory({}, T + 60 * 60 * 1000)[0];
+    const stateOf = (id: string) => r.agents.find((a) => a.agent_id === id)!.state;
+    expect(stateOf("a1")).toBe("killed");
+    expect(stateOf("a2")).toBe("killed");
+    expect(stateOf("a3")).toBe("error"); // manifest error state stays error
+    expect(stateOf("a4")).toBe("done");
+  });
+
+  it("§3 spec-gap fix (C6): leaves progress/running agents alone while the run itself still reads running, even if status says killed/failed", () => {
+    // wf_3b398ae6-146: a manifest says `failed` while agent transcripts are
+    // still actively appending, then gets rewritten to `completed` minutes
+    // later. During that window the run's DERIVED state is "running" (the dir
+    // is still moving), and normalizing its agents to killed would show
+    // provably-still-working agents as dead.
+    const T = 1_700_000_000_000;
+    store.applyEvent("p", { status: "working", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_c6", session_id: "p", dir: "/d/wf_c6", status: "failed", manifest_seen: true, last_seen_at: T, started_at: T });
+    store.upsertWorkflowAgent({ run_id: "wf_c6", agent_id: "a1", state: "progress" });
+    const r = store.workflowHistory({}, T + 1000)[0]; // 1s later: nowhere near WF_QUIET_MS -> still "running"
+    expect(r.state).toBe("running");
+    expect(r.agents[0].state).toBe("progress"); // NOT normalized to killed while still running
+  });
+
+  it("§3: leaves progress/running agents alone when the run itself is not killed/failed", () => {
+    const T = 1_700_000_000_000;
+    store.applyEvent("p", { status: "working", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_ok", session_id: "p", dir: "/d/wf_ok", status: "completed", manifest_seen: true, last_seen_at: T, started_at: T });
+    store.upsertWorkflowAgent({ run_id: "wf_ok", agent_id: "a1", state: "running" });
+    const r = store.workflowHistory({}, T + 60 * 60 * 1000)[0];
+    expect(r.agents[0].state).toBe("running");
+  });
+
+  it("§3: a running run reports a LIVE duration_ms (now - started_at), not a stale/absent stored one", () => {
+    const T = 1_700_000_000_000;
+    store.applyEvent("p", { status: "working", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_live", session_id: "p", dir: "/d/l", started_at: T, last_seen_at: T, duration_ms: 1234 });
+    const r = store.workflowHistory({}, T + 5000)[0];
+    expect(r.state).toBe("running");
+    expect(r.duration_ms).toBe(5000); // live elapsed, not the stale stored 1234
+  });
+
+  it("§3: persists and surfaces the manifest's own defaultModel/totalToolCalls", () => {
+    store.upsertWorkflowRun({ run_id: "wf_dm", session_id: "p", dir: "/d/dm", started_at: 1, default_model: "claude-fable-5-1", total_tool_calls: 42 });
+    const r = store.workflowHistory({}, 2)[0];
+    expect(r.default_model).toBe("claude-fable-5-1");
+    expect(r.total_tool_calls).toBe(42);
+  });
+});
+
+describe("Store §3: workflowList / workflowRunDetail / lastSettledRun", () => {
+  let store: Store;
+  const T = 1_700_000_000_000;
+  beforeEach(() => {
+    store = new Store(openDb(":memory:"));
+  });
+
+  function seedRun(runId: string, startedAt: number, over: Partial<Parameters<Store["upsertWorkflowRun"]>[0]> = {}) {
+    store.applyEvent("p", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({
+      run_id: runId, session_id: "p", dir: `/d/${runId}`, name: "research", status: "completed",
+      manifest_seen: true, last_seen_at: startedAt, started_at: startedAt, ...over,
+    });
+    store.upsertWorkflowAgent({ run_id: runId, agent_id: "a1", state: "done" });
+    store.upsertWorkflowAgent({ run_id: runId, agent_id: "a2", state: "error" });
+    store.recordUsage({ uuid: `${runId}-1`, sessionId: "p", model: "claude-opus-5", tokens: tok(30), at: startedAt, cost: 3, runId, agentId: "a1" });
+  }
+
+  it("workflowList returns runs WITHOUT agents, with an agent_counts rollup and a total", () => {
+    seedRun("wf_a", T);
+    const { runs, total } = store.workflowList({}, T + 60 * 60 * 1000);
+    expect(total).toBe(1);
+    expect(runs.length).toBe(1);
+    expect((runs[0] as any).agents).toBeUndefined();
+    expect(runs[0].agent_counts).toEqual({ total: 2, done: 1, error: 1, running: 0, abandoned: 0, killed: 0 });
+    expect(runs[0].costUsd).toBeCloseTo(3, 6);
+  });
+
+  it("workflowList's total counts the whole match, independent of limit/offset", () => {
+    seedRun("wf_a", T);
+    seedRun("wf_b", T + 1000);
+    seedRun("wf_c", T + 2000);
+    const page = store.workflowList({ limit: 1, offset: 1 }, T + 60 * 60 * 1000);
+    expect(page.total).toBe(3);
+    expect(page.runs.map((r) => r.run_id)).toEqual(["wf_b"]); // newest-first: c, b, a
+  });
+
+  it("workflowList's q matches a case-insensitive substring of name or project", () => {
+    seedRun("wf_a", T);
+    expect(store.workflowList({ q: "resea" }, T).runs.map((r) => r.run_id)).toEqual(["wf_a"]);
+    expect(store.workflowList({ q: "ALPHA" }, T).runs.map((r) => r.run_id)).toEqual(["wf_a"]);
+    expect(store.workflowList({ q: "nonesuch" }, T).runs).toEqual([]);
+  });
+
+  it("workflowRunDetail returns one run WITH its agents, or null for an unknown run", () => {
+    seedRun("wf_a", T);
+    const run = store.workflowRunDetail("wf_a", T + 60 * 60 * 1000)!;
+    expect(run.run_id).toBe("wf_a");
+    expect(run.agents.map((a) => a.agent_id).sort()).toEqual(["a1", "a2"]);
+    expect(store.workflowRunDetail("nope")).toBeNull();
+  });
+
+  it("lastSettledRun returns the most recently-ended run that actually reads settled", () => {
+    seedRun("wf_older", T, { ended_at: T + 100 });
+    seedRun("wf_newer", T + 1000, { ended_at: T + 1100 });
+    const last = store.lastSettledRun(T + 60 * 60 * 1000)!;
+    expect(last.run_id).toBe("wf_newer");
+    expect(last.name).toBe("research");
+    expect(last.status).toBe("completed");
+    expect(last.costUsd).toBeCloseTo(3, 6);
+  });
+
+  it("lastSettledRun skips a more-recent run that is still running (dir still warm) in favour of an older settled one", () => {
+    seedRun("wf_settled", T, { ended_at: T + 100 });
+    // last_seen_at = started_at = T + 5000 -- recent enough, relative to `now`
+    // below, to still read "running" (quiet needs a full WF_QUIET_MS of silence).
+    seedRun("wf_still_live", T + 5000, { ended_at: T + 5100 });
+    const now = T + WF_QUIET_MS + 1000; // wf_settled is quiet by now; wf_still_live isn't yet
+    expect(store.liveWorkflows(now).map((r) => r.run_id)).toEqual(["wf_still_live"]); // sanity
+    expect(store.lastSettledRun(now)!.run_id).toBe("wf_settled");
+  });
+
+  it("lastSettledRun returns null when there are no runs at all", () => {
+    expect(store.lastSettledRun(T)).toBeNull();
+  });
+
+  it("finds a settled run even behind 25 more-recent still-running ones (spec gap: no arbitrary top-N cap)", () => {
+    seedRun("wf_settled_old", T, { ended_at: T + 100 });
+    const now = T + WF_QUIET_MS + 5000;
+    for (let i = 0; i < 25; i++) {
+      // Newer by end time, but freshly "seen" -- still running relative to `now`.
+      seedRun(`wf_running_${i}`, now - 1000, { ended_at: now + 100_000 });
+    }
+    expect(store.lastSettledRun(now)!.run_id).toBe("wf_settled_old");
   });
 });

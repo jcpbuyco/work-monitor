@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { WorkflowsPage } from "../src/web/components/WorkflowsPage.tsx";
-import type { WorkflowRun } from "../src/web/types.ts";
+import type { WorkflowRun, WorkflowRunSummary } from "../src/web/types.ts";
 
 const T = new Date(2026, 5, 16, 14, 3).getTime();
 
@@ -12,27 +12,51 @@ const agent = (over: Partial<WorkflowRun["agents"][number]>): WorkflowRun["agent
   ...over,
 });
 
-const RUNS: WorkflowRun[] = [
+/** §3: the list endpoint's shape -- no `agents`, an `agent_counts` rollup instead. */
+const RUNS: WorkflowRunSummary[] = [
   {
     run_id: "wf_a", session_id: "s1", project: "alpha", branch: "main", name: "research",
     summary: null, status: "completed", state: "settled", error: null, started_at: T, ended_at: T + 1000,
     duration_ms: 185_000, agent_count: 2, phases: [{ title: "Explore", detail: null }],
     cc_version: "2.1.226", schema_ok: true, total_tokens_reported: 99, costUsd: 2, tokens: 100,
-    agents: [
-      agent({ agent_id: "a1", label: "map-codebase", phase_index: 1, phase_title: "Explore", model: "claude-sonnet-5", tokens: 60, costUsd: 1.5 }),
-      agent({ agent_id: "a2", label: null, phase_index: null, state: "abandoned", tokens: 40, costUsd: 0.5 }),
-    ],
+    agent_counts: { total: 2, done: 1, error: 0, running: 0, abandoned: 1, killed: 0 },
   },
   {
     run_id: "wf_b", session_id: "s2", project: "beta", branch: null, name: null,
     summary: null, status: "brand-new-status", state: "settled", error: null, started_at: T - 86_400_000,
     ended_at: null, duration_ms: null, agent_count: 1, phases: [], cc_version: null, schema_ok: false,
-    total_tokens_reported: null, costUsd: 9, tokens: 900, agents: [agent({ agent_id: "b1" })],
+    total_tokens_reported: null, costUsd: 9, tokens: 900,
+    agent_counts: { total: 1, done: 1, error: 0, running: 0, abandoned: 0, killed: 0 },
   },
 ];
 
-function mockFetch(runs: unknown) {
-  const fn = vi.fn().mockResolvedValue({ json: async () => ({ runs }) });
+/** Full detail (WITH agents) for wf_a, as GET /api/workflows/:runId returns it. */
+const WF_A_DETAIL: WorkflowRun = {
+  ...RUNS[0],
+  agents: [
+    agent({ agent_id: "a1", label: "map-codebase", phase_index: 1, phase_title: "Explore", model: "claude-sonnet-5", tokens: 60, costUsd: 1.5 }),
+    agent({ agent_id: "a2", label: null, phase_index: null, state: "abandoned", tokens: 40, costUsd: 0.5 }),
+  ],
+};
+
+const WF_B_DETAIL: WorkflowRun = { ...RUNS[1], agents: [agent({ agent_id: "b1" })] };
+
+const DETAILS: Record<string, WorkflowRun> = { wf_a: WF_A_DETAIL, wf_b: WF_B_DETAIL };
+
+/** The list endpoint and the per-run detail endpoint share one mocked `fetch`,
+ *  dispatched by URL -- exactly how the real page calls them (§3: the list
+ *  never carries agents; an expanded row fetches its own detail lazily). */
+function mockFetch(runs: unknown, details: Record<string, WorkflowRun> = DETAILS) {
+  const fn = vi.fn(async (url: string) => {
+    const m = /\/api\/workflows\/([^/?]+)$/.exec(url);
+    if (m) {
+      const run = details[decodeURIComponent(m[1])];
+      return run
+        ? { ok: true, json: async () => run }
+        : { ok: false, status: 404, json: async () => ({ error: "not found" }) };
+    }
+    return { ok: true, json: async () => ({ runs, total: Array.isArray(runs) ? runs.length : 0 }) };
+  });
   global.fetch = fn as unknown as typeof fetch;
   return fn;
 }
@@ -59,7 +83,7 @@ describe("WorkflowsPage", () => {
     expect(screen.getByText("completed").getAttribute("data-status-known")).toBe("true");
   });
 
-  it("shows a totals row summing agents, tokens and cost", async () => {
+  it("shows a totals row summing agent_counts, tokens and cost", async () => {
     mockFetch(RUNS);
     render(<WorkflowsPage />);
     await screen.findByText("research");
@@ -68,14 +92,8 @@ describe("WorkflowsPage", () => {
     expect(within(totals).getByText("$11.00")).toBeTruthy(); // 2 + 9
   });
 
-  it("renders a null (unpriced) run/agent cost as text, and excludes it from the totals sum, instead of crashing (§2.3, finding)", async () => {
-    const unpriced: WorkflowRun = {
-      ...RUNS[0],
-      run_id: "wf_u",
-      name: "unpriced-run",
-      costUsd: null,
-      agents: [agent({ agent_id: "u1", costUsd: null })],
-    };
+  it("renders a null (unpriced) run cost as text, and excludes it from the totals sum, instead of crashing (§2.3, finding)", async () => {
+    const unpriced: WorkflowRunSummary = { ...RUNS[0], run_id: "wf_u", name: "unpriced-run", costUsd: null };
     mockFetch([...RUNS, unpriced]);
     render(<WorkflowsPage />);
     await screen.findByText("unpriced-run");
@@ -102,15 +120,61 @@ describe("WorkflowsPage", () => {
     expect(String(fn.mock.calls.at(-1)![0])).not.toContain("since=");
   });
 
-  it("expands a row into per-agent detail grouped under its phase", async () => {
-    mockFetch(RUNS);
+  it("expands a row into per-agent detail grouped under its phase, fetched lazily from GET /api/workflows/:runId (§3)", async () => {
+    const fn = mockFetch(RUNS);
     render(<WorkflowsPage />);
     fireEvent.click(await screen.findByText("research"));
+    expect(await screen.findByText("map-codebase")).toBeTruthy();
     expect(screen.getByText("Phase 1 · Explore")).toBeTruthy();
-    expect(screen.getByText("map-codebase")).toBeTruthy();
     expect(screen.getByText("unphased")).toBeTruthy(); // the NULL phase_index agent groups last
     expect(screen.getByText("a2")).toBeTruthy(); // agentId fallback when label is null
     expect(screen.getByText("Sonnet 5")).toBeTruthy(); // prettyModel
+    // The list fetch, then exactly one detail fetch for the expanded run.
+    expect(fn.mock.calls.some((c) => String(c[0]).endsWith("/api/workflows/wf_a"))).toBe(true);
+  });
+
+  it("shows a loading placeholder while a row's detail fetch is in flight, then fetches only once per run", async () => {
+    let resolveDetail!: (run: WorkflowRun) => void;
+    const fn = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/api/workflows/wf_a")) {
+        return new Promise((resolve) => {
+          resolveDetail = (run) => resolve({ ok: true, json: async () => run });
+        });
+      }
+      return { ok: true, json: async () => ({ runs: RUNS, total: RUNS.length }) };
+    });
+    global.fetch = fn as unknown as typeof fetch;
+    render(<WorkflowsPage />);
+    fireEvent.click(await screen.findByText("research"));
+    expect(await screen.findByText(/loading agents/i)).toBeTruthy();
+    resolveDetail(WF_A_DETAIL);
+    expect(await screen.findByText("map-codebase")).toBeTruthy();
+    // Collapsing and re-expanding must not re-fetch a detail already in hand.
+    fireEvent.click(screen.getByText("research"));
+    fireEvent.click(screen.getByText("research"));
+    expect(await screen.findByText("map-codebase")).toBeTruthy();
+    expect(fn.mock.calls.filter((c) => String(c[0]).endsWith("/api/workflows/wf_a")).length).toBe(1);
+  });
+
+  it("retries a per-row detail fetch that previously failed, on the next expand (§3 minor finding: 'error' must not stick forever)", async () => {
+    let calls = 0;
+    const fn = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/api/workflows/wf_a")) {
+        calls++;
+        if (calls === 1) return { ok: false, status: 500, json: async () => ({ error: "boom" }) };
+        return { ok: true, json: async () => WF_A_DETAIL };
+      }
+      return { ok: true, json: async () => ({ runs: RUNS, total: RUNS.length }) };
+    });
+    global.fetch = fn as unknown as typeof fetch;
+    render(<WorkflowsPage />);
+    fireEvent.click(await screen.findByText("research"));
+    expect(await screen.findByText(/couldn.t load agents/i)).toBeTruthy();
+    // Collapse, then re-expand: a failed detail fetch is retryable, not stuck.
+    fireEvent.click(screen.getByText("research"));
+    fireEvent.click(screen.getByText("research"));
+    expect(await screen.findByText("map-codebase")).toBeTruthy();
+    expect(calls).toBe(2);
   });
 
   it("shows an empty state when there are no runs", async () => {

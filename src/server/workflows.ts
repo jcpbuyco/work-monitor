@@ -103,9 +103,44 @@ export function logOnce(key: string, err: unknown): boolean {
   return true;
 }
 
+/** §3: record that `cause` degraded `run`'s data, in `workflow_runs.degraded`
+ *  (a JSON `{cause: firstSeenAtMs}` map) rather than in process memory. This is
+ *  what makes the bump survive a restart - `warnedRuns` above resets on every
+ *  boot (so a restart's forced cross-check pass logs its console.warn again,
+ *  which is harmless), but the persisted map does not, so that same pass can
+ *  never re-count a cause it already recorded before the restart.
+ *
+ *  Upserts the row (run_id/session_id/dir only) rather than requiring one to
+ *  already exist: a run's very first pass can hit a degraded cause (a manifest
+ *  read error, say) before the main `upsertWorkflowRun` call later in the same
+ *  `scanRun` - that later call's `ON CONFLICT` branch then fills in the rest
+ *  without touching `degraded` (its UPDATE never mentions the column).
+ *
+ *  Returns true only when `cause` was newly recorded for this run - a second
+ *  report of the SAME cause (this tick, a later tick, or after a restart) is a
+ *  no-op. */
+export function bumpRunDegraded(
+  store: Store,
+  run: { run_id: string; session_id: string; dir: string },
+  cause: string,
+  at: number
+): boolean {
+  return store.recordRunDegraded(run, cause, at);
+}
+
 export interface Phase {
   title: string;
   detail: string | null;
+}
+
+/** §3: map a phase TITLE (journal `started.phase`, meta `workflowPhase`) to
+ *  its 1-based index through the run's known phases (manifest, or the script
+ *  header before one exists) -- the same 1-based convention the manifest's own
+ *  `phaseIndex` already uses verbatim. null when the title doesn't match any
+ *  known phase (phases not yet known, or a title that changed shape). */
+export function phaseIndexOf(phases: Phase[], title: string): number | null {
+  const i = phases.findIndex((p) => p.title === title);
+  return i >= 0 ? i + 1 : null;
 }
 
 export interface ManifestAgent {
@@ -123,6 +158,13 @@ export interface ManifestAgent {
   started_at: number | null;
   duration_ms: number | null;
   tool_calls: number | null;
+  /** §3: `error` when present, else `lastAttemptReason` -- both are the same
+   *  "why this agent didn't make it" text, just from a StructuredOutput retry
+   *  cap vs. a hard API error. Persisted into `workflow_agents.error`. */
+  error: string | null;
+  /** e.g. `claude-opus-5-5[1m]` -> `claude-opus-4-8`: the model Claude Code
+   *  actually fell back to after `model` failed. Display only. */
+  fallback_model: string | null;
 }
 
 export interface ManifestView {
@@ -134,9 +176,14 @@ export interface ManifestView {
   duration_ms: number | null;
   agent_count: number | null;
   total_tokens_reported: number | null;
+  total_tool_calls: number | null;
+  default_model: string | null;
   phases: Phase[];
   agents: ManifestAgent[];
   schema_ok: boolean;
+  /** The manifest's own top-level `error` (a script that threw, or was
+   *  killed, before or after spawning agents) -- informational, never a
+   *  parser complaint. null on an ordinary run. */
   error: string | null;
 }
 
@@ -186,12 +233,24 @@ export function parseManifest(text: string): ManifestView | null {
       started_at: num(e?.startedAt),
       duration_ms: num(e?.durationMs),
       tool_calls: num(e?.toolCalls),
+      error: str(e?.error) ?? str(e?.lastAttemptReason),
+      fallback_model: str(e?.fallbackModel),
     });
   }
 
   const endedIso = str(o.timestamp);
   const endedAt = endedIso ? Date.parse(endedIso) : NaN;
-  const zeroAgents = agents.length === 0;
+
+  // §3: agentCount===0 (a script that threw or was killed before ever calling
+  // `agent()`) and a top-level `error` are both ordinary, valid outcomes,
+  // never a parser problem. But a manifest that DECLARES agents (agentCount >
+  // 0) and carries no top-level error, yet yields zero parsable
+  // `workflow_agent` entries, is real format drift (e.g. Claude Code renaming
+  // `workflowProgress`) -- that case must stay schema_ok=false so the
+  // format-drift signal survives, exactly as it did before this section.
+  const topError = str(o.error);
+  const declaredZero = num(o.agentCount) === 0;
+  const schemaOk = agents.length > 0 || declaredZero || topError != null;
 
   return {
     name: str(o.workflowName),
@@ -202,32 +261,51 @@ export function parseManifest(text: string): ManifestView | null {
     duration_ms: num(o.durationMs),
     agent_count: num(o.agentCount),
     total_tokens_reported: num(o.totalTokens),
+    total_tool_calls: num(o.totalToolCalls),
+    default_model: str(o.defaultModel),
     phases,
     agents,
-    schema_ok: !zeroAgents,
-    error: zeroAgents ? "manifest parsed 0 agents" : null,
+    schema_ok: schemaOk,
+    // The manifest's own `error` always wins when present (informational,
+    // never a parser complaint); only when there is none AND schema_ok is
+    // false does this carry the parser's own note about the drift.
+    error: topError ?? (schemaOk ? null : "manifest parsed 0 agents"),
   };
 }
 
-export type AgentState = "running" | "done" | "abandoned";
+export type AgentState = "running" | "done" | "abandoned" | "error";
 
 export interface JournalAgent {
   agent_id: string;
   journal_key: string;
   state: AgentState;
+  /** From the agent's own `started` line -- the manifest's `label`/`phaseTitle`
+   *  outrank this once a manifest exists (§3's precedence: manifest > journal
+   *  `started` > meta), but a live run has no manifest yet. */
+  label: string | null;
+  phase: string | null;
 }
 
-/** Reduce a run's journal.jsonl into per-agent states (§1.3, C7).
+/** Reduce a run's journal.jsonl into per-agent states (§1.3, C7; §3 for
+ *  `launched`/`failed`/label/phase).
  *
  *  `key` is an opaque content hash (`v2:<sha256>`) — a grouping key only, never
  *  rendered. Journal lines carry no timestamp, so FILE ORDER is the tiebreak:
  *  the last agentId seen for a key wins and earlier ones become `abandoned`.
  *  Abandoned agents keep their row so their tokens still attribute.
  *
- *  `started`-without-`result` means running ONLY when no manifest exists. A
- *  completed run legitimately has resultless keys (6 started / 3 result over 6
- *  keys was observed on a completed run) and would otherwise show phantom
- *  running agents forever. */
+ *  `started`-without-`result`/`failed` means running ONLY when no manifest
+ *  exists. A completed run legitimately has resultless keys (6 started / 3
+ *  result over 6 keys was observed on a completed run) and would otherwise
+ *  show phantom running agents forever.
+ *
+ *  `launched` (CC 2.1.265+: always line 0, `{type}` only) marks the run as
+ *  started but names no agent -- skipped entirely, never an unknown type.
+ *  `failed` (`{agentId,key,type}`, no `result`) means the agent hit a hard
+ *  error (API 500/529, a retry cap) rather than finishing; every surveyed
+ *  `failed` line matches a manifest agent with `state:"error"` in a run whose
+ *  overall status was still `completed`, so this must read as `error`, not
+ *  `running`, on a live run with no manifest yet. */
 export function parseJournal(
   lines: string[],
   opts: { manifestPresent: boolean }
@@ -236,6 +314,9 @@ export function parseJournal(
   const keyOrder = new Map<string, string[]>(); // key → agentIds in file order
   const keyOf = new Map<string, string>(); // agentId → key
   const hasResult = new Set<string>(); // agentIds with a result line
+  const hasFailed = new Set<string>(); // agentIds with a failed line
+  const labelOf = new Map<string, string>();
+  const phaseOf = new Map<string, string>();
 
   for (const ln of lines) {
     if (!ln.trim()) continue;
@@ -247,7 +328,8 @@ export function parseJournal(
       continue;
     }
     const type = str(o?.type);
-    if (type !== "started" && type !== "result") {
+    if (type === "launched") continue; // run-started marker, no agent, not a parse issue
+    if (type !== "started" && type !== "result" && type !== "failed") {
       unknownTypes++;
       continue;
     }
@@ -262,6 +344,13 @@ export function parseJournal(
     keyOrder.set(key, seq);
     keyOf.set(id, key);
     if (type === "result") hasResult.add(id);
+    if (type === "failed") hasFailed.add(id);
+    if (type === "started") {
+      const label = str(o?.label);
+      const phase = str(o?.phase);
+      if (label) labelOf.set(id, label);
+      if (phase) phaseOf.set(id, phase);
+    }
   }
 
   const agents = new Map<string, JournalAgent>();
@@ -270,25 +359,45 @@ export function parseJournal(
     for (const id of seq) {
       let state: AgentState;
       if (id !== winner) state = "abandoned";
+      else if (hasFailed.has(id)) state = "error";
       else if (hasResult.has(id)) state = "done";
       else state = opts.manifestPresent ? "done" : "running";
-      agents.set(id, { agent_id: id, journal_key: key, state });
+      agents.set(id, {
+        agent_id: id,
+        journal_key: key,
+        state,
+        label: labelOf.get(id) ?? null,
+        phase: phaseOf.get(id) ?? null,
+      });
     }
   }
   return { agents, unknownTypes };
 }
 
-/** `agent-<id>.meta.json` is 48–65 bytes: {agentType, spawnDepth, model?}.
- *  `model` is usually a bare alias and is DISPLAY ONLY — never a pricing input,
- *  which always reads `message.model` off the transcript line. */
-export function parseAgentMeta(text: string): { agent_type: string | null; model: string | null } {
+/** `agent-<id>.meta.json` is 48–65 bytes on the old (pre-2.1.265) shape --
+ *  `{agentType, spawnDepth, model?}` -- or 7 keys since: adds `description`
+ *  (the manifest's per-agent `label`, e.g. `"audit:packages"`) and
+ *  `workflowPhase` (the phase title, e.g. `"Audit"`). `model` is usually a
+ *  bare alias and is DISPLAY ONLY - never a pricing input, which always reads
+ *  `message.model` off the transcript line. §3's precedence (manifest >
+ *  journal `started` > meta) means `label`/`phase_title` here are the
+ *  last-resort fallback, used only once neither of the other two has an
+ *  answer. */
+export function parseAgentMeta(
+  text: string
+): { agent_type: string | null; model: string | null; label: string | null; phase_title: string | null } {
   let o: any;
   try {
     o = JSON.parse(text);
   } catch {
-    return { agent_type: null, model: null };
+    return { agent_type: null, model: null, label: null, phase_title: null };
   }
-  return { agent_type: str(o?.agentType), model: str(o?.model) };
+  return {
+    agent_type: str(o?.agentType),
+    model: str(o?.model),
+    label: str(o?.description),
+    phase_title: str(o?.workflowPhase),
+  };
 }
 
 /** Read what we need from the head of an agent transcript: the Claude Code
@@ -403,6 +512,12 @@ export interface RunTarget {
 
 const AGENT_RE = /^agent-(.+)\.jsonl$/;
 
+/** §3: bare family aliases a meta file's `model` field carries (never a
+ *  resolved model id) -- the same set the transcript-header re-read gate
+ *  checks the STORED value against, so a live run's alias doesn't stick
+ *  through COALESCE forever once the transcript actually has a real one. */
+const BARE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable", "mythos"]);
+
 // `readdirSafe` already exists from Task 10 (the script lookup uses it).
 
 function readFileSafe(p: string): string {
@@ -445,9 +560,11 @@ const HEADER_READ_CAP = 256 * 1024;
 
 /** Read an agent transcript's header, DOUBLING the read window (8KB, 16KB, …)
  *  until `parseAgentHeader` resolves `model`, the whole file has been read, or
- *  `HEADER_READ_CAP` is hit — whichever comes first. Runs at most once per
- *  agent (the `!offsets.has(id)` gate at the call site), so the extra reads
- *  are a bounded, one-time cost per agent, not a per-tick one.
+ *  `HEADER_READ_CAP` is hit - whichever comes first. The call site (§3) reruns
+ *  this on every FULL pass (never the cheap re-stat) while the stored model
+ *  for the agent is still null or a bare alias, so the extra reads are a
+ *  bounded cost that stops for good the moment a real model id resolves --
+ *  not a per-5s-tick one, since a full pass only happens when the disk moved.
  *
  *  File size is checked via `statSync`, not the decoded string's `.length` —
  *  a multi-byte UTF-8 line (non-English prompt text, emoji, …) decodes to
@@ -610,17 +727,38 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     }
   }
   const manifest = manifestText != null ? parseManifest(manifestText) : null;
+  // A parse failure (invalid JSON) is the only thing that makes this pass's
+  // structure suspect; §3's zero-agent/manifest-`error` runs are ordinary and
+  // valid, so they must never set jsonParseFailed or count as degraded.
+  const jsonParseFailed = manifestExists && manifestText != null && !manifest;
   let error: string | null = null;
   if (manifestReadErr) {
     // Qualified key, like the `:scan` and `:journal-types` causes: an
     // unreadable manifest must not consume the bare run id's one log slot,
     // which belongs to the parse failure.
-    if (logOnce(`${t.run_id}:manifest-read`, manifestReadErr)) bumpDegraded();
-  } else if (manifestExists && !manifest) error = "manifest: not valid JSON";
-  else if (manifest && !manifest.schema_ok) error = manifest.error;
-  // logOnce returns true only on the pass that actually logged; gating the counter
-  // on it makes workflows_degraded once-per-run-per-cause, not once-per-5s-tick.
-  if (error && logOnce(t.run_id, error)) bumpDegraded();
+    if (logOnce(`${t.run_id}:manifest-read`, manifestReadErr)) bumpRunDegraded(store, t, "manifest-read", now);
+  } else if (jsonParseFailed) {
+    error = "manifest: not valid JSON";
+    // logOnce returns true only on the pass that actually logged; gating the
+    // console.warn on it avoids spamming every 5s tick within one process.
+    // The persisted bump (once-per-run-per-cause, cross-restart) runs either way.
+    logOnce(t.run_id, error);
+    bumpRunDegraded(store, t, "manifest-parse", now);
+  } else if (manifest) {
+    // §3: a manifest with agentCount===0 or its own top-level `error` (a
+    // script that threw, or was killed, before or after spawning agents) is a
+    // VALID run, not a parser problem -- persist the manifest's own error
+    // text as information, never bump degraded for it. But a manifest that
+    // DECLARES agents and still parses zero of them (`schema_ok === false`)
+    // is real format drift, not an ordinary outcome, so it degrades the run
+    // exactly like an unparsable manifest -- just under its own cause name, so
+    // it never shares (and so can never suppress) the `manifest-parse` slot.
+    error = manifest.error;
+    if (!manifest.schema_ok) {
+      logOnce(`${t.run_id}:manifest-agents`, error ?? "manifest parsed 0 agents");
+      bumpRunDegraded(store, t, "manifest-agents", now);
+    }
+  }
 
   // STICKY structure (§1.4): a manifest that has ever been seen has been seen.
   // `!!manifest` is this pass's parse result and must never feed state — the
@@ -633,8 +771,12 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
 
   const journalLines = readFileSafe(join(t.dir, "journal.jsonl")).split("\n");
   const { agents: journalAgents, unknownTypes } = parseJournal(journalLines, { manifestPresent: manifestSeen });
-  if (unknownTypes > 0 && logOnce(`${t.run_id}:journal-types`, `${unknownTypes} unknown journal line type(s)`)) {
-    bumpDegraded(unknownTypes);
+  if (unknownTypes > 0) {
+    // Once per run per cause, never scaled by the unknown-line COUNT (§3) --
+    // the persisted bump below already dedupes across ticks and restarts;
+    // logOnce only gates the console.warn.
+    logOnce(`${t.run_id}:journal-types`, `${unknownTypes} unknown journal line type(s)`);
+    bumpRunDegraded(store, t, "journal-types", now);
   }
 
   // The script is the only LIVE source of phase titles; once a manifest exists it
@@ -659,6 +801,17 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // (spec §1.4, finding-3 redo).
   const quiet = now - lastSeenAt > WF_QUIET_MS;
 
+  // Computed BEFORE the agent loop (§3): a journal `started.phase`/meta
+  // `workflowPhase` title needs the run's known phases to resolve its
+  // 1-based index, and the manifest is strictly better than the script once
+  // it exists -- same precedence `phases` always had, just needed earlier now.
+  const phases = manifest?.phases.length ? manifest.phases : script.phases;
+
+  // Stored model per agent, from BEFORE this pass -- the re-read gate below
+  // needs to know whether the value already on disk is a bare alias, which
+  // `offsets` (keyed by agent id, values only offsets) doesn't carry.
+  const storedModels = new Map(store.workflowAgentModels(t.run_id).map((a) => [a.agent_id, a.model]));
+
   let ccVersion: string | null = null;
   let recorded = false;
 
@@ -666,23 +819,38 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     const file = files.find((f) => f.agent_id === id);
     const j = journalAgents.get(id);
     const m = manifestById.get(id);
-    // Read the transcript head only for an agent we have never seen; after that
-    // the header fields never change.
+    // §3: re-read the transcript head not only on first sight, but for as
+    // long as the stored model is NULL or a bare alias (opus/sonnet/haiku/
+    // fable/mythos) -- a live run's meta-file alias sticks through COALESCE
+    // otherwise, since a header read on first sight catches only the user
+    // line (message.model lives on the assistant line that follows). A meta
+    // file with no `model` key at all (only the user line written so far)
+    // leaves the stored value NULL, not an alias -- that case must re-read
+    // too, or the model never resolves until a manifest lands. Once a real
+    // model id is stored, this stops paying for the read.
+    const storedModel = storedModels.get(id);
+    const needsHeaderReread = !offsets.has(id) || storedModel == null || BARE_MODEL_ALIASES.has(storedModel);
     const header =
-      file && !offsets.has(id)
+      file && needsHeaderReread
         ? readAgentHeader(file.path)
         : { cc_version: null, model: null, prompt_preview: null };
     if (!ccVersion && header.cc_version) ccVersion = header.cc_version;
     const meta = file
       ? parseAgentMeta(readFileSafe(file.path.replace(/\.jsonl$/, ".meta.json")))
-      : { agent_type: null, model: null };
+      : { agent_type: null, model: null, label: null, phase_title: null };
+
+    // §3 precedence: manifest > journal `started` > meta. Each fallback level
+    // is used only when every level ABOVE it has nothing -- `m?.x ?? journal
+    // ?? meta ?? null` reads exactly that way, left to right.
+    const phaseTitle = m?.phase_title ?? j?.phase ?? meta.phase_title ?? null;
+    const phaseIndex = m?.phase_index ?? (phaseTitle ? phaseIndexOf(phases, phaseTitle) : null);
 
     store.upsertWorkflowAgent({
       run_id: t.run_id,
       agent_id: id,
-      label: m?.label ?? null, // labels exist only in the manifest — null on a live run
-      phase_index: m?.phase_index ?? null,
-      phase_title: m?.phase_title ?? null,
+      label: m?.label ?? j?.label ?? meta.label ?? null,
+      phase_index: phaseIndex,
+      phase_title: phaseTitle,
       idx: m?.idx ?? null,
       model: m?.model ?? header.model ?? meta.model ?? null,
       // Rule 6: a transcript with no journal mention is running while ACTIVE, done once quiet.
@@ -695,6 +863,8 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
       started_at: m?.started_at ?? null,
       duration_ms: m?.duration_ms ?? null,
       tool_calls: m?.tool_calls ?? null,
+      error: m?.error ?? null,
+      fallback_model: m?.fallback_model ?? null,
     });
 
     if (!file) continue;
@@ -710,7 +880,6 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     if (r.recorded) recorded = true;
   }
 
-  const phases = manifest?.phases.length ? manifest.phases : script.phases;
   store.upsertWorkflowRun({
     run_id: t.run_id,
     session_id: t.session_id,
@@ -718,7 +887,11 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     name: manifest?.name ?? script.name ?? null,
     summary: manifest?.summary ?? null,
     status: manifest?.status ?? null, // RAW
-    error,
+    // A manifest-read error (permissions, a half-replaced file) means this
+    // pass has no opinion on `error` at all -- omit it (undefined, not null)
+    // so upsertWorkflowRun's $errset gate keeps whatever a previous,
+    // successful parse already stored instead of wiping it.
+    error: manifestReadErr ? undefined : error,
     // Before a manifest exists, the dir's birthtime is the best start we have
     // (~42s early on a sample); mtimeMs is the fallback where birthtime is 0.
     // On a pass where the manifest is unreadable, send null so upsert's COALESCE
@@ -735,7 +908,15 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // later fixed in place must still re-trigger on its new mtime.
     manifest_mtime: manifestMtime,
     last_seen_at: lastSeenAt, // the blend — pure disk truth (spec §1.4)
-    schema_ok: !error,
+    default_model: manifest?.default_model ?? null,
+    total_tool_calls: manifest?.total_tool_calls ?? null,
+    // §3: schema_ok tracks structural validity -- a manifest that parses fine
+    // and carries its own `error` (zero agents, a killed run) is still
+    // schema_ok=1; invalid JSON (jsonParseFailed) or a manifest that declares
+    // agents but parses none of them (manifest.schema_ok === false, real
+    // format drift) both flip it to 0. No manifest at all (still running,
+    // nothing to judge yet) stays 1.
+    schema_ok: !jsonParseFailed && manifest?.schema_ok !== false,
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
 
@@ -754,8 +935,9 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
          FROM usage WHERE run_id = $r`
       )
       .get({ $r: t.run_id }) as { t: number };
-    if (row.t === 0 && logOnce(`${t.run_id}:no-tokens`, "manifest reports tokens but no usage rows were ingested")) {
-      bumpDegraded();
+    if (row.t === 0) {
+      logOnce(`${t.run_id}:no-tokens`, "manifest reports tokens but no usage rows were ingested");
+      bumpRunDegraded(store, t, "no-tokens", now);
     }
   }
 
@@ -767,11 +949,9 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // case is reported instead, once, so it is visible rather than silent.
   if (needsCrosscheck) {
     cc.add(t.run_id);
-    if (
-      !manifest &&
-      logOnce(`${t.run_id}:crosscheck-skipped`, "settled with no readable manifest — §5.8 cross-check skipped")
-    ) {
-      bumpDegraded();
+    if (!manifest) {
+      logOnce(`${t.run_id}:crosscheck-skipped`, "settled with no readable manifest - §5.8 cross-check skipped");
+      bumpRunDegraded(store, t, "crosscheck-skipped", now);
     }
   }
 
@@ -818,7 +998,8 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
       // under the BARE run id (§5.5's `error` cause) — sharing that key here
       // would let whichever cause hits first permanently suppress the other's
       // log line and degraded bump for this run (finding 8).
-      if (logOnce(`${t.run_id}:scan`, err)) bumpDegraded();
+      logOnce(`${t.run_id}:scan`, err);
+      bumpRunDegraded(store, t, "scan", now);
     }
   }
   return { changed };
@@ -848,10 +1029,12 @@ export interface BroadcastHub {
  *
  *  Cost when everything is settled: `liveWorkflows` is finding-6's single SQL
  *  query returning no rows (the settled predicate lives in its WHERE clause, so
- *  nothing is hydrated), plus a string compare. `buildState()` (sub-50ms warm,
- *  §1.3) stays off this tick entirely - it never calls
- *  scheduleState()/pushState()/broadcasts "state", because a 5s full-state
- *  broadcast would burn CPU permanently regardless. Usage this
+ *  nothing is hydrated), `lastSettledRun` (§3) is one indexed-enough row lookup
+ *  plus one cost rollup for a single run_id -- never the full per-agent/
+ *  session-status machinery `hydrateWorkflowRuns` would cost -- plus a string
+ *  compare. `buildState()` (sub-50ms warm, §1.3) stays off this tick entirely -
+ *  it never calls scheduleState()/pushState()/broadcasts "state", because a 5s
+ *  full-state broadcast would burn CPU permanently regardless. Usage this
  *  tick records therefore does not reach the cost panels until the next 60s
  *  sweep; that asymmetry is accepted. This is the one place index.ts's
  *  setInterval calls into.
@@ -865,7 +1048,13 @@ export interface BroadcastHub {
 export function workflowTick(store: Store, hub: BroadcastHub, now: number): void {
   try {
     scanWorkflows(store, now);
-    const payload = store.liveWorkflows(now);
+    // §3: the wire payload is `{runs, last_run}`, not the bare array --
+    // `last_run` (the most recent SETTLED run: name/status/ended_at/cost/
+    // run_id) lets the board show something when nothing is live. Assembled
+    // here, at the broadcast boundary, rather than inside `Store.liveWorkflows`
+    // itself, which stays a plain "what's live right now" query used
+    // throughout this file's own tests.
+    const payload = { runs: store.liveWorkflows(now), last_run: store.lastSettledRun(now) };
     const serialized = JSON.stringify(payload);
     if (lastBroadcast.get(store) === serialized) return;
     lastBroadcast.set(store, serialized);
@@ -908,7 +1097,8 @@ export function backfillWorkflows(
         } catch (err) {
           // Qualified key, matching scanWorkflows' catch (finding 8): a
           // manifest-parse failure inside scanRun logs under the bare run id.
-          if (logOnce(`${name}:scan`, err)) bumpDegraded(); // once per run per cause (§5.5)
+          logOnce(`${name}:scan`, err);
+          bumpRunDegraded(store, target, "scan", now); // once per run per cause (§5.5), persisted (§3)
         }
       }
     }

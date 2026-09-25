@@ -81,6 +81,11 @@ export interface EventColumns {
   durationMs: number | null;
   agentId: string | null;
   harness: string;
+  /** §3: the same short one-liner `recentActivity` derives lazily at read
+   *  time, computed here instead so a live `activity` event carrying
+   *  `agent_id` can stamp it straight onto `workflow_agents.last_tool_summary`
+   *  without re-parsing the (already-compacted, by then) payload later. */
+  toolSummary: string | null;
 }
 
 /** Pull the typed `events` columns straight out of the parsed (pre-compaction)
@@ -90,7 +95,8 @@ export function extractEventColumns(payload: Record<string, unknown>): EventColu
   const durationMs =
     typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms) ? payload.duration_ms : null;
   const agentId = typeof payload.agent_id === "string" ? payload.agent_id : null;
-  return { toolName, durationMs, agentId, harness: detectHarness(payload) };
+  const toolSummary = summarizeTool(toolName, payload.tool_input);
+  return { toolName, durationMs, agentId, harness: detectHarness(payload), toolSummary };
 }
 
 /** Minimal harness classification for §1.2's own needs (typed `harness`

@@ -10,6 +10,7 @@ import { Store } from "../src/server/store.ts";
 import { SseHub } from "../src/server/sse.ts";
 import { createApp, buildState, createStateScheduler, shouldApplyGitInfo } from "../src/server/http.ts";
 import { resetDegraded, bumpDegraded, workflowsDegraded } from "../src/server/workflows.ts";
+import { WF_QUIET_MS } from "../src/server/config.ts";
 
 let server: Server;
 let base: string;
@@ -450,28 +451,62 @@ describe("GET /api/workflows", () => {
     store.recordUsage({ uuid: `${runId}-1`, sessionId: "p", model: "claude-opus-5", tokens: z, at: startedAt, cost: 2.5, runId, agentId: "a1" });
   }
 
-  it("returns runs with embedded agents and usage rollups", async () => {
+  it("returns runs WITHOUT agents, plus an agent_counts rollup and total (§3)", async () => {
     seed("wf_a", T);
     const body = (await (await fetch(`${base}/api/workflows`)).json()) as any;
+    expect(body.total).toBe(1);
     expect(body.runs.length).toBe(1);
     expect(body.runs[0].run_id).toBe("wf_a");
     expect(body.runs[0].project).toBe("alpha");
     expect(body.runs[0].costUsd).toBeCloseTo(2.5, 6);
-    expect(body.runs[0].agents[0].agent_id).toBe("a1");
-    expect(body.runs[0].agents[0].costUsd).toBeCloseTo(2.5, 6);
+    expect(body.runs[0].agents).toBeUndefined();
+    expect(body.runs[0].agent_counts).toEqual({ total: 1, done: 1, error: 0, running: 0, abandoned: 0, killed: 0 });
   });
 
-  it("respects since/until/limit", async () => {
+  it("normalizes progress/running agents to killed in agent_counts for a settled killed/failed run, matching the detail view (§3 spec gap)", async () => {
+    store.applyEvent("p2", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({
+      run_id: "wf_killed", session_id: "p2", dir: "/d/wf_killed", name: "research", status: "killed",
+      manifest_seen: true, last_seen_at: T - WF_QUIET_MS - 1, started_at: T,
+    });
+    store.upsertWorkflowAgent({ run_id: "wf_killed", agent_id: "a1", label: "map", state: "progress" });
+    store.upsertWorkflowAgent({ run_id: "wf_killed", agent_id: "a2", label: "scout", state: "done" });
+    const list = (await (await fetch(`${base}/api/workflows?q=research`)).json()) as any;
+    const row = list.runs.find((r: any) => r.run_id === "wf_killed");
+    expect(row.agent_counts).toEqual({ total: 2, done: 1, error: 0, running: 0, abandoned: 0, killed: 1 });
+    const detail = (await (await fetch(`${base}/api/workflows/wf_killed`)).json()) as any;
+    expect(detail.agents.map((a: any) => a.state).sort()).toEqual(["done", "killed"]);
+  });
+
+  it("GET /api/workflows/:runId returns the one run WITH its agents", async () => {
+    seed("wf_a", T);
+    const res = await fetch(`${base}/api/workflows/wf_a`);
+    expect(res.status).toBe(200);
+    const run = (await res.json()) as any;
+    expect(run.run_id).toBe("wf_a");
+    expect(run.agents[0].agent_id).toBe("a1");
+    expect(run.agents[0].costUsd).toBeCloseTo(2.5, 6);
+    expect((await fetch(`${base}/api/workflows/no-such-run`)).status).toBe(404);
+  });
+
+  it("respects since/until/limit/offset and a q substring filter", async () => {
     seed("wf_a", T);
     seed("wf_b", T + 5000);
     const ranged = (await (await fetch(`${base}/api/workflows?since=${T + 1}`)).json()) as any;
     expect(ranged.runs.map((r: any) => r.run_id)).toEqual(["wf_b"]);
     const capped = (await (await fetch(`${base}/api/workflows?limit=1`)).json()) as any;
     expect(capped.runs.length).toBe(1);
+    expect(capped.total).toBe(2); // total counts the whole match, not just this page
+    const offsetPage = (await (await fetch(`${base}/api/workflows?limit=1&offset=1`)).json()) as any;
+    expect(offsetPage.runs.map((r: any) => r.run_id)).toEqual(["wf_a"]); // newest first: wf_b, then wf_a
+    const searched = (await (await fetch(`${base}/api/workflows?q=alpha`)).json()) as any;
+    expect(searched.runs.map((r: any) => r.run_id).sort()).toEqual(["wf_a", "wf_b"]);
+    const missed = (await (await fetch(`${base}/api/workflows?q=nonesuch`)).json()) as any;
+    expect(missed.runs).toEqual([]);
   });
 
   it("ignores malformed params rather than erroring", async () => {
-    const res = await fetch(`${base}/api/workflows?since=abc&until=xyz&limit=nope`);
+    const res = await fetch(`${base}/api/workflows?since=abc&until=xyz&limit=nope&offset=nope`);
     expect(res.status).toBe(200);
     expect(Array.isArray(((await res.json()) as any).runs)).toBe(true);
   });

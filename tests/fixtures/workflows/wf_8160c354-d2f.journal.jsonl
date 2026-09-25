@@ -1,0 +1,14 @@
+{"type":"launched"}
+{"type":"started","key":"v2:2d83f77e20795cfe5b96b520062a2353f90e5136e5b55b39ce74bc17a60917a3","agentId":"a497f6bdb5b6b966d","label":"impl:A1","phase":"A1 perf+events"}
+{"type":"result","key":"v2:2d83f77e20795cfe5b96b520062a2353f90e5136e5b55b39ce74bc17a60917a3","agentId":"a497f6bdb5b6b966d","result":"Redacted summary text for fixture purposes."}
+{"type":"started","key":"v2:adc0e02dda8a1d40dbb0fb5acd63a5b58168e0b9386520bb6a2cd98b9a9aed85","agentId":"a1a95758006b3e77d","label":"review:A1","phase":"A1 perf+events"}
+{"type":"result","key":"v2:adc0e02dda8a1d40dbb0fb5acd63a5b58168e0b9386520bb6a2cd98b9a9aed85","agentId":"a1a95758006b3e77d","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"started","key":"v2:d1058f29b8741f26965173d024d5b515f6de5c87c7c3fa3314f8b853c4c7d630","agentId":"a48ba0f513520eb32","label":"fix:A1","phase":"A1 perf+events"}
+{"type":"result","key":"v2:d1058f29b8741f26965173d024d5b515f6de5c87c7c3fa3314f8b853c4c7d630","agentId":"a48ba0f513520eb32","result":"Redacted summary text for fixture purposes."}
+{"type":"started","key":"v2:fddf676ce7842c155f6b2ae10384bbed8b9ae032ed47eaa81fb5a50d37b3d8f7","agentId":"a72a38c2164466c43","label":"impl:A2","phase":"A2 cost"}
+{"type":"result","key":"v2:fddf676ce7842c155f6b2ae10384bbed8b9ae032ed47eaa81fb5a50d37b3d8f7","agentId":"a72a38c2164466c43","result":"Redacted summary text for fixture purposes."}
+{"type":"started","key":"v2:c593b8c4f3a3b0384c043bc97e75d6520d79454485e37226a1e20ec218393e31","agentId":"a58271d476345e667","label":"review:A2","phase":"A2 cost"}
+{"type":"result","key":"v2:c593b8c4f3a3b0384c043bc97e75d6520d79454485e37226a1e20ec218393e31","agentId":"a58271d476345e667","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"started","key":"v2:316c12e119342a4a471b3f8a7b4757ef5ee7067b40e445f877ae19b9091d7927","agentId":"a0076d6bace4218a1","label":"fix:A2","phase":"A2 cost"}
+{"type":"result","key":"v2:316c12e119342a4a471b3f8a7b4757ef5ee7067b40e445f877ae19b9091d7927","agentId":"a0076d6bace4218a1","result":"Redacted summary text for fixture purposes."}
+{"type":"started","key":"v2:420d411610bff260faf0552644c19e6ebf7e8c4bc428afed08fa3c459c067fde","agentId":"acb68476c7d3a6d61","label":"impl:A3","phase":"A3 workflows"}

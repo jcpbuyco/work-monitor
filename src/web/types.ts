@@ -116,6 +116,10 @@ export interface WorkflowAgentView {
   tokens: number;
   costUsd: number | null;
   unpricedTokens?: number;
+  /** §3: the manifest's per-agent error/lastAttemptReason and fallbackModel.
+   *  OPTIONAL like `unpricedTokens` -- the restart-skew gotcha. */
+  error?: string | null;
+  fallback_model?: string | null;
 }
 
 export interface WorkflowRun {
@@ -138,11 +142,31 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
+  /** §3: the manifest's own defaultModel/totalToolCalls. OPTIONAL, restart-skew. */
+  default_model?: string | null;
+  total_tool_calls?: number | null;
   costUsd: number | null;
   tokens: number;
   unpricedTokens?: number;
   agents: WorkflowAgentView[];
 }
+
+/** §3: per-agent state counts for one run, already killed-normalized --
+ *  see `AgentCounts` server-side. `killed` is not a spec-named bucket, but
+ *  `total` always equals the sum of every bucket, killed included. */
+export interface AgentCounts {
+  total: number;
+  done: number;
+  error: number;
+  running: number;
+  abandoned: number;
+  killed: number;
+}
+
+/** §3: the `/api/workflows` list shape -- `WorkflowRun` minus `agents`, plus a
+ *  cheap `agent_counts` rollup. `GET /api/workflows/:runId` returns a full
+ *  `WorkflowRun` (with `agents`) for one run, fetched lazily on expand. */
+export type WorkflowRunSummary = Omit<WorkflowRun, "agents"> & { agent_counts: AgentCounts };
 
 export interface LiveWorkflow {
   run_id: string;
@@ -159,4 +183,14 @@ export interface LiveWorkflow {
   tokens: number;
   unpricedTokens?: number;
   agents: WorkflowAgentView[];
+}
+
+/** §3: the board's "last run" line for when nothing is live -- carried
+ *  alongside `LiveWorkflow[]` in the "workflows" SSE payload. */
+export interface LastRun {
+  run_id: string;
+  name: string | null;
+  status: string | null;
+  ended_at: number | null;
+  costUsd: number | null;
 }

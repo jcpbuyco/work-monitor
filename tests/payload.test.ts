@@ -82,22 +82,31 @@ describe("compactPayload", () => {
 describe("extractEventColumns", () => {
   it("extracts tool_name, numeric duration_ms, and agent_id", () => {
     const cols = extractEventColumns({ tool_name: "Bash", duration_ms: 1500, agent_id: "a1" });
-    expect(cols).toEqual({ toolName: "Bash", durationMs: 1500, agentId: "a1", harness: "claude" });
+    expect(cols).toEqual({ toolName: "Bash", durationMs: 1500, agentId: "a1", harness: "claude", toolSummary: null });
+  });
+
+  it("also derives a short toolSummary for the §3 live workflow-agent update", () => {
+    const cols = extractEventColumns({ tool_name: "Bash", tool_input: { command: "bun test" } });
+    expect(cols.toolSummary).toBe("bun test");
   });
 
   it("leaves fields null when absent or the wrong type", () => {
-    expect(extractEventColumns({})).toEqual({ toolName: null, durationMs: null, agentId: null, harness: "claude" });
+    expect(extractEventColumns({})).toEqual({
+      toolName: null, durationMs: null, agentId: null, harness: "claude", toolSummary: null,
+    });
     expect(extractEventColumns({ duration_ms: "1500" })).toEqual({
       toolName: null,
       durationMs: null,
       agentId: null,
       harness: "claude",
+      toolSummary: null,
     });
     expect(extractEventColumns({ duration_ms: Number.NaN })).toEqual({
       toolName: null,
       durationMs: null,
       agentId: null,
       harness: "claude",
+      toolSummary: null,
     });
   });
 });

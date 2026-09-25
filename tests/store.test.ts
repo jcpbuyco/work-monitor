@@ -255,9 +255,17 @@ describe("Store sessions", () => {
     // the run dir's mtime never moves for it, so nothing else would notice.
     const runCols = (db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[]).map((c) => c.name);
     expect(runCols).toContain("manifest_mtime");
+    // §3 minor finding: the hook hot-path UPDATE (recordEvent's live-activity
+    // write) and recentActivity's JOIN both look up workflow_agents by
+    // agent_id alone, which needs its own index (the table's PK is
+    // (run_id, agent_id), so agent_id alone isn't covered by it).
+    const hasIndex = (n: string) =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='index' AND name=$n").all({ $n: n }) as unknown[]).length;
+    expect(hasIndex("idx_workflow_agents_agent")).toBe(1);
     migrate(db); // second run must not throw or duplicate
     expect(hasTable("workflow_runs")).toBe(1);
     expect(hasTable("workflow_agents")).toBe(1);
+    expect(hasIndex("idx_workflow_agents_agent")).toBe(1);
   });
 
   it("idempotently adds usage.run_id and usage.agent_id to a pre-existing usage table", () => {
@@ -569,5 +577,135 @@ describe("Store workflows", () => {
 
   it("getWorkflowRun returns null for an unknown run", () => {
     expect(store.getWorkflowRun("nope")).toBeNull();
+  });
+
+  it("workflowAgentModels reads the stored model per agent for a run", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", model: "sonnet" });
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a2", model: null });
+    expect(store.workflowAgentModels("wf_1").sort((a, b) => a.agent_id.localeCompare(b.agent_id))).toEqual([
+      { agent_id: "a1", model: "sonnet" },
+      { agent_id: "a2", model: null },
+    ]);
+  });
+});
+
+describe("Store §3: persisted per-run degraded causes", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  it("recordRunDegraded upserts a run row that doesn't exist yet, from run_id/session_id/dir alone", () => {
+    const first = store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "manifest-parse", 100);
+    expect(first).toBe(true);
+    const row = store.db.query("SELECT session_id, dir, degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row.session_id).toBe("s1");
+    expect(row.dir).toBe("/d/wf_1");
+    expect(JSON.parse(row.degraded)).toEqual({ "manifest-parse": 100 });
+  });
+
+  it("stamps project/branch from the owning session when its own insert is what creates the row (never left NULL forever)", () => {
+    store.applyEvent("s1", { status: "working", project: "alpha", branch: "feat/x", last_activity_at: 1 }, 1);
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "scan", 100);
+    // The run's FIRST-EVER write was a degraded bump, not the main upsert --
+    // upsertWorkflowRun's own ON CONFLICT branch never sets project/branch
+    // (by design, C3/§1.5's "stamped at first sight only"), so this insert
+    // must have stamped them itself, or a later full upsert (which only ever
+    // hits ON CONFLICT once the row exists) could never fix it.
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", name: "research", last_seen_at: 200 });
+    const row = store.db.query("SELECT project, branch, name FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row).toEqual({ project: "alpha", branch: "feat/x", name: "research" });
+  });
+
+  it("returns false and does not move the timestamp on a repeat of the SAME cause", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 100);
+    const second = store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 999);
+    expect(second).toBe(false);
+    const row = store.db.query("SELECT degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(JSON.parse(row.degraded)).toEqual({ scan: 100 }); // unmoved -- a restart must not re-bump
+  });
+
+  it("a later upsertWorkflowRun call never clobbers the degraded column (the main upsert doesn't mention it)", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "manifest-parse", 100);
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", name: "research", last_seen_at: 200 });
+    const row = store.db.query("SELECT name, degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row.name).toBe("research");
+    expect(JSON.parse(row.degraded)).toEqual({ "manifest-parse": 100 });
+  });
+
+  it("degradedRunCount counts distinct RUNS with a cause first seen inside the window, not causes", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "manifest-parse", 100);
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 150); // 2nd cause, same run
+    store.recordRunDegraded({ run_id: "wf_2", session_id: "s1", dir: "/d" }, "no-tokens", 200);
+    expect(store.degradedRunCount(1000, 24 * 60 * 60 * 1000)).toBe(2); // 2 runs, not 3 causes
+  });
+
+  it("degradedRunCount excludes a run whose only causes are older than the window", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    store.recordRunDegraded({ run_id: "wf_old", session_id: "s1", dir: "/d" }, "scan", 0);
+    expect(store.degradedRunCount(dayMs + 1, dayMs)).toBe(0); // aged out
+    store.recordRunDegraded({ run_id: "wf_new", session_id: "s1", dir: "/d" }, "scan", dayMs + 1);
+    expect(store.degradedRunCount(dayMs + 1, dayMs)).toBe(1); // wf_new only
+  });
+
+  it("degradedRunCount is 0 for a fresh store with no degraded runs", () => {
+    expect(store.degradedRunCount(1000)).toBe(0);
+  });
+});
+
+describe("Store §3: live workflow-agent activity from hook events", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  it("an activity event carrying a known workflow agent's agent_id updates last_tool/last_tool_summary/tool_calls/started_at", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running" });
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: 50, agentId: "a1", harness: "claude", toolSummary: "bun test",
+    });
+    const row = store.db
+      .query("SELECT last_tool, last_tool_summary, tool_calls, started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'")
+      .get() as any;
+    expect(row).toEqual({ last_tool: "Bash", last_tool_summary: "bun test", tool_calls: 1, started_at: 1000 });
+
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 2000,
+      toolName: "Read", durationMs: 5, agentId: "a1", harness: "claude", toolSummary: "cost.ts",
+    });
+    const after = store.db
+      .query("SELECT last_tool, last_tool_summary, tool_calls, started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'")
+      .get() as any;
+    // started_at is first-seen only; last_tool/summary/calls reflect the latest.
+    expect(after).toEqual({ last_tool: "Read", last_tool_summary: "cost.ts", tool_calls: 2, started_at: 1000 });
+  });
+
+  it("never overwrites started_at once set, even from an earlier manifest-derived value", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running", started_at: 500 });
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "a1", harness: "claude", toolSummary: null,
+    });
+    const row = store.db.query("SELECT started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'").get() as any;
+    expect(row.started_at).toBe(500);
+  });
+
+  it("is a no-op for an agent_id that isn't a known workflow agent (a Task subagent, or one not yet scanned)", () => {
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "not-a-workflow-agent", harness: "claude", toolSummary: "x",
+    });
+    expect((store.db.query("SELECT COUNT(*) AS c FROM workflow_agents").get() as any).c).toBe(0); // never created a row
+  });
+
+  it("does not touch workflow_agents for a non-activity event type, even with an agent_id", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running" });
+    store.recordEvent({
+      sessionId: "parent", type: "tool_start", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "a1", harness: "claude", toolSummary: "x",
+    });
+    const row = store.db.query("SELECT tool_calls, last_tool FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'").get() as any;
+    expect(row).toEqual({ tool_calls: null, last_tool: null });
   });
 });

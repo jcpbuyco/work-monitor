@@ -4,7 +4,7 @@ import { formatDuration, formatWhen } from "../time.ts";
 import { statusClass, statusKnown, statusGlyphKind } from "../workflowStatus.ts";
 import { PageHeader, Segmented, Chip, Chevron } from "./primitives.tsx";
 import { StatusGlyph } from "./StatusGlyph.tsx";
-import type { WorkflowRun, WorkflowAgentView } from "../types.ts";
+import type { WorkflowRunSummary, WorkflowRun, WorkflowAgentView } from "../types.ts";
 
 type SortKey = "when" | "workflow" | "project" | "status" | "duration" | "agents" | "tokens" | "cost";
 
@@ -20,7 +20,7 @@ const COLS: { key: SortKey; label: string; numeric: boolean }[] = [
   { key: "cost", label: "Cost", numeric: true },
 ];
 
-function sortValue(r: WorkflowRun, key: SortKey): number | string {
+function sortValue(r: WorkflowRunSummary, key: SortKey): number | string {
   switch (key) {
     case "when":
       return r.started_at ?? 0;
@@ -33,7 +33,7 @@ function sortValue(r: WorkflowRun, key: SortKey): number | string {
     case "duration":
       return r.duration_ms ?? 0;
     case "agents":
-      return r.agents.length;
+      return r.agent_counts.total;
     case "tokens":
       return r.tokens;
     case "cost":
@@ -60,10 +60,13 @@ export function WorkflowsPage() {
   // Named `range`, not `window`, exactly as in CostDailyPage: a state variable
   // called `window` shadows the DOM global for the whole component body.
   const [range, setRange] = useState<CostWindow>(14);
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "when", dir: "desc" });
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // §3: the list no longer carries agents -- an expanded row fetches its own
+  // detail from GET /api/workflows/:runId, once, and keeps it here.
+  const [details, setDetails] = useState<Record<string, WorkflowRun | "loading" | "error">>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +77,7 @@ export function WorkflowsPage() {
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
-        setRuns(Array.isArray(body?.runs) ? (body.runs as WorkflowRun[]) : []);
+        setRuns(Array.isArray(body?.runs) ? (body.runs as WorkflowRunSummary[]) : []);
         setStatus("ok");
       })
       .catch(() => {
@@ -100,7 +103,7 @@ export function WorkflowsPage() {
   const totals = useMemo(
     () =>
       sorted.reduce(
-        (t, r) => ({ agents: t.agents + r.agents.length, tokens: t.tokens + r.tokens, cost: t.cost + (r.costUsd ?? 0) }),
+        (t, r) => ({ agents: t.agents + r.agent_counts.total, tokens: t.tokens + r.tokens, cost: t.cost + (r.costUsd ?? 0) }),
         { agents: 0, tokens: 0, cost: 0 }
       ),
     [sorted]
@@ -113,13 +116,28 @@ export function WorkflowsPage() {
         : { key: col.key, dir: col.numeric ? "desc" : "asc" }
     );
 
-  const toggleOpen = (id: string) =>
+  // Fetches the run's agents lazily, once, on its first expand -- the list
+  // endpoint deliberately never carries them (§3). The fetch is a plain side
+  // effect in the event handler body, never inside a `setDetails` updater
+  // function: React.StrictMode (main.tsx) invokes updater functions twice in
+  // development, so a fetch launched from inside one fires twice per click.
+  // "error" is retryable on the next expand rather than sticking forever;
+  // "loading" (an in-flight fetch from a prior click) still short-circuits.
+  const toggleOpen = (id: string) => {
     setOpen((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    const existing = details[id];
+    if (existing && existing !== "error") return; // already fetched, or a fetch is already in flight
+    setDetails((d) => ({ ...d, [id]: "loading" }));
+    fetch(`/api/workflows/${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((run: WorkflowRun) => setDetails((d) => ({ ...d, [id]: run })))
+      .catch(() => setDetails((d) => ({ ...d, [id]: "error" })));
+  };
 
   return (
     <div className="mx-auto max-w-board px-6 pb-16">
@@ -202,34 +220,43 @@ export function WorkflowsPage() {
                       {label}
                     </td>
                     <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{formatDuration(r.duration_ms)}</td>
-                    <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{r.agents.length}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums text-ink-3">{r.agent_counts.total}</td>
                     <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</td>
                     <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink">{formatUsd(r.costUsd)}</td>
                   </tr>,
                   open.has(r.run_id) ? (
                     <tr key={`${r.run_id}-detail`} className="border-b border-border-weak bg-surface-1">
                       <td colSpan={COLS.length} className="px-3 py-2">
-                        {byPhase(r.agents).map((g) => (
-                          <div key={g.title} className="mb-2 last:mb-0">
-                            <div className="text-3xs uppercase tracking-caps text-ink-4">{g.title}</div>
-                            {/* the rail one more time, now as a tree: a hairline
-                                connecting agents under their phase */}
-                            <div className="ml-rail border-l-hairline border-border-weak pl-3">
-                              {g.agents.map((a) => (
-                                <div key={a.agent_id} className="flex h-6 flex-wrap items-center gap-3 text-2xs">
-                                  <span className="font-medium text-ink">{a.label ?? a.agent_id}</span>
-                                  <span className="text-ink-3">{a.model ? prettyModel(a.model) : "—"}</span>
-                                  <span className="text-ink-3">{a.state ?? "—"}</span>
-                                  <span className="text-ink-4">attempt {a.attempt ?? 1}</span>
-                                  <span className="text-ink-4">{formatDuration(a.duration_ms)}</span>
-                                  <span className="tabular-nums slashed-zero text-ink-4">{formatTokens(a.tokens)}</span>
-                                  <span className="tabular-nums slashed-zero text-ink">{formatUsd(a.costUsd)}</span>
-                                  {a.last_tool_summary && <span className="truncate text-working/70">▸ {a.last_tool_summary}</span>}
-                                </div>
-                              ))}
+                        {(() => {
+                          const detail = details[r.run_id];
+                          if (detail === "loading" || detail === undefined) {
+                            return <p className="text-2xs text-ink-4">Loading agents…</p>;
+                          }
+                          if (detail === "error") {
+                            return <p className="text-2xs text-ink-4">Couldn’t load agents.</p>;
+                          }
+                          return byPhase(detail.agents).map((g) => (
+                            <div key={g.title} className="mb-2 last:mb-0">
+                              <div className="text-3xs uppercase tracking-caps text-ink-4">{g.title}</div>
+                              {/* the rail one more time, now as a tree: a hairline
+                                  connecting agents under their phase */}
+                              <div className="ml-rail border-l-hairline border-border-weak pl-3">
+                                {g.agents.map((a) => (
+                                  <div key={a.agent_id} className="flex h-6 flex-wrap items-center gap-3 text-2xs">
+                                    <span className="font-medium text-ink">{a.label ?? a.agent_id}</span>
+                                    <span className="text-ink-3">{a.model ? prettyModel(a.model) : "—"}</span>
+                                    <span className="text-ink-3">{a.state ?? "—"}</span>
+                                    <span className="text-ink-4">attempt {a.attempt ?? 1}</span>
+                                    <span className="text-ink-4">{formatDuration(a.duration_ms)}</span>
+                                    <span className="tabular-nums slashed-zero text-ink-4">{formatTokens(a.tokens)}</span>
+                                    <span className="tabular-nums slashed-zero text-ink">{formatUsd(a.costUsd)}</span>
+                                    {a.last_tool_summary && <span className="truncate text-working/70">▸ {a.last_tool_summary}</span>}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ));
+                        })()}
                       </td>
                     </tr>
                   ) : null,

@@ -100,7 +100,10 @@ export function migrate(db: Database): void {
       last_seen_at          INTEGER,
       dir                   TEXT NOT NULL,
       schema_ok             INTEGER NOT NULL DEFAULT 1,
-      total_tokens_reported INTEGER
+      total_tokens_reported INTEGER,
+      default_model         TEXT,
+      total_tool_calls      INTEGER,
+      degraded              TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at);
     CREATE TABLE IF NOT EXISTS subagents (
@@ -136,9 +139,38 @@ export function migrate(db: Database): void {
       duration_ms       INTEGER,
       tool_calls        INTEGER,
       offset            INTEGER NOT NULL DEFAULT 0,
+      error             TEXT,
+      fallback_model    TEXT,
       PRIMARY KEY (run_id, agent_id)
     );
   `);
+  // §3: workflow fidelity columns added after the initial schema.
+  const workflowRunCols = db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[];
+  if (!workflowRunCols.some((c) => c.name === "default_model")) {
+    db.exec("ALTER TABLE workflow_runs ADD COLUMN default_model TEXT;");
+  }
+  if (!workflowRunCols.some((c) => c.name === "total_tool_calls")) {
+    db.exec("ALTER TABLE workflow_runs ADD COLUMN total_tool_calls INTEGER;");
+  }
+  if (!workflowRunCols.some((c) => c.name === "degraded")) {
+    // JSON object {cause: firstSeenAtMs}, persisted so a restart's forced
+    // cross-check pass never re-bumps a cause already recorded for this run.
+    db.exec("ALTER TABLE workflow_runs ADD COLUMN degraded TEXT;");
+  }
+  const workflowAgentCols = db.query("PRAGMA table_info(workflow_agents)").all() as { name: string }[];
+  if (!workflowAgentCols.some((c) => c.name === "error")) {
+    db.exec("ALTER TABLE workflow_agents ADD COLUMN error TEXT;");
+  }
+  if (!workflowAgentCols.some((c) => c.name === "fallback_model")) {
+    db.exec("ALTER TABLE workflow_agents ADD COLUMN fallback_model TEXT;");
+  }
+  // §3: recordEvent's live-activity UPDATE (every hook event carrying an
+  // agent_id, i.e. every Task/workflow-subagent tool call) and
+  // recentActivity's LEFT JOIN both look up workflow_agents by agent_id alone
+  // -- without this index that is a full table scan on the hot path, growing
+  // with history (the table has no retention).
+  db.exec("CREATE INDEX IF NOT EXISTS idx_workflow_agents_agent ON workflow_agents(agent_id);");
+
   // Idempotent: add columns added after the initial schema to pre-existing DBs.
   const sessionCols = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
   if (!sessionCols.some((c) => c.name === "branch")) {

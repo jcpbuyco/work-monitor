@@ -8,6 +8,7 @@ import {
   utimesSync,
   rmSync,
   chmodSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -113,9 +114,10 @@ describe("parseManifest", () => {
     expect(parseManifest(half)).toBeNull();
   });
 
-  it("keeps status/duration/tokens when workflowProgress is missing, and flags schema_ok=0", () => {
+  it("keeps status/duration/tokens when workflowProgress is missing, and flags schema_ok=0 (§3: agentCount>0 with zero parsed agents is real format drift, not the ordinary zero-agent case)", () => {
     const raw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
     delete raw.workflowProgress;
+    expect(raw.agentCount).toBeGreaterThan(0); // sanity: this fixture DECLARES agents
     const m = parseManifest(JSON.stringify(raw))!;
     expect(m.status).toBe("completed");
     expect(m.duration_ms).toBe(raw.durationMs);
@@ -123,6 +125,31 @@ describe("parseManifest", () => {
     expect(m.agents).toEqual([]);
     expect(m.schema_ok).toBe(false);
     expect(m.error).toBe("manifest parsed 0 agents");
+  });
+
+  it("reads a zero-agent manifest's own top-level error, defaultModel and totalToolCalls (§3)", () => {
+    const m = parseManifest(fixture("wf_1c76cb5a-2a9.manifest.json"))!;
+    expect(m.agent_count).toBe(0);
+    expect(m.agents).toEqual([]);
+    expect(m.schema_ok).toBe(true); // a valid run, not a parser problem
+    expect(m.status).toBe("failed");
+    expect(m.error).toContain("TypeError");
+    expect(m.default_model).toBe("claude-fable-5-1");
+    expect(m.total_tool_calls).toBe(0);
+    expect(m.phases.map((p) => p.title)).toEqual(["Plan", "Execute"]);
+  });
+
+  it("reads per-agent error/lastAttemptReason and fallbackModel (§3)", () => {
+    const raw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    raw.workflowProgress = [
+      { type: "workflow_agent", agentId: "e1", error: "API 529" },
+      { type: "workflow_agent", agentId: "e2", lastAttemptReason: "StructuredOutput retry cap" },
+      { type: "workflow_agent", agentId: "e3", fallbackModel: "claude-opus-4-8" },
+    ];
+    const m = parseManifest(JSON.stringify(raw))!;
+    expect(m.agents.find((a) => a.agent_id === "e1")!.error).toBe("API 529");
+    expect(m.agents.find((a) => a.agent_id === "e2")!.error).toBe("StructuredOutput retry cap");
+    expect(m.agents.find((a) => a.agent_id === "e3")!.fallback_model).toBe("claude-opus-4-8");
   });
 
   it("stores an unknown status string verbatim (C11: `failed` already broke the vocabulary)", () => {
@@ -140,6 +167,7 @@ describe("parseManifest", () => {
         agent_id: "bare", label: null, phase_index: null, phase_title: null, idx: null,
         model: null, state: null, attempt: null, last_tool: null, last_tool_summary: null,
         prompt_preview: null, started_at: null, duration_ms: null, tool_calls: null,
+        error: null, fallback_model: null,
       },
     ]);
   });
@@ -209,6 +237,36 @@ describe("parseJournal", () => {
   it("returns an empty map for an empty journal", () => {
     expect(parseJournal([], { manifestPresent: false }).agents.size).toBe(0);
   });
+
+  it("treats a real CC 2.1.282 `launched` line as the run-started marker, not an unknown type (§3)", () => {
+    // wf_8160c354-d2f: this very workflow's own run (impl:A1/review:A1/fix:A1/
+    // impl:A2/review:A2/fix:A2/impl:A3), captured live -- launched, 7 started
+    // (label/phase), 6 result (the impl:A3 agent, this task, has no result yet).
+    const { agents, unknownTypes } = parseJournal(jlines("wf_8160c354-d2f.journal.jsonl"), { manifestPresent: false });
+    expect(unknownTypes).toBe(0); // `launched` must not count as unknown
+    expect(agents.size).toBe(7);
+    const a1 = agents.get("a497f6bdb5b6b966d")!;
+    expect(a1.label).toBe("impl:A1");
+    expect(a1.phase).toBe("A1 perf+events");
+    expect(a1.state).toBe("done");
+    const running = agents.get("acb68476c7d3a6d61")!; // impl:A3, no result line yet
+    expect(running.label).toBe("impl:A3");
+    expect(running.phase).toBe("A3 workflows");
+    expect(running.state).toBe("running");
+  });
+
+  it("marks a `failed` line's agent as state error, not running, on a manifest-less live run (§3)", () => {
+    // wf_3864dcb6-715 (CC 2.1.270; the journal `failed`/`launched`/label/phase
+    // shape is unchanged through 2.1.282 -- format changed at 2.1.265, per the
+    // research audit): scout:apps hit a hard API error and never got a result.
+    const { agents, unknownTypes } = parseJournal(jlines("wf_3864dcb6-715.journal.jsonl"), { manifestPresent: false });
+    expect(unknownTypes).toBe(0);
+    const failed = agents.get("a9a1411a7db61c172")!;
+    expect(failed.label).toBe("scout:apps");
+    expect(failed.state).toBe("error");
+    // Every other scout finished normally in the same run.
+    expect(agents.get("a1fb4d5c1c1409cd9")!.state).toBe("done");
+  });
 });
 
 describe("parseAgentMeta", () => {
@@ -221,7 +279,14 @@ describe("parseAgentMeta", () => {
     expect(parseAgentMeta(fixture("agent-meta-no-model.json")).model).toBeNull();
   });
   it("returns nulls rather than throwing on malformed JSON", () => {
-    expect(parseAgentMeta("{nope")).toEqual({ agent_type: null, model: null });
+    expect(parseAgentMeta("{nope")).toEqual({ agent_type: null, model: null, label: null, phase_title: null });
+  });
+  it("reads description as label and workflowPhase as phase_title from the real 7-key form (CC 2.1.282)", () => {
+    const m = parseAgentMeta(fixture("agent-meta-7key.json"));
+    expect(m.agent_type).toBe("workflow-subagent");
+    expect(m.label).toBe("impl:A3");
+    expect(m.phase_title).toBe("A3 workflows");
+    expect(m.model).toBe("sonnet");
   });
 });
 
@@ -379,6 +444,105 @@ describe("scanWorkflows", () => {
     expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: 10, tokens: 2_000_000, unpricedTokens: 0 }]);
   });
 
+  it("falls back to the journal's started label/phase on a live, manifest-less run, mapping the title to its 1-based index via the sibling script (§3 precedence)", () => {
+    const journal =
+      JSON.stringify({ type: "launched" }) +
+      "\n" +
+      JSON.stringify({ type: "started", key: "v2:k1", agentId: "a1", label: "map-codebase", phase: "Explore" }) +
+      "\n";
+    const { store } = makeRun({ agents: ["a1"], journal, siblingScript: fixture("script-with-phases.js") });
+    scanWorkflows(store, NOW);
+    const row = store.db
+      .query("SELECT label, phase_title, phase_index FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'")
+      .get() as any;
+    expect(row.label).toBe("map-codebase");
+    expect(row.phase_title).toBe("Explore"); // script-with-phases.js's only phase
+    expect(row.phase_index).toBe(1);
+  });
+
+  it("prefers the manifest's label/phase over the journal's once a manifest lands (§3 precedence)", () => {
+    const journal =
+      JSON.stringify({ type: "started", key: "v2:k1", agentId: "a1", label: "journal-label", phase: "Journal Phase" }) +
+      "\n";
+    const raw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    raw.workflowProgress = [{ type: "workflow_agent", agentId: "a1", label: "manifest-label", phaseIndex: 2, phaseTitle: "Manifest Phase" }];
+    const { store } = makeRun({ agents: ["a1"], journal, manifest: JSON.stringify(raw) });
+    scanWorkflows(store, NOW);
+    const row = store.db
+      .query("SELECT label, phase_title, phase_index FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'")
+      .get() as any;
+    expect(row.label).toBe("manifest-label");
+    expect(row.phase_title).toBe("Manifest Phase");
+    expect(row.phase_index).toBe(2);
+  });
+
+  it("re-reads the transcript header while the stored model is a bare alias, not only on first sight (§3)", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const metaPath = join(runDir, "agent-a1.meta.json");
+    // A live agent's meta carries a bare alias, and its transcript's first line
+    // is the USER line -- no message.model yet (the real-world case: the
+    // assistant line that carries it hasn't been written when this agent is
+    // first discovered).
+    writeFileSync(metaPath, JSON.stringify({ agentType: "workflow-subagent", model: "sonnet" }));
+    writeFileSync(agentPath, JSON.stringify({ uuid: "u-0", message: { role: "user", content: "go" } }) + "\n");
+    scanWorkflows(store, NOW);
+    const modelAfterDiscovery = (
+      store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
+    ).model;
+    expect(modelAfterDiscovery).toBe("sonnet"); // meta alias, since the header had nothing yet
+
+    // The assistant line lands, carrying the real model id.
+    appendFileSync(agentPath, agentLine("u-1"));
+    scanWorkflows(store, NOW);
+    const modelAfterResolve = (
+      store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
+    ).model;
+    expect(modelAfterResolve).toBe("claude-opus-5"); // agentLine()'s real model, not the alias any more
+  });
+
+  it("re-reads the transcript header while the stored model is NULL, not only a bare alias (§3)", () => {
+    // A meta file with no `model` key at all (only `agentType`/`spawnDepth`)
+    // leaves the stored value NULL rather than an alias, and the transcript's
+    // first line is the user line -- no header source resolves anything on
+    // first sight. That NULL must still trigger a re-read on later passes, or
+    // the model never resolves once a manifest lands (or ever, on an
+    // orphaned/manifest-less run).
+    const { store, runDir } = makeRun({ agents: ["a1"] });
+    const agentPath = join(runDir, "agent-a1.jsonl");
+    const metaPath = join(runDir, "agent-a1.meta.json");
+    writeFileSync(metaPath, JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }));
+    writeFileSync(agentPath, JSON.stringify({ uuid: "u-0", message: { role: "user", content: "go" } }) + "\n");
+    scanWorkflows(store, NOW);
+    const modelAfterDiscovery = (
+      store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
+    ).model;
+    expect(modelAfterDiscovery).toBeNull();
+
+    // The assistant line lands, carrying the real model id.
+    appendFileSync(agentPath, agentLine("u-1"));
+    scanWorkflows(store, NOW);
+    const modelAfterResolve = (
+      store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
+    ).model;
+    expect(modelAfterResolve).toBe("claude-opus-5");
+  });
+
+  it("persists a manifest agent's error/lastAttemptReason and fallbackModel into workflow_agents (§3)", () => {
+    const raw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    raw.workflowProgress = [
+      { type: "workflow_agent", agentId: "a1", state: "error", error: "API 529", fallbackModel: "claude-opus-4-8" },
+    ];
+    const { store } = makeRun({ agents: ["a1"], manifest: JSON.stringify(raw) });
+    scanWorkflows(store, NOW);
+    const row = store.db
+      .query("SELECT state, error, fallback_model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'")
+      .get() as any;
+    expect(row.state).toBe("error");
+    expect(row.error).toBe("API 529");
+    expect(row.fallback_model).toBe("claude-opus-4-8");
+  });
+
   it("creates one agent row per transcript file even when the manifest lists fewer", () => {
     // The real 10-entry manifest against the real 13-agentId journal: keying off
     // the manifest would lose 3 agents' tokens.
@@ -517,7 +681,7 @@ describe("scanWorkflows", () => {
     store.applyEvent("parent", { status: "ended", last_activity_at: 1 }, 1); // off the discovery list
     rmSync(root, { recursive: true, force: true }); // any stat would now throw
     expect(scanWorkflows(store, NOW).changed).toBe(false);
-    expect(workflowsDegraded()).toBe(0); // proves the dir was never stat'd
+    expect(store.degradedRunCount(NOW)).toBe(0); // proves the dir was never stat'd
   });
 
   it("survives a truncated manifest with schema_ok=0 and an error, still tailing cost", () => {
@@ -530,20 +694,47 @@ describe("scanWorkflows", () => {
     const row = store.db.query("SELECT schema_ok, error FROM workflow_runs WHERE run_id='wf_t1'").get() as any;
     expect(row.schema_ok).toBe(0);
     expect(row.error).toContain("manifest");
-    // resetDegraded() above also clears logOnce's key memory — the counter is
-    // gated on logOnce returning true, and every test here reuses run id wf_t1.
-    expect(workflowsDegraded()).toBe(1); // once per run per cause, not once per tick
+    // §3: the persisted per-run cause survives a restart, so `resetDegraded()`
+    // (which only clears the console.warn dedup memory) must not affect it.
+    expect(store.degradedRunCount(NOW)).toBe(1); // once per run per cause, not once per tick
     scanWorkflows(store, NOW);
-    expect(workflowsDegraded()).toBe(1); // a second tick over the same broken manifest adds nothing
+    expect(store.degradedRunCount(NOW)).toBe(1); // a second tick over the same broken manifest adds nothing
     const total = store.db.query("SELECT COUNT(*) AS c FROM usage").get() as { c: number };
     expect(total.c).toBe(1); // cost is the durable half — it survives structure breaking
   });
 
+  it("degrades a manifest that declares agents but parses zero of them -- real format drift, not the ordinary zero-agent case (§3)", () => {
+    resetDegraded();
+    const raw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    delete raw.workflowProgress; // valid JSON, agentCount stays > 0, no top-level error
+    const { store } = makeRun({ agents: ["a1"], manifest: JSON.stringify(raw) });
+    scanWorkflows(store, NOW);
+    const row = store.db.query("SELECT schema_ok, error FROM workflow_runs WHERE run_id='wf_t1'").get() as any;
+    expect(row.schema_ok).toBe(0);
+    expect(row.error).toBe("manifest parsed 0 agents");
+    expect(store.degradedRunCount(NOW)).toBe(1);
+    scanWorkflows(store, NOW);
+    expect(store.degradedRunCount(NOW)).toBe(1); // a second tick over the same manifest adds nothing
+  });
+
+  it("does not degrade the ordinary zero-agent/manifest-error cases (§3)", () => {
+    resetDegraded();
+    const { store } = makeRun({ agents: [], manifest: fixture("wf_1c76cb5a-2a9.manifest.json") });
+    scanWorkflows(store, NOW);
+    const row = store.db.query("SELECT schema_ok, error FROM workflow_runs WHERE run_id='wf_t1'").get() as any;
+    expect(row.schema_ok).toBe(1);
+    expect(row.error).toContain("TypeError");
+    expect(store.degradedRunCount(NOW)).toBe(0);
+  });
+
   it("logs a SECOND, unrelated failure cause on the same run rather than swallowing it (finding 8)", () => {
-    // The manifest-parse-failure key (workflows.ts's line ~577) and the
-    // thrown-scan-error key (scanWorkflows' catch) both used the BARE run id,
-    // so whichever cause hit first permanently suppressed logOnce — and hence
-    // bumpDegraded() — for the other, for the rest of the process lifetime.
+    // The manifest-parse-failure cause and the thrown-scan-error cause used to
+    // share the BARE run id as their `logOnce`/`bumpDegraded` key, so whichever
+    // hit first permanently suppressed the other for the rest of the process
+    // lifetime. §3 now persists causes in `workflow_runs.degraded` keyed by
+    // CAUSE NAME (never the bare run id alone), so both survive independently
+    // -- checked here directly, since `degradedRunCount` reports distinct RUNS
+    // (still just the one), not distinct causes.
     resetDegraded();
     const { store, runDir } = makeRun({
       agents: ["a1"],
@@ -555,7 +746,14 @@ describe("scanWorkflows", () => {
     // than NOW - WF_RECHECK_MS, since NOW is a fixed fictitious timestamp.
     setMtime(runDir, NOW - 1000);
     scanWorkflows(store, NOW); // cause 1: manifest parse failure
-    expect(workflowsDegraded()).toBe(1);
+    const causesOf = () =>
+      Object.keys(
+        JSON.parse(
+          (store.db.query("SELECT degraded FROM workflow_runs WHERE run_id='wf_t1'").get() as { degraded: string }).degraded
+        )
+      );
+    expect(causesOf()).toEqual(["manifest-parse"]);
+    expect(store.degradedRunCount(NOW)).toBe(1);
 
     rmSync(runDir, { recursive: true, force: true }); // cause 2: statSync(t.dir) now throws every tick
     let tick = NOW;
@@ -563,7 +761,31 @@ describe("scanWorkflows", () => {
       tick += 5_000;
       scanWorkflows(store, tick);
     }
-    expect(workflowsDegraded()).toBe(2); // a genuinely different cause must still get its own bump
+    expect(causesOf().sort()).toEqual(["manifest-parse", "scan"]); // a genuinely different cause must still get its own bump
+    expect(store.degradedRunCount(tick)).toBe(1); // still one RUN, now with two recorded causes
+  });
+
+  it("never turns a run whose FIRST scan throws into a permanent phantom live entry (minor: recordRunDegraded's stub)", () => {
+    // A dangling wf_* symlink: statSync(t.dir) throws on the very first pass,
+    // before scanRun ever reaches its own upsertWorkflowRun call, so
+    // `recordRunDegraded`'s stub insert (run_id/session_id/dir only, NO
+    // last_seen_at) is the ONLY row this run ever gets.
+    resetDegraded();
+    const { store, sessionDir } = makeRun({ agents: [] });
+    const runsDir = join(sessionDir, "subagents", "workflows");
+    symlinkSync(join(runsDir, "does-not-exist"), join(runsDir, "wf_broken"));
+    scanWorkflows(store, NOW);
+    expect(store.degradedRunCount(NOW)).toBe(1); // the scan cause, recorded once
+    const row = store.db.query("SELECT last_seen_at, manifest_seen FROM workflow_runs WHERE run_id='wf_broken'").get() as any;
+    expect(row.last_seen_at).toBeNull(); // never completed a scan -- structurally can't get one
+    // The stub must never surface as a nameless live/orphaned board entry...
+    expect(store.liveWorkflows(NOW).some((r) => r.run_id === "wf_broken")).toBe(false);
+    // ...nor keep re-entering the table-driven recheck sweep forever.
+    expect(store.workflowRunsToScan(0).some((r) => r.run_id === "wf_broken")).toBe(false);
+    // A second tick (still broken) changes nothing -- no re-bump, still absent.
+    scanWorkflows(store, NOW + 5_000);
+    expect(store.degradedRunCount(NOW + 5_000)).toBe(1);
+    expect(store.liveWorkflows(NOW + 5_000).some((r) => r.run_id === "wf_broken")).toBe(false);
   });
 
   it("converges to changed=false on a manifest that exists but never parses (no 5s re-scan loop)", () => {
@@ -595,7 +817,7 @@ describe("scanWorkflows", () => {
     const recent = NOW - 1000;
     setMtime(runDir, recent);
     scanWorkflows(store, NOW); // discovered while ACTIVE: manifest lands, dir just moved
-    expect(workflowsDegraded()).toBe(0); // not quiet yet — no false positive while legitimately ahead
+    expect(store.degradedRunCount(NOW)).toBe(0); // not quiet yet - no false positive while legitimately ahead
     const usageRows = store.db.query("SELECT COUNT(*) AS c FROM usage WHERE run_id='wf_t1'").get() as { c: number };
     expect(usageRows.c).toBe(0);
 
@@ -604,7 +826,7 @@ describe("scanWorkflows", () => {
     // check §5 has for silently-wrong cost.
     const later = NOW + WF_QUIET_MS + 5_000;
     scanWorkflows(store, later);
-    expect(workflowsDegraded()).toBe(1);
+    expect(store.degradedRunCount(later)).toBe(1);
   });
 });
 
@@ -675,6 +897,10 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     };
   }
 
+  /** §3: the broadcast payload is `{runs, last_run}`, not a bare array --
+   *  every test below reads just the `runs` half through this helper. */
+  const runsOf = (call: { payload: unknown }) => (call.payload as { runs: { run_id: string; state?: string }[] }).runs;
+
   it("broadcasts on the discovery tick(s) only, then ZERO more over a permanently-corrupt manifest", () => {
     resetDegraded();
     const { store } = makeRun({
@@ -720,7 +946,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     workflowTick(store, hub, NOW);
     expect(hub.calls.length).toBe(1);
     expect(hub.calls[0].event).toBe("workflows");
-    const payload = hub.calls[0].payload as { run_id: string }[];
+    const payload = runsOf(hub.calls[0]);
     expect(payload.map((w) => w.run_id)).toContain("wf_t1");
   });
 
@@ -735,13 +961,13 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     const hub = countingHub();
     workflowTick(store, hub, NOW); // discovery
     expect(hub.calls.length).toBe(1);
-    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    const first = runsOf(hub.calls[0]);
     expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
 
     const later = NOW + WF_QUIET_MS + 5_000;
     workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
     expect(hub.calls.length).toBe(2);
-    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    const second = runsOf(hub.calls[1]);
     expect(second.map((w) => w.run_id)).not.toContain("wf_t1"); // settled runs drop out
   });
 
@@ -754,13 +980,13 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     const hub = countingHub();
     workflowTick(store, hub, NOW); // discovery
     expect(hub.calls.length).toBe(1);
-    const first = hub.calls[0].payload as { run_id: string; state: string }[];
+    const first = runsOf(hub.calls[0]);
     expect(first.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
 
     const later = NOW + WF_QUIET_MS + 5_000;
     workflowTick(store, hub, later); // pure clock advance, nothing on disk moved
     expect(hub.calls.length).toBe(2);
-    const second = hub.calls[1].payload as { run_id: string; state: string }[];
+    const second = runsOf(hub.calls[1]);
     expect(second.find((w) => w.run_id === "wf_t1")?.state).toBe("orphaned");
   });
 
@@ -795,7 +1021,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     setMtime(runDir, born); // dir stays put, exactly as on disk
     workflowTick(store, hub, NOW);
     expect(hub.calls.length).toBe(2); // un-settle: real usage landed AND the state flipped back to running
-    const grown = hub.calls[1].payload as { run_id: string; state: string }[];
+    const grown = runsOf(hub.calls[1]);
     expect(grown.find((w) => w.run_id === "wf_t1")?.state).toBe("running");
 
     // Walk the clock forward in ordinary 5s ticks with NOTHING further
@@ -818,7 +1044,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     expect(firstBroadcastElapsed).not.toBeNull();
     expect(firstBroadcastElapsed!).toBeGreaterThanOrEqual(WF_QUIET_MS); // not a moment sooner
     expect(hub.calls.length).toBe(3); // exactly one settle broadcast across the whole walk
-    const settled = hub.calls[2].payload as { run_id: string }[];
+    const settled = runsOf(hub.calls[2]);
     expect(settled.map((w) => w.run_id)).not.toContain("wf_t1"); // settled runs drop out of the live strip
 
     // Further ticks over the same, now-frozen disk state: silence.
@@ -889,7 +1115,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     const settleTick = wroteAt + WF_QUIET_MS + 5_000;
     workflowTick(store, hub, settleTick);
     expect(hub.calls.length).toBe(2);
-    const settled = hub.calls[1].payload as { run_id: string }[];
+    const settled = runsOf(hub.calls[1]);
     expect(settled.map((w) => w.run_id)).not.toContain("wf_t1");
 
     // ...and NEVER un-settle again: size > offset holds forever (the offset
@@ -946,7 +1172,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     // wanted to read is unreadable — otherwise it re-forces a pass forever.
     workflowTick(store, hub, NOW + 5_000);
     expect(fullPasses).toBe(1);
-    const degradedAfterOneShot = workflowsDegraded();
+    const degradedAfterOneShot = store.degradedRunCount(NOW + 5_000);
     expect(degradedAfterOneShot).toBeGreaterThan(0); // the skip IS reported...
 
     // ...and then nothing, ever again: no full pass, no broadcast, no degraded
@@ -959,7 +1185,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     }
     expect(fullPasses).toBe(1);
     expect(hub.calls.length).toBe(1);
-    expect(workflowsDegraded()).toBe(degradedAfterOneShot); // once per run, not per tick
+    expect(store.degradedRunCount(tick)).toBe(degradedAfterOneShot); // once per run, not per tick
     expect(store.getWorkflowRun("wf_t1")!.manifest_seen).toBe(1); // sticky
     expect(store.liveWorkflows(tick)).toEqual([]); // still settled, never orphaned
     chmodSync(manifestPath, 0o600); // leave the temp tree removable
@@ -996,6 +1222,27 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     // Manifest-derived facts must not degrade on an unreadable pass:
     expect(stateOfAx()).toBe("done"); // persisted manifest_seen feeds state, not `!!manifest`
     expect(startedAtOf()).toBe(startedAt); // COALESCE keeps the manifest startTime
+    chmodSync(manifestPath, 0o600); // leave the temp tree removable
+  });
+
+  it("a manifest-read error never wipes a previously-stored manifest `error` (minor finding: upsertWorkflowRun's $errset)", () => {
+    resetDegraded();
+    const { store, runDir, sessionDir } = makeRun({ agents: [], manifest: fixture("wf_1c76cb5a-2a9.manifest.json") });
+    const manifestPath = join(sessionDir, "workflows", "wf_t1.json");
+    const born = NOW - 2 * WF_QUIET_MS; // quiet from a standing start
+    setMtime(runDir, born);
+    setMtime(manifestPath, born);
+    const hub = countingHub();
+    workflowTick(store, hub, NOW); // discovery: manifest parses -- its own `error` (a real TypeError) is stored
+    const errorOf = () =>
+      (store.db.query("SELECT error FROM workflow_runs WHERE run_id='wf_t1'").get() as { error: string | null }).error;
+    expect(errorOf()).toContain("TypeError");
+
+    chmodSync(manifestPath, 0o000); // still THERE, but no longer readable
+    workflowTick(store, hub, NOW + 5_000); // the §5.8 forced pass -- manifestReadErr this time
+    // Must survive verbatim: a read failure has no opinion on `error` and must
+    // never be mistaken for "the manifest no longer reports one".
+    expect(errorOf()).toContain("TypeError");
     chmodSync(manifestPath, 0o600); // leave the temp tree removable
   });
 
@@ -1036,7 +1283,7 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
 
     workflowTick(store, hub, NOW + 10_000);
     expect(hub.calls.length).toBe(2); // exactly one broadcast for one real change
-    const payload = hub.calls[1].payload as { run_id: string; agents: { agent_id: string }[] }[];
+    const payload = runsOf(hub.calls[1]) as unknown as { run_id: string; agents: { agent_id: string }[] }[];
     expect(payload.find((w) => w.run_id === "wf_t1")!.agents.map((a) => a.agent_id).sort()).toEqual(["a1", "a2"]);
     const n = store.db.query("SELECT COUNT(*) AS c FROM workflow_agents WHERE run_id='wf_t1'").get() as { c: number };
     expect(n.c).toBe(2);
@@ -1049,6 +1296,17 @@ describe("workflowTick (the gate that used to live, untested, at index.ts:76)", 
     workflowTick(store, hub, NOW + 15_000);
     workflowTick(store, hub, NOW + 20_000);
     expect(hub.calls.length).toBe(2);
+  });
+
+  it("the broadcast payload carries last_run (§3) so the board can show it once nothing is live", () => {
+    const { store, runDir } = makeRun({ agents: ["a1"], manifest: fixture("wf_eb7bf7e8-8a5.manifest.json") });
+    setMtime(runDir, NOW - 60 * 60 * 1000); // quiet from a standing start -> settles immediately
+    const hub = countingHub();
+    workflowTick(store, hub, NOW);
+    expect(hub.calls.length).toBe(1);
+    const payload = hub.calls[0].payload as { runs: unknown[]; last_run: { run_id: string } | null };
+    expect(payload.runs).toEqual([]); // nothing live
+    expect(payload.last_run?.run_id).toBe("wf_t1"); // the settled run just discovered
   });
 });
 

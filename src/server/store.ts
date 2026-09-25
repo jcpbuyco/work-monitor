@@ -94,6 +94,9 @@ export interface WorkflowRunUpsert {
   last_seen_at?: number | null;
   schema_ok?: boolean;
   total_tokens_reported?: number | null;
+  /** §3: the manifest's own `defaultModel` / `totalToolCalls` -- display only. */
+  default_model?: string | null;
+  total_tool_calls?: number | null;
 }
 
 export interface WorkflowAgentUpsert {
@@ -114,6 +117,10 @@ export interface WorkflowAgentUpsert {
   ended_at?: number | null;
   duration_ms?: number | null;
   tool_calls?: number | null;
+  /** §3: manifest per-agent `error`/`lastAttemptReason` (already merged by the
+   *  caller) and `fallbackModel` -- both display only. */
+  error?: string | null;
+  fallback_model?: string | null;
 }
 
 export interface WorkflowRunScanRow {
@@ -148,6 +155,9 @@ export interface WorkflowAgentView {
    *  `unpricedTokens`, never a fabricated $0.00. */
   costUsd: number | null;
   unpricedTokens: number;
+  /** §3: the manifest's per-agent `error`/`lastAttemptReason`. */
+  error: string | null;
+  fallback_model: string | null;
 }
 
 export interface WorkflowRun {
@@ -168,6 +178,9 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
+  /** §3: display only, from the manifest's own `defaultModel`/`totalToolCalls`. */
+  default_model: string | null;
+  total_tool_calls: number | null;
   /** null only when the run has usage rows and every one of them is unpriced;
    *  0 with no usage rows at all (§2.3). See `unpricedTokens`. */
   costUsd: number | null;
@@ -175,6 +188,28 @@ export interface WorkflowRun {
   unpricedTokens: number;
   agents: WorkflowAgentView[];
 }
+
+/** §3: per-agent `state` counts for one run, rolled up from `workflow_agents`
+ *  with the SAME read-time killed-normalisation `hydrateWorkflowRuns` applies
+ *  to the full agent view (a `progress`/`running` agent left behind by a
+ *  settled `killed`/`failed` run reads as killed here too) -- the list
+ *  endpoint just does it via a cheap join instead of hydrating every agent
+ *  row. `killed` is not one of the spec's named buckets, but is needed so
+ *  `total` always equals the sum of every bucket. */
+export interface AgentCounts {
+  total: number;
+  done: number;
+  error: number;
+  running: number;
+  abandoned: number;
+  killed: number;
+}
+
+/** §3: everything `WorkflowRun` carries except the per-agent array, for the
+ *  `/api/workflows` list -- swaps the (expensive, per-agent) `agents` for a
+ *  cheap `agent_counts` rollup so listing many runs never pays for per-agent
+ *  hydration + usage joins the list view never renders. */
+export type WorkflowRunSummary = Omit<WorkflowRun, "agents"> & { agent_counts: AgentCounts };
 
 export interface LiveWorkflow {
   run_id: string;
@@ -192,6 +227,15 @@ export interface LiveWorkflow {
   tokens: number;
   unpricedTokens: number;
   agents: WorkflowAgentView[];
+}
+
+/** §3: the board's "last run" line for when nothing is live. */
+export interface LastSettledRun {
+  run_id: string;
+  name: string | null;
+  status: string | null;
+  ended_at: number | null;
+  costUsd: number | null;
 }
 
 export class Store {
@@ -305,6 +349,10 @@ export class Store {
     durationMs: number | null;
     agentId: string | null;
     harness: string;
+    /** §3: live workflow-agent motion. Omit for callers that never carry a
+     *  tool summary (harmless -- the workflow_agents update simply no-ops for
+     *  `agentId`s that never got a summary, same as a null tool name). */
+    toolSummary?: string | null;
   }): void {
     this.db.transaction(() => {
       this.db
@@ -333,6 +381,26 @@ export class Store {
                total_ms = total_ms + $ms`
           )
           .run({ $h: e.harness, $tool: e.toolName, $timed: e.durationMs != null ? 1 : 0, $ms: e.durationMs ?? 0 });
+      }
+      // §3: live agent activity. A hook event carrying `agent_id` for an
+      // already-known workflow agent updates its `last_tool`/
+      // `last_tool_summary`/`tool_calls`/`started_at` so a live card shows
+      // real motion before the manifest lands -- matched by agent_id alone
+      // (workflow_agents' PK is (run_id, agent_id), but ids are content
+      // hashes and `recentActivity`'s own join already matches this way).
+      // A no-op (0 rows affected) for any agent_id that isn't a workflow
+      // agent yet (a Task subagent, or one the 5s scan hasn't discovered).
+      if (e.type === "activity" && e.agentId) {
+        this.db
+          .query(
+            `UPDATE workflow_agents
+             SET last_tool = $tool,
+                 last_tool_summary = $summary,
+                 tool_calls = COALESCE(tool_calls, 0) + 1,
+                 started_at = COALESCE(started_at, $at)
+             WHERE agent_id = $agent`
+          )
+          .run({ $tool: e.toolName, $summary: e.toolSummary ?? null, $at: e.at, $agent: e.agentId });
       }
     })();
   }
@@ -947,24 +1015,35 @@ export class Store {
    *  session at FIRST sight only (matching recordUsage's convention) and never
    *  re-stamped. Every other column takes the new value when it is non-null and
    *  keeps the stored one otherwise, so a tick that knows less (no manifest yet)
-   *  cannot blank what an earlier tick learned. */
+   *  cannot blank what an earlier tick learned.
+   *
+   *  `error` is the one exception to "non-null wins, else keep stored": it must
+   *  be CLEARABLE (a manifest that used to fail JSON.parse, or used to carry
+   *  its own `error`, can legitimately go back to null once fixed or rewritten
+   *  in place), so a plain COALESCE would be wrong. But `r.error === undefined`
+   *  (never `null`) means this pass has NO OPINION at all -- specifically a
+   *  manifest-read error, which "leaves structure exactly as it was" (scanRun's
+   *  own rule) and must not wipe a real error a previous, successful parse
+   *  already stored. `$errset` carries that distinction into SQL, since a bound
+   *  parameter can't otherwise tell "explicitly null" from "omitted". */
   upsertWorkflowRun(r: WorkflowRunUpsert): void {
+    const errorGiven = r.error !== undefined;
     this.db
       .query(
         `INSERT INTO workflow_runs
            (run_id, session_id, project, branch, name, summary, status, error, started_at, ended_at,
             duration_ms, agent_count, phases, cc_version, manifest_seen, manifest_mtime, last_seen_at,
-            dir, schema_ok, total_tokens_reported)
+            dir, schema_ok, total_tokens_reported, default_model, total_tool_calls)
          VALUES ($run, $sess,
                  (SELECT project FROM sessions WHERE id = $sess),
                  (SELECT branch FROM sessions WHERE id = $sess),
                  $name, $summary, $status, $error, $started, $ended, $dur, $count, $phases, $ver,
-                 $manifest, $mmtime, $seen, $dir, $ok, $reported)
+                 $manifest, $mmtime, $seen, $dir, $ok, $reported, $defmodel, $ttc)
          ON CONFLICT(run_id) DO UPDATE SET
            name = COALESCE(excluded.name, workflow_runs.name),
            summary = COALESCE(excluded.summary, workflow_runs.summary),
            status = COALESCE(excluded.status, workflow_runs.status),
-           error = excluded.error,
+           error = CASE WHEN $errset = 1 THEN excluded.error ELSE workflow_runs.error END,
            started_at = COALESCE(excluded.started_at, workflow_runs.started_at),
            ended_at = COALESCE(excluded.ended_at, workflow_runs.ended_at),
            duration_ms = COALESCE(excluded.duration_ms, workflow_runs.duration_ms),
@@ -976,7 +1055,9 @@ export class Store {
            last_seen_at = COALESCE(excluded.last_seen_at, workflow_runs.last_seen_at),
            dir = excluded.dir,
            schema_ok = excluded.schema_ok,
-           total_tokens_reported = COALESCE(excluded.total_tokens_reported, workflow_runs.total_tokens_reported)`
+           total_tokens_reported = COALESCE(excluded.total_tokens_reported, workflow_runs.total_tokens_reported),
+           default_model = COALESCE(excluded.default_model, workflow_runs.default_model),
+           total_tool_calls = COALESCE(excluded.total_tool_calls, workflow_runs.total_tool_calls)`
       )
       .run({
         $run: r.run_id,
@@ -984,7 +1065,8 @@ export class Store {
         $name: r.name ?? null,
         $summary: r.summary ?? null,
         $status: r.status ?? null,
-        $error: r.error ?? null,
+        $error: r.error === undefined ? null : r.error, // ignored by the CASE above when $errset = 0
+        $errset: errorGiven ? 1 : 0,
         $started: r.started_at ?? null,
         $ended: r.ended_at ?? null,
         $dur: r.duration_ms ?? null,
@@ -999,7 +1081,69 @@ export class Store {
         $dir: r.dir,
         $ok: r.schema_ok === false ? 0 : 1,
         $reported: r.total_tokens_reported ?? null,
+        $defmodel: r.default_model ?? null,
+        $ttc: r.total_tool_calls ?? null,
       });
+  }
+
+  /** §3: record that `cause` degraded `run`'s data, once, surviving restarts
+   *  (see `bumpRunDegraded` in workflows.ts for the full rationale). Upserts
+   *  the row from just `run_id`/`session_id`/`dir` when it doesn't exist yet
+   *  -- the fuller `upsertWorkflowRun` call later in the same scan pass then
+   *  hits the `ON CONFLICT` branch, which never touches `degraded`. Stamps
+   *  `project`/`branch` from the owning session here too, with the SAME
+   *  subquery `upsertWorkflowRun`'s own INSERT uses: that method's `ON
+   *  CONFLICT` branch never sets those columns (by design -- they're stamped
+   *  at first sight only, §1.5/C3's convention), so if THIS insert is the one
+   *  that actually creates the row, it must stamp them itself or a run whose
+   *  first-ever write is a degraded cause would carry NULL project/branch
+   *  forever. Returns true only when `cause` was newly recorded. */
+  recordRunDegraded(run: { run_id: string; session_id: string; dir: string }, cause: string, at: number): boolean {
+    this.db
+      .query(
+        `INSERT INTO workflow_runs (run_id, session_id, project, branch, dir)
+         VALUES ($run, $sess, (SELECT project FROM sessions WHERE id = $sess), (SELECT branch FROM sessions WHERE id = $sess), $dir)
+         ON CONFLICT(run_id) DO NOTHING`
+      )
+      .run({ $run: run.run_id, $sess: run.session_id, $dir: run.dir });
+    const row = this.db.query(`SELECT degraded FROM workflow_runs WHERE run_id = $run`).get({ $run: run.run_id }) as
+      | { degraded: string | null }
+      | undefined;
+    let causes: Record<string, number> = {};
+    if (row?.degraded) {
+      try {
+        causes = JSON.parse(row.degraded);
+      } catch {
+        causes = {};
+      }
+    }
+    if (causes[cause] != null) return false; // already recorded -- a restart must not re-bump
+    causes[cause] = at;
+    this.db
+      .query(`UPDATE workflow_runs SET degraded = $d WHERE run_id = $run`)
+      .run({ $d: JSON.stringify(causes), $run: run.run_id });
+    return true;
+  }
+
+  /** §3: the banner's counter -- the number of runs with at least one degraded
+   *  cause first recorded within the last `windowMs` (default 24h). A cause's
+   *  timestamp never moves once recorded, so a run simply ages out of the
+   *  count as its causes get older; nothing is ever deleted. */
+  degradedRunCount(now: number, windowMs: number = 24 * 60 * 60 * 1000): number {
+    const rows = this.db.query(`SELECT degraded FROM workflow_runs WHERE degraded IS NOT NULL`).all() as {
+      degraded: string;
+    }[];
+    const cutoff = now - windowMs;
+    let n = 0;
+    for (const r of rows) {
+      try {
+        const causes = JSON.parse(r.degraded) as Record<string, number>;
+        if (Object.values(causes).some((t) => t >= cutoff)) n++;
+      } catch {
+        // A malformed value can't tell us anything; skip rather than crash.
+      }
+    }
+    return n;
   }
 
   /** Insert-or-enrich an agent row. `offset` is deliberately absent from this
@@ -1010,9 +1154,10 @@ export class Store {
       .query(
         `INSERT INTO workflow_agents
            (run_id, agent_id, label, phase_index, phase_title, idx, model, state, attempt, journal_key,
-            last_tool, last_tool_summary, prompt_preview, started_at, ended_at, duration_ms, tool_calls, offset)
+            last_tool, last_tool_summary, prompt_preview, started_at, ended_at, duration_ms, tool_calls, offset,
+            error, fallback_model)
          VALUES ($run, $agent, $label, $pidx, $ptitle, $idx, $model, $state, $attempt, $key,
-                 $tool, $tsum, $prompt, $started, $ended, $dur, $calls, 0)
+                 $tool, $tsum, $prompt, $started, $ended, $dur, $calls, 0, $error, $fallback)
          ON CONFLICT(run_id, agent_id) DO UPDATE SET
            label = COALESCE(excluded.label, workflow_agents.label),
            phase_index = COALESCE(excluded.phase_index, workflow_agents.phase_index),
@@ -1028,7 +1173,9 @@ export class Store {
            started_at = COALESCE(excluded.started_at, workflow_agents.started_at),
            ended_at = COALESCE(excluded.ended_at, workflow_agents.ended_at),
            duration_ms = COALESCE(excluded.duration_ms, workflow_agents.duration_ms),
-           tool_calls = COALESCE(excluded.tool_calls, workflow_agents.tool_calls)`
+           tool_calls = COALESCE(excluded.tool_calls, workflow_agents.tool_calls),
+           error = COALESCE(excluded.error, workflow_agents.error),
+           fallback_model = COALESCE(excluded.fallback_model, workflow_agents.fallback_model)`
       )
       .run({
         $run: a.run_id,
@@ -1048,7 +1195,19 @@ export class Store {
         $ended: a.ended_at ?? null,
         $dur: a.duration_ms ?? null,
         $calls: a.tool_calls ?? null,
+        $error: a.error ?? null,
+        $fallback: a.fallback_model ?? null,
       });
+  }
+
+  /** §3: stored model per agent for a run, for the transcript-header re-read
+   *  gate (needs to know if the value ON DISK is a bare alias) -- kept
+   *  separate from `workflowAgentOffsets` so that method's exact `.toEqual`
+   *  shape (tested directly) never has to change. */
+  workflowAgentModels(runId: string): { agent_id: string; model: string | null }[] {
+    return this.db
+      .query(`SELECT agent_id, model FROM workflow_agents WHERE run_id = $run`)
+      .all({ $run: runId }) as { agent_id: string; model: string | null }[];
   }
 
   private static readonly WF_SCAN_COLS = `r.run_id, r.session_id, r.dir, r.manifest_seen,
@@ -1064,16 +1223,24 @@ export class Store {
     return (row as WorkflowRunScanRow) ?? null;
   }
 
-  /** Runs worth touching this tick: never-seen ones plus anything whose dir moved
-   *  after `cutoff` (= now - WF_RECHECK_MS). Beyond that window a run is final,
-   *  which bounds the re-stat cost regardless of how much history accumulates.
-   *  A purged owning session reads as 'ended' so deriveRunState calls it orphaned. */
+  /** Runs worth touching this tick: anything whose dir moved after `cutoff`
+   *  (= now - WF_RECHECK_MS). Beyond that window a run is final, which bounds
+   *  the re-stat cost regardless of how much history accumulates. A purged
+   *  owning session reads as 'ended' so deriveRunState calls it orphaned.
+   *
+   *  Deliberately excludes `last_seen_at IS NULL` rows: `upsertWorkflowRun`
+   *  always writes a real `lastSeenAt`, so the only way a row can have a NULL
+   *  one is `recordRunDegraded`'s stub insert for a run whose very first scan
+   *  THREW before ever reaching `upsertWorkflowRun` (e.g. a dangling
+   *  `subagents/workflows/wf_*` symlink whose target vanished) -- that row
+   *  never had, and structurally never can have, a completed scan, so
+   *  including it here just re-throws on the same stat forever. */
   workflowRunsToScan(cutoff: number): WorkflowRunScanRow[] {
     return this.db
       .query(
         `SELECT ${Store.WF_SCAN_COLS} FROM workflow_runs r
          LEFT JOIN sessions s ON s.id = r.session_id
-         WHERE r.last_seen_at IS NULL OR r.last_seen_at > $cutoff`
+         WHERE r.last_seen_at > $cutoff`
       )
       .all({ $cutoff: cutoff }) as WorkflowRunScanRow[];
   }
@@ -1088,6 +1255,54 @@ export class Store {
     this.db
       .query(`UPDATE workflow_agents SET offset = $o WHERE run_id = $run AND agent_id = $agent`)
       .run({ $o: offset, $run: runId, $agent: agentId });
+  }
+
+  /** §3: everything about a run EXCEPT its agents/agent_counts -- shared
+   *  verbatim between `hydrateWorkflowRuns` (the full per-agent view) and
+   *  `workflowList` (the cheap per-agent-COUNT view, which deliberately never
+   *  pays for `hydrateWorkflowRuns`' per-agent hydration). Phases parsing,
+   *  state derivation and the live `duration_ms` calc used to be copy-pasted
+   *  between the two, which is exactly how `workflowList`'s `agent_counts`
+   *  silently fell out of sync with the killed-normalisation the full view
+   *  already applied -- extracted so that class of drift can't recur. */
+  private static baseRunFields(
+    r: Record<string, any>,
+    state: "running" | "settled" | "orphaned",
+    cost: { cost: number | null; tokens: number; unpriced: number },
+    now: number
+  ): Omit<WorkflowRun, "agents"> {
+    let phases: { title: string; detail: string | null }[] = [];
+    try {
+      if (r.phases) phases = JSON.parse(r.phases as string);
+    } catch {
+      phases = [];
+    }
+    return {
+      run_id: r.run_id,
+      session_id: r.session_id,
+      project: r.project ?? "unknown", // matches costByProject's bucket
+      branch: r.branch ?? null,
+      name: r.name,
+      summary: r.summary,
+      status: r.status,
+      state,
+      error: r.error,
+      started_at: r.started_at,
+      // §3: a still-running run has no final duration from the manifest yet
+      // -- report the live elapsed time instead of a stale/absent stored one.
+      duration_ms: state === "running" && r.started_at != null ? now - r.started_at : r.duration_ms,
+      ended_at: r.ended_at,
+      agent_count: r.agent_count,
+      phases,
+      cc_version: r.cc_version,
+      schema_ok: r.schema_ok === 1,
+      total_tokens_reported: r.total_tokens_reported,
+      default_model: r.default_model,
+      total_tool_calls: r.total_tool_calls,
+      costUsd: cost.cost,
+      tokens: cost.tokens,
+      unpricedTokens: cost.unpriced,
+    };
   }
 
   /** Turn raw workflow_runs rows into API views: parse `phases` back from JSON,
@@ -1123,6 +1338,51 @@ export class Store {
       byRun.set(r.run_id, { cost, tokens: t.tokens + r.tokens, unpriced: t.unpriced + r.unpriced });
     }
 
+    const sessionStatus = new Map(
+      (this.db.query(`SELECT id, status FROM sessions`).all() as { id: string; status: string }[]).map((s) => [
+        s.id,
+        s.status,
+      ])
+    );
+    // Each run's derived liveness, computed once and shared by both the
+    // agent-state normalisation below and the run objects at the bottom --
+    // recomputing it twice from the same inputs would be redundant, and
+    // splitting it would risk the two disagreeing (§3.1's whole point).
+    const stateByRun = new Map(
+      rows.map((r) => [
+        r.run_id as string,
+        deriveRunState(
+          {
+            manifest_seen: r.manifest_seen === 1,
+            status: r.status,
+            last_seen_at: r.last_seen_at,
+            session_status: sessionStatus.get(r.session_id) ?? "ended",
+          },
+          now
+        ),
+      ])
+    );
+
+    // §3: agent-state normalisation at READ time, keyed by the OWNING run's raw
+    // status -- a `progress`/`running` agent left behind when the run itself
+    // was `killed`/`failed` reads as `killed` (it never got to finish, and
+    // never will); a manifest `error` state is untouched either way. Gated on
+    // the run's DERIVED state being anything but "running" (spec gap fix,
+    // C6): a manifest can say `failed` while agent transcripts are still
+    // actively appending and get rewritten to `completed` minutes later
+    // (`manifestRewritten` in scanRun) -- during that window the run reads
+    // "running" and its agents must too, or the live board would show agents
+    // as killed while they are provably still making progress.
+    const statusByRun = new Map(rows.map((r) => [r.run_id as string, r.status as string | null]));
+    const normalizeAgentState = (runId: string, state: string | null): string | null => {
+      const runStatus = statusByRun.get(runId);
+      const settled = stateByRun.get(runId) !== "running";
+      if (settled && (runStatus === "killed" || runStatus === "failed") && (state === "progress" || state === "running")) {
+        return "killed";
+      }
+      return state;
+    };
+
     const agentRows = this.db
       .query(`SELECT * FROM workflow_agents WHERE run_id IN (${ph}) ORDER BY run_id, idx, agent_id`)
       .all(params) as Record<string, any>[];
@@ -1137,7 +1397,7 @@ export class Store {
         phase_title: a.phase_title,
         idx: a.idx,
         model: a.model,
-        state: a.state,
+        state: normalizeAgentState(a.run_id, a.state),
         attempt: a.attempt,
         last_tool: a.last_tool,
         last_tool_summary: a.last_tool_summary,
@@ -1149,56 +1409,16 @@ export class Store {
         costUsd: roll.cost,
         tokens: roll.tokens,
         unpricedTokens: roll.unpriced,
+        error: a.error,
+        fallback_model: a.fallback_model,
       });
       agentsByRun.set(a.run_id, list);
     }
 
-    const sessionStatus = new Map(
-      (this.db.query(`SELECT id, status FROM sessions`).all() as { id: string; status: string }[]).map((s) => [
-        s.id,
-        s.status,
-      ])
-    );
-
     return rows.map((r) => {
-      let phases: { title: string; detail: string | null }[] = [];
-      try {
-        if (r.phases) phases = JSON.parse(r.phases as string);
-      } catch {
-        phases = [];
-      }
       const roll = byRun.get(r.run_id) ?? { cost: 0, tokens: 0, unpriced: 0 };
-      return {
-        run_id: r.run_id,
-        session_id: r.session_id,
-        project: r.project ?? "unknown", // matches costByProject's bucket
-        branch: r.branch ?? null,
-        name: r.name,
-        summary: r.summary,
-        status: r.status,
-        state: deriveRunState(
-          {
-            manifest_seen: r.manifest_seen === 1,
-            status: r.status,
-            last_seen_at: r.last_seen_at,
-            session_status: sessionStatus.get(r.session_id) ?? "ended",
-          },
-          now
-        ),
-        error: r.error,
-        started_at: r.started_at,
-        ended_at: r.ended_at,
-        duration_ms: r.duration_ms,
-        agent_count: r.agent_count,
-        phases,
-        cc_version: r.cc_version,
-        schema_ok: r.schema_ok === 1,
-        total_tokens_reported: r.total_tokens_reported,
-        costUsd: roll.cost,
-        tokens: roll.tokens,
-        unpricedTokens: roll.unpriced,
-        agents: agentsByRun.get(r.run_id) ?? [],
-      };
+      const state = stateByRun.get(r.run_id)!;
+      return { ...Store.baseRunFields(r, state, roll, now), agents: agentsByRun.get(r.run_id) ?? [] };
     });
   }
 
@@ -1206,7 +1426,19 @@ export class Store {
    *  filter on `started_at` (since inclusive, until exclusive), matching
    *  rangeClause()'s convention; runs with a NULL start drop out whenever either
    *  bound is given. `limit` caps RUNS, not agents, and is clamped to 1..500.
-   *  Agents are embedded: one endpoint, one round trip, no per-row expand fetch. */
+   *  Agents are embedded: one endpoint, one round trip, no per-row expand fetch.
+   *
+   *  §3 superseded this in production -- `workflowList` (agents-less, paginated,
+   *  searchable) plus `workflowRunDetail` (one run WITH agents, on expand) is
+   *  what `GET /api/workflows` and the web page actually use now; nothing in
+   *  `src/` calls this any more. It stays as the direct, no-HTTP-layer way to
+   *  exercise `hydrateWorkflowRuns` (agent embedding, unpriced-cost handling,
+   *  state derivation, killed-normalisation, live duration_ms) with since/
+   *  until/limit filtering that `workflowRunDetail` doesn't need for a single
+   *  run -- removing it would mean re-deriving those same assertions through
+   *  `workflowRunDetail` one run at a time for no behavioural gain, since it is
+   *  a thin, un-duplicated wrapper around the same `hydrateWorkflowRuns` /
+   *  `baseRunFields` those two production paths already share. */
   workflowHistory(
     opts: { since?: number; until?: number; limit?: number } = {},
     now: number = Date.now()
@@ -1243,12 +1475,19 @@ export class Store {
    *  just to throw the results away is exactly the buildState()-sized cost
    *  this method must never grow into. The condition mirrors deriveRunState's
    *  "settled" branch exactly (manifest_seen && quiet); the `.filter()` stays
-   *  as a defensive backstop, not the primary mechanism. */
+   *  as a defensive backstop, not the primary mechanism.
+   *
+   *  `last_seen_at IS NULL` rows are excluded outright, never treated as "live
+   *  forever": `upsertWorkflowRun` always writes a real value, so a NULL one
+   *  can only be `recordRunDegraded`'s stub for a run whose first scan threw
+   *  before completing (a dangling run-dir symlink, say) -- without this it
+   *  would show up as a nameless phantom "orphaned" run on the board forever,
+   *  since nothing can ever complete a scan for it and give it a real one. */
   liveWorkflows(now: number = Date.now()): LiveWorkflow[] {
     const rows = this.db
       .query(
         `SELECT * FROM workflow_runs
-         WHERE (last_seen_at IS NULL OR last_seen_at > $cutoff)
+         WHERE last_seen_at > $cutoff
            AND NOT (manifest_seen = 1 AND (last_seen_at IS NULL OR last_seen_at < $quiet))
          ORDER BY started_at DESC`
       )
@@ -1280,5 +1519,154 @@ export class Store {
           agents: r.agents,
         };
       });
+  }
+
+  /** §3: one run WITH its agents, for `GET /api/workflows/:runId`. null when no
+   *  such run exists. Reuses `hydrateWorkflowRuns` (killed-normalisation, live
+   *  duration_ms and all) for a single row -- the list view avoids this cost
+   *  deliberately (`workflowList` below), but a single expanded run is exactly
+   *  the shape this method already produces well. */
+  workflowRunDetail(runId: string, now: number = Date.now()): WorkflowRun | null {
+    const row = this.db.query(`SELECT * FROM workflow_runs WHERE run_id = $run`).get({ $run: runId }) as
+      | Record<string, any>
+      | undefined;
+    if (!row) return null;
+    return this.hydrateWorkflowRuns([row], now)[0] ?? null;
+  }
+
+  /** §3: the `/api/workflows` list -- runs WITHOUT their per-agent array, plus
+   *  a cheap `agent_counts` rollup, `total` for pagination, and an optional
+   *  `q` substring match against name/project (case-insensitive). Newest
+   *  first; `limit`/`offset` page through it. Deliberately does NOT reuse
+   *  `hydrateWorkflowRuns`: that pays for a full per-agent view (including a
+   *  per-agent usage JOIN) that a run-listing page never renders -- exactly
+   *  the cost this endpoint exists to avoid. */
+  workflowList(
+    opts: { q?: string; since?: number; until?: number; limit?: number; offset?: number } = {},
+    now: number = Date.now()
+  ): { runs: WorkflowRunSummary[]; total: number } {
+    const conds: string[] = [];
+    const params: Record<string, string | number> = {};
+    if (opts.q) {
+      conds.push("(name LIKE $q OR project LIKE $q)");
+      params.$q = `%${opts.q}%`;
+    }
+    // Kept alongside the new §3 params (q/limit/offset/total) rather than
+    // removed -- the workflows page's day-window filter already relies on it
+    // (started_at, same convention as workflowHistory/rangeClause: since
+    // inclusive, until exclusive).
+    if (opts.since !== undefined) {
+      conds.push("started_at >= $since");
+      params.$since = opts.since;
+    }
+    if (opts.until !== undefined) {
+      conds.push("started_at < $until");
+      params.$until = opts.until;
+    }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const total = (this.db.query(`SELECT COUNT(*) AS c FROM workflow_runs ${where}`).get(params) as { c: number }).c;
+    const limit = Math.min(500, Math.max(1, Math.round(opts.limit ?? 50)));
+    const offset = Math.max(0, Math.round(opts.offset ?? 0));
+    const rows = this.db
+      .query(
+        `SELECT * FROM workflow_runs ${where} ORDER BY started_at DESC LIMIT ${limit} OFFSET ${offset}`
+      )
+      .all(params) as Record<string, any>[];
+    if (rows.length === 0) return { runs: [], total };
+
+    const ids = rows.map((r) => r.run_id as string);
+    const ph = ids.map((_, i) => `$r${i}`).join(", ");
+    const idParams: Record<string, string> = {};
+    ids.forEach((id, i) => (idParams[`$r${i}`] = id));
+
+    const costRows = this.db
+      .query(
+        `SELECT run_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
+         FROM usage WHERE run_id IN (${ph}) GROUP BY run_id`
+      )
+      .all(idParams) as { run_id: string; cost: number | null; tokens: number; unpriced: number }[];
+    const costByRun = new Map(costRows.map((r) => [r.run_id, r]));
+
+    // Raw per-run, per-state counts -- finalized into buckets below, once each
+    // run's derived `state` is known, so the killed-normalisation (same rule
+    // as `hydrateWorkflowRuns`) can be applied without a second query.
+    const countRows = this.db
+      .query(`SELECT run_id, state, COUNT(*) AS n FROM workflow_agents WHERE run_id IN (${ph}) GROUP BY run_id, state`)
+      .all(idParams) as { run_id: string; state: string | null; n: number }[];
+    const rawCountsByRun = new Map<string, { state: string | null; n: number }[]>();
+    for (const r of countRows) {
+      const list = rawCountsByRun.get(r.run_id) ?? [];
+      list.push({ state: r.state, n: r.n });
+      rawCountsByRun.set(r.run_id, list);
+    }
+
+    const sessionStatus = new Map(
+      (this.db.query(`SELECT id, status FROM sessions`).all() as { id: string; status: string }[]).map((s) => [
+        s.id,
+        s.status,
+      ])
+    );
+
+    const runs = rows.map((r) => {
+      const state = deriveRunState(
+        {
+          manifest_seen: r.manifest_seen === 1,
+          status: r.status,
+          last_seen_at: r.last_seen_at,
+          session_status: sessionStatus.get(r.session_id) ?? "ended",
+        },
+        now
+      );
+      // §3 + C6 spec-gap fix: a `progress`/`running` agent left behind by a
+      // `killed`/`failed` run reads as killed, but only once the run itself
+      // has stopped moving (state !== "running") -- same gate as
+      // `hydrateWorkflowRuns`, so the list and detail views never disagree.
+      const killedNormalizes = state !== "running" && (r.status === "killed" || r.status === "failed");
+      const counts: AgentCounts = { total: 0, done: 0, error: 0, running: 0, abandoned: 0, killed: 0 };
+      for (const { state: st, n } of rawCountsByRun.get(r.run_id) ?? []) {
+        counts.total += n;
+        if (st === "done") counts.done += n;
+        else if (st === "error") counts.error += n;
+        else if (st === "running" || st === "progress") {
+          if (killedNormalizes) counts.killed += n;
+          else counts.running += n;
+        } else if (st === "abandoned") counts.abandoned += n;
+      }
+      const cost = costByRun.get(r.run_id) ?? { cost: 0, tokens: 0, unpriced: 0 };
+      return { ...Store.baseRunFields(r, state, cost, now), agent_counts: counts };
+    });
+    return { runs, total };
+  }
+
+  /** §3: the board's "last run" line for when nothing is live -- the single
+   *  most recently-ended run that reads SETTLED (raw `ended_at`/`status` alone
+   *  can't tell settled from a run whose dir is still moving, C6).
+   *
+   *  The WHERE clause applies deriveRunState's "settled" rule directly in SQL
+   *  (`manifest_seen && quiet`, its rule 1 -- session status never enters into
+   *  that rule, so this needs no join) rather than hydrating candidate rows
+   *  and filtering in JS: filtering FIRST and ordering second finds the true
+   *  most-recent settled run with no arbitrary candidate cap (the previous
+   *  "top 20 by end time, hope one of them is settled" approach could miss a
+   *  genuinely settled run during a very active stretch with 20+ concurrent
+   *  runs -- a real spec gap, not just a perf one). Cost when something
+   *  qualifies is one indexed-enough row lookup plus one cost rollup over a
+   *  single run_id -- not `hydrateWorkflowRuns`' full per-agent/session-status
+   *  machinery, which this call never needed (only 5 fields ever leave it). */
+  lastSettledRun(now: number = Date.now()): LastSettledRun | null {
+    const row = this.db
+      .query(
+        `SELECT run_id, name, status, ended_at FROM workflow_runs
+         WHERE manifest_seen = 1 AND (last_seen_at IS NULL OR last_seen_at < $quiet)
+         ORDER BY COALESCE(ended_at, started_at) DESC LIMIT 1`
+      )
+      .get({ $quiet: now - WF_QUIET_MS }) as
+      | { run_id: string; name: string | null; status: string | null; ended_at: number | null }
+      | undefined;
+    if (!row) return null;
+    const cost = this.db.query(`SELECT SUM(cost_usd) AS cost FROM usage WHERE run_id = $r`).get({ $r: row.run_id }) as {
+      cost: number | null;
+    };
+    return { run_id: row.run_id, name: row.name, status: row.status, ended_at: row.ended_at, costUsd: cost.cost };
   }
 }
