@@ -794,6 +794,14 @@ export class Store {
     // -- that would defeat §1.3 on exactly the hot path (repeated tailing of an
     // already-recorded message).
     if (inserted) this.usageVersion++;
+    // Claude sends `model` only on SessionStart, so a session already running
+    // when the server starts would never get one. The main agent's own usage
+    // (no agent/run id) is the authoritative running model.
+    if (inserted && !u.agentId && !u.runId) {
+      this.db
+        .query(`UPDATE sessions SET model = $m WHERE id = $s AND model IS NOT $m`)
+        .run({ $m: u.model, $s: u.sessionId });
+    }
     return inserted;
   }
 

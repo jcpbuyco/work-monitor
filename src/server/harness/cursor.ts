@@ -1,5 +1,29 @@
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, readdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { truncate } from "../derive.ts";
+
+const CURSOR_PROJECTS_DIR = join(homedir(), ".cursor", "projects");
+
+/** Locate a Cursor transcript by session id. Cursor sends `transcript_path:
+ *  null` on sessionStart and the first tool events, yet the file already
+ *  exists at `<projects>/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl`; the
+ *  slug is a lossy (sometimes hashed) form of the cwd, so search every project
+ *  dir instead of rebuilding it. One readdir plus one existsSync per project. */
+export function findCursorTranscript(sessionId: string, root: string = CURSOR_PROJECTS_DIR): string | null {
+  if (!/^[\w-]+$/.test(sessionId)) return null;
+  let projects: string[];
+  try {
+    projects = readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const p of projects) {
+    const candidate = join(root, p, "agent-transcripts", sessionId, `${sessionId}.jsonl`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
 /** Bounded read for `cursorIntentFromTranscript` - real transcripts put the
  *  first `role:"user"` line at (or very near) the top of the file, so this

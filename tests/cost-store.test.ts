@@ -20,6 +20,15 @@ describe("Store usage rows", () => {
     expect(summary.perSession.s1.costUsd).toBeCloseTo(0.5, 6);
   });
 
+  it("stamps the session's model from its main-agent usage, never from subagent rows", () => {
+    store.applyEvent("s1", { status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-opus-5-5", tokens: tok(1), at: 1, cost: 0 });
+    expect(store.listSessions()[0].model).toBe("claude-opus-5-5");
+    store.recordUsage({ uuid: "m2", sessionId: "s1", model: "claude-sonnet-5", tokens: tok(1), at: 2, cost: 0, agentId: "a1" });
+    store.recordUsage({ uuid: "m3", sessionId: "s1", model: "claude-haiku-4-5", tokens: tok(1), at: 3, cost: 0, runId: "wf_1", agentId: "a2" });
+    expect(store.listSessions()[0].model).toBe("claude-opus-5-5");
+  });
+
   it("tracks and updates the per-session usage offset", () => {
     store.applyEvent("s1", { status: "working", transcript_path: "/tmp/x.jsonl", last_activity_at: 1 }, 1);
     expect(store.getTailInfo("s1")).toEqual({

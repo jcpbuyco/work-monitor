@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeCursorPayload, cursorIntentFromTranscript } from "../src/server/harness/cursor.ts";
+import { normalizeCursorPayload, cursorIntentFromTranscript, findCursorTranscript } from "../src/server/harness/cursor.ts";
 
 // Real captured payloads (redacted), cursor.md §1b.
 const SESSION_START = {
@@ -173,5 +173,34 @@ describe("cursorIntentFromTranscript (§4.3: headless mode fires no prompt event
     const p = join(dir, "empty.jsonl");
     writeFileSync(p, "");
     expect(cursorIntentFromTranscript(p)).toBeNull();
+  });
+});
+
+describe("findCursorTranscript (early events carry transcript_path: null)", () => {
+  let root: string | undefined;
+  afterEach(() => {
+    if (root) rmSync(root, { recursive: true, force: true });
+    root = undefined;
+  });
+
+  it("finds <root>/<slug>/agent-transcripts/<id>/<id>.jsonl by session id", () => {
+    root = mkdtempSync(join(tmpdir(), "am-cursor-projects-"));
+    const dir = join(root, "home-me-projects-app", "agent-transcripts", "abc-123");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "abc-123.jsonl"), "");
+    mkdirSync(join(root, "other-project", "agent-transcripts"), { recursive: true });
+    expect(findCursorTranscript("abc-123", root)).toBe(join(dir, "abc-123.jsonl"));
+  });
+
+  it("is null when no project holds the id, or the root is missing", () => {
+    root = mkdtempSync(join(tmpdir(), "am-cursor-projects-"));
+    expect(findCursorTranscript("nope", root)).toBeNull();
+    expect(findCursorTranscript("nope", join(root, "missing"))).toBeNull();
+  });
+
+  it("rejects ids that could escape the projects root", () => {
+    root = mkdtempSync(join(tmpdir(), "am-cursor-projects-"));
+    expect(findCursorTranscript("../x", root)).toBeNull();
+    expect(findCursorTranscript("", root)).toBeNull();
   });
 });

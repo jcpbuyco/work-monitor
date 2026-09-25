@@ -12,7 +12,12 @@ import type { Store as StoreType } from "./store.ts";
 import { createThrottle, type Throttled } from "./throttle.ts";
 import { STATE_THROTTLE_MS } from "./config.ts";
 import { compactPayload, extractEventColumns } from "./payload.ts";
-import { normalizeIncomingEvent, resolveParentSessionId, cursorIntentFromTranscript } from "./harness/index.ts";
+import {
+  normalizeIncomingEvent,
+  resolveParentSessionId,
+  cursorIntentFromTranscript,
+  findCursorTranscript,
+} from "./harness/index.ts";
 
 export interface AppDeps {
   store: Store;
@@ -223,11 +228,13 @@ export function createApp(deps: AppDeps) {
 
           // §4.3: Cursor's headless mode fires no prompt event, so its
           // current_intent can only come from its own transcript - try once
-          // a transcript_path is known, and only while the session genuinely
+          // a transcript is known (early events carry transcript_path: null, so
+          // look the file up by session id), and only while the session genuinely
           // has no intent yet (never overwrite a real one, and this stops
           // re-reading the transcript on every later event once it succeeds).
           if (normalized.harness === "cursor" && !patch.current_intent && !existing?.current_intent) {
-            const transcriptPath = event.transcript_path ?? existing?.transcript_path ?? null;
+            const transcriptPath =
+              event.transcript_path ?? existing?.transcript_path ?? findCursorTranscript(sessionId);
             if (transcriptPath) {
               const intent = cursorIntentFromTranscript(transcriptPath);
               if (intent) patch.current_intent = intent;

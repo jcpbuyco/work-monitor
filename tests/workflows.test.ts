@@ -507,6 +507,15 @@ describe("scanWorkflows", () => {
       store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
     ).model;
     expect(modelAfterResolve).toBe("claude-opus-5"); // agentLine()'s real model, not the alias any more
+
+    // A later pass skips the header read (the stored model is real now). The
+    // meta alias must not overwrite the resolved id on that pass.
+    appendFileSync(agentPath, agentLine("u-2"));
+    scanWorkflows(store, NOW);
+    const modelAfterNextPass = (
+      store.db.query("SELECT model FROM workflow_agents WHERE run_id='wf_t1' AND agent_id='a1'").get() as any
+    ).model;
+    expect(modelAfterNextPass).toBe("claude-opus-5");
   });
 
   it("re-reads the transcript header while the stored model is NULL, not only a bare alias (§3)", () => {

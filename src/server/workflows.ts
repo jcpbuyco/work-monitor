@@ -852,7 +852,9 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
       phase_index: phaseIndex,
       phase_title: phaseTitle,
       idx: m?.idx ?? null,
-      model: m?.model ?? header.model ?? meta.model ?? null,
+      // A resolved id already stored outranks the meta alias: passes that skip
+      // the header read would otherwise write the alias back over it.
+      model: m?.model ?? header.model ?? (needsHeaderReread ? null : storedModel) ?? meta.model ?? null,
       // Rule 6: a transcript with no journal mention is running while ACTIVE, done once quiet.
       state: m?.state ?? j?.state ?? (file ? (quiet ? "done" : "running") : null),
       attempt: m?.attempt ?? null,
