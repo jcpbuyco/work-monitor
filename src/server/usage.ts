@@ -12,6 +12,23 @@ export interface ParsedUsage {
    *  parent transcript line on this machine does. The parent tail path skips
    *  these so a future fold-into-parent cannot double-charge (§1.5). */
   sidechain: boolean;
+  /** `message.id`, when present. Claude Code writes one JSONL line per content
+   *  block (thinking/text/tool_use) and repeats `message.usage` on every one of
+   *  them; this is the field that ties those lines back to the single API
+   *  message they came from (§2.2). Null on lines with no message id. */
+  messageId: string | null;
+  /** Top-level `requestId`, when present. Combined with `messageId` into
+   *  `message_key` -- `requestId` alone disambiguates the rare case of a
+   *  reused message id (2 collisions in 30,296 groups on real data). */
+  requestId: string | null;
+}
+
+/** `message_key` for one Claude usage line (§2.2): `message.id + ":" +
+ *  (requestId ?? "")`, or null when the line has no message id -- those lines
+ *  keep the old per-line `message_uuid` dedup only (recordUsage's plain
+ *  INSERT OR IGNORE path). */
+export function claudeMessageKey(messageId: string | null, requestId: string | null): string | null {
+  return messageId ? `${messageId}:${requestId ?? ""}` : null;
 }
 
 /** Parse one transcript JSONL line into priced usage, or null if it carries none.
@@ -38,7 +55,9 @@ export function parseUsageLine(line: string): ParsedUsage | null {
   };
   const at = o.timestamp ? Date.parse(o.timestamp) : NaN;
   const sidechain = o?.isSidechain === true || o?.agentId != null;
-  return { uuid, model: msg.model, tokens, at: Number.isFinite(at) ? at : 0, sidechain };
+  const messageId = typeof msg.id === "string" ? msg.id : null;
+  const requestId = typeof o?.requestId === "string" ? o.requestId : null;
+  return { uuid, model: msg.model, tokens, at: Number.isFinite(at) ? at : 0, sidechain, messageId, requestId };
 }
 
 /** Read new complete lines from a transcript at `path`, price them, and record
@@ -94,6 +113,10 @@ export function takeUsage(
       if (!ln.trim()) continue;
       const parsed = parseUsageLine(ln);
       if (!parsed) continue;
+      // §2.1: `<synthetic>` lines carry no real spend (0 tokens) and are not a
+      // priced model -- skip before recording so they generate no row and no
+      // "unknown model" warning, instead of a permanent $0.00 row.
+      if (parsed.model === "<synthetic>") continue;
       // Double-count guard (§1.5): on the parent path, a line marked as a
       // subagent's (isSidechain / agentId) belongs to an agent-*.jsonl we tail
       // separately. A no-op today — 0 such lines exist in any parent transcript —
@@ -110,6 +133,9 @@ export function takeUsage(
         cost: costOf(parsed.model, parsed.tokens),
         runId: t.runId,
         agentId: t.agentId,
+        // §2.2: ties every content-block line of one API message back together
+        // so the store can upsert instead of inserting one priced row per line.
+        messageKey: claudeMessageKey(parsed.messageId, parsed.requestId),
       });
       if (ok) recorded = true;
     }

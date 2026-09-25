@@ -37,7 +37,7 @@ function sortValue(r: WorkflowRun, key: SortKey): number | string {
     case "tokens":
       return r.tokens;
     case "cost":
-      return r.costUsd;
+      return r.costUsd ?? -1; // unpriced sorts below every priced amount, never confused with a real $0
   }
 }
 
@@ -100,7 +100,7 @@ export function WorkflowsPage() {
   const totals = useMemo(
     () =>
       sorted.reduce(
-        (t, r) => ({ agents: t.agents + r.agents.length, tokens: t.tokens + r.tokens, cost: t.cost + r.costUsd }),
+        (t, r) => ({ agents: t.agents + r.agents.length, tokens: t.tokens + r.tokens, cost: t.cost + (r.costUsd ?? 0) }),
         { agents: 0, tokens: 0, cost: 0 }
       ),
     [sorted]

@@ -9,6 +9,9 @@ describe("formatUsd", () => {
   it("shows a floor for tiny non-zero amounts", () => {
     expect(formatUsd(0.004)).toBe("<$0.01");
   });
+  it("renders null (unpriced) as a word, never a crash or a fabricated $0.00", () => {
+    expect(formatUsd(null)).toBe("unpriced");
+  });
 });
 
 describe("formatTokens", () => {

@@ -158,8 +158,13 @@ describe("Store sessions", () => {
 
   it("idempotently adds usage.project and usage.branch to a pre-existing usage table", () => {
     const db = new Database(":memory:");
-    // A usage table predating the project/branch columns.
-    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    // A usage table predating the project/branch columns (token columns have
+    // existed since the very first schema and are part of the rebuild's
+    // baseline column set -- see the cost_usd-nullable rebuild below).
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
     migrate(db);
     const has = (col: string) =>
       (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
@@ -170,12 +175,61 @@ describe("Store sessions", () => {
     expect(has("branch")).toBe(1);
   });
 
+  it("rebuilds usage.cost_usd as nullable (§2.3), preserving rows, columns and indexes", () => {
+    const db = new Database(":memory:");
+    // A usage table from before cost_usd could be NULL (and before message_key/harness).
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, project TEXT, branch TEXT,
+      at INTEGER NOT NULL, run_id TEXT, agent_id TEXT);
+      CREATE INDEX idx_usage_session ON usage(session_id);`);
+    db.query(
+      `INSERT INTO usage (message_uuid, session_id, model, input_tokens, output_tokens, cache_read_tokens,
+        cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at, run_id, agent_id)
+       VALUES ('u1','s1','claude-opus-5',100,20,0,0,0,1.23,'alpha','main',1000,NULL,NULL)`
+    ).run();
+    migrate(db);
+    const col = (db.query("PRAGMA table_info(usage)").all() as { name: string; notnull: number }[]).find(
+      (c) => c.name === "cost_usd"
+    )!;
+    expect(col.notnull).toBe(0);
+    expect(db.query("SELECT * FROM usage WHERE message_uuid = 'u1'").get()).toEqual({
+      message_uuid: "u1", message_key: null, session_id: "s1", model: "claude-opus-5",
+      input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_create_5m_tokens: 0,
+      cache_create_1h_tokens: 0, cost_usd: 1.23, project: "alpha", branch: "main", at: 1000,
+      run_id: null, agent_id: null, harness: null,
+    });
+    // A fresh row with a NULL cost must now be writable at all (the point of this rebuild).
+    db.query(
+      `INSERT INTO usage (message_uuid, session_id, model, at, cost_usd) VALUES ('u2','s1','gpt-9',1000,NULL)`
+    ).run();
+    expect((db.query("SELECT cost_usd FROM usage WHERE message_uuid = 'u2'").get() as { cost_usd: null }).cost_usd).toBeNull();
+    // Indexes survive the rebuild (idx_usage_session existed before; the rest are always recreated).
+    const indexNames = (db.query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='usage'`).all() as { name: string }[]).map((r) => r.name);
+    expect(indexNames).toContain("idx_usage_session");
+    expect(indexNames).toContain("idx_usage_at");
+    expect(indexNames).toContain("idx_usage_message_key");
+    migrate(db); // idempotent: no crash, no data loss, no second rebuild attempt
+    expect(db.query("SELECT COUNT(*) AS c FROM usage").get()).toEqual({ c: 2 });
+  });
+
   it("round-trips app_meta values and overwrites on repeat set", () => {
     expect(store.getMeta("nope")).toBeNull();
     store.setMeta("marker", "123");
     expect(store.getMeta("marker")).toBe("123");
     store.setMeta("marker", "456");
     expect(store.getMeta("marker")).toBe("456");
+  });
+
+  it("idempotently creates the subagents table (§2.4)", () => {
+    const db = new Database(":memory:");
+    migrate(db);
+    const hasTable = () =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='subagents'").all() as unknown[]).length;
+    expect(hasTable()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable()).toBe(1);
   });
 
   it("idempotently creates app_meta on a pre-existing DB", () => {
@@ -209,7 +263,10 @@ describe("Store sessions", () => {
   it("idempotently adds usage.run_id and usage.agent_id to a pre-existing usage table", () => {
     const db = new Database(":memory:");
     // A usage table predating the workflow columns.
-    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
     migrate(db);
     const has = (col: string) =>
       (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;

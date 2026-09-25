@@ -11,12 +11,12 @@ function Group({
   total,
 }: {
   label: string;
-  rows: { key: string; label: string; costUsd: number; tokens: number }[];
+  rows: { key: string; label: string; costUsd: number | null; tokens: number }[];
   total: number;
 }) {
   if (rows.length === 0) return null;
   const shown = rows.slice(0, TOP);
-  const max = shown[0]?.costUsd || 1; // rows arrive sorted by cost desc
+  const max = (shown[0]?.costUsd ?? 0) || 1; // rows arrive sorted by cost desc; null (unpriced) sorts like 0
   return (
     <>
       <div className="mt-3 flex h-5 items-center text-3xs uppercase tracking-caps text-ink-4">{label}</div>
@@ -24,7 +24,7 @@ function Group({
         {shown.map((r) => (
           <MeterRow
             key={r.key}
-            frac={r.costUsd / max}
+            frac={(r.costUsd ?? 0) / max}
             label={r.label}
             a={<>{formatUsd(r.costUsd)}</>}
             b={<>{formatTokens(r.tokens)}</>}

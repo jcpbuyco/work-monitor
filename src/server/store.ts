@@ -15,6 +15,16 @@ const TODO_COLS =
 const TOKEN_SUM =
   "(input_tokens + output_tokens + cache_read_tokens + cache_create_5m_tokens + cache_create_1h_tokens)";
 
+/** SQL aggregate: the token total of only the rows in the group with no price
+ *  (`cost_usd IS NULL`) -- an unknown model, or a row awaiting the next
+ *  generic reprice pass. Every grouped cost aggregate below carries this
+ *  alongside its `SUM(cost_usd)` (§2.3): a group whose usage is entirely
+ *  unpriced returns `costUsd: null` with a nonzero `unpricedTokens`, and a
+ *  group that mixes priced and unpriced usage returns the PARTIAL priced sum
+ *  plus the unpriced remainder as a separate, visible number -- never a
+ *  partial sum silently presented as the whole truth. */
+const UNPRICED_TOKEN_SUM = `SUM(CASE WHEN cost_usd IS NULL THEN ${TOKEN_SUM} ELSE 0 END)`;
+
 /** Build an optional `usage.at` time filter: `since` inclusive, `until` exclusive. */
 function rangeClause(range: { since?: number; until?: number }): { where: string; params: Record<string, number> } {
   const conds: string[] = [];
@@ -134,7 +144,10 @@ export interface WorkflowAgentView {
   duration_ms: number | null;
   tool_calls: number | null;
   tokens: number;
-  costUsd: number;
+  /** null when every usage row for this agent is unpriced (§2.3) -- see
+   *  `unpricedTokens`, never a fabricated $0.00. */
+  costUsd: number | null;
+  unpricedTokens: number;
 }
 
 export interface WorkflowRun {
@@ -155,8 +168,11 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
-  costUsd: number;
+  /** null only when the run has usage rows and every one of them is unpriced;
+   *  0 with no usage rows at all (§2.3). See `unpricedTokens`. */
+  costUsd: number | null;
   tokens: number;
+  unpricedTokens: number;
   agents: WorkflowAgentView[];
 }
 
@@ -172,8 +188,9 @@ export interface LiveWorkflow {
   /** 1-based verbatim, so a pill reads `Phase ${index}/${total}` with no arithmetic. */
   phase: { index: number; total: number; title: string } | null;
   schema_ok: boolean;
-  costUsd: number;
+  costUsd: number | null;
   tokens: number;
+  unpricedTokens: number;
   agents: WorkflowAgentView[];
 }
 
@@ -187,18 +204,24 @@ export class Store {
   // no new usage (the common case) recomputes nothing on repeat buildState()
   // calls. In-memory only - a restart naturally invalidates everything.
   private usageVersion = 0;
-  private perSessionCostCache: { version: number; value: Record<string, { costUsd: number; tokens: number }> } | null =
+  private perSessionCostCache: { version: number; value: Record<string, { costUsd: number | null; tokens: number }> } | null =
     null;
   private todayCostCache: {
     version: number;
     midnight: number;
-    value: { todayUsd: number; byModelToday: { model: string; costUsd: number }[] };
+    value: { todayUsd: number | null; byModelToday: { model: string; costUsd: number | null }[] };
   } | null = null;
-  private costByProjectCache: { version: number; rows: { project: string; costUsd: number; tokens: number }[] } | null =
-    null;
+  private costByProjectCache: {
+    version: number;
+    rows: { project: string; costUsd: number | null; tokens: number; unpricedTokens: number }[];
+  } | null = null;
   private costByBranchCache: {
     version: number;
-    rows: { project: string; branch: string | null; costUsd: number; tokens: number }[];
+    rows: { project: string; branch: string | null; costUsd: number | null; tokens: number; unpricedTokens: number }[];
+  } | null = null;
+  private unpricedCache: {
+    version: number;
+    value: { unpricedTokens: number; unpricedModels: { model: string; tokens: number }[] };
   } | null = null;
 
   applyEvent(sessionId: string, patch: SessionPatch, now: number): Session {
@@ -488,32 +511,61 @@ export class Store {
     return affected;
   }
 
+  /** Insert one priced usage row, or -- when `messageKey` is given and already
+   *  belongs to another row -- merge into that row instead (§2.2). Claude Code
+   *  writes one JSONL line per content block (thinking/text/tool_use) and
+   *  repeats `message.usage` on every one of them, with a FRESH `message_uuid`
+   *  each time; a plain per-uuid INSERT OR IGNORE therefore stores one priced
+   *  row per line instead of per API message. `message_key` (`message.id +
+   *  ":" + requestId`) ties those lines back together.
+   *
+   *  A merge keeps the FIRST row's `message_uuid`, `at`, and attribution
+   *  (session/project/branch/run/agent) untouched, and only replaces
+   *  `output_tokens`/`cost_usd` -- and only when the incoming line reports a
+   *  STRICTLY larger `output_tokens` (real data: input/cache fields are
+   *  identical across a message's lines, output starts as a partial streaming
+   *  count and grows to the final total, so the largest-output line is always
+   *  the correct final one, cost included). The `WHERE` clause on the upsert's
+   *  `DO UPDATE` is load-bearing, not cosmetic: without it, a later line that
+   *  repeats the SAME (already-maximal) output would still count as a SQLite
+   *  "change" on every re-observation, spuriously bumping `usageVersion` and
+   *  defeating §1.3's memoization on exactly the hot path this exists for.
+   *  Lines with no `message.id` (messageKey null) skip this entirely and keep
+   *  the old per-uuid-only dedup -- two NULLs never conflict on the partial
+   *  unique index. */
   recordUsage(u: {
     uuid: string;
     sessionId: string;
     model: string;
     tokens: Tokens;
     at: number;
-    cost: number;
+    cost: number | null;
     runId?: string;
     agentId?: string;
+    messageKey?: string | null;
   }): boolean {
     // Stamp the session's then-current project/branch so historical cost can be
     // attributed without a join (and survives the session row being mutated later).
     // Idempotent via the message_uuid key: the stamp is captured at first ingestion.
     const res = this.db
       .query(
-        `INSERT OR IGNORE INTO usage
-           (message_uuid, session_id, model, input_tokens, output_tokens,
+        `INSERT INTO usage
+           (message_uuid, message_key, session_id, model, input_tokens, output_tokens,
             cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
             run_id, agent_id)
-         VALUES ($u, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
+         VALUES ($u, $key, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
                  (SELECT project FROM sessions WHERE id = $s),
                  (SELECT branch FROM sessions WHERE id = $s), $at,
-                 $run, $agent)`
+                 $run, $agent)
+         ON CONFLICT(message_uuid) DO NOTHING
+         ON CONFLICT(message_key) WHERE message_key IS NOT NULL DO UPDATE SET
+           output_tokens = excluded.output_tokens,
+           cost_usd = excluded.cost_usd
+         WHERE excluded.output_tokens > usage.output_tokens`
       )
       .run({
         $u: u.uuid,
+        $key: u.messageKey ?? null,
         $s: u.sessionId,
         $m: u.model,
         $in: u.tokens.input,
@@ -527,9 +579,10 @@ export class Store {
         $agent: u.agentId ?? null,
       });
     const inserted = res.changes > 0;
-    // A no-op (INSERT OR IGNORE on a dupe) changes nothing usage-derived, so
-    // it must not invalidate the cost caches -- that would defeat §1.3 on
-    // exactly the hot path (repeated tailing of an already-recorded message).
+    // A no-op (DO NOTHING on a dupe uuid, or a merge that changed nothing new)
+    // changes nothing usage-derived, so it must not invalidate the cost caches
+    // -- that would defeat §1.3 on exactly the hot path (repeated tailing of an
+    // already-recorded message).
     if (inserted) this.usageVersion++;
     return inserted;
   }
@@ -583,12 +636,12 @@ export class Store {
   /** Lifetime cost + tokens per session. Memoized on `usageVersion` (§1.3):
    *  this is a full-table GROUP BY, and `costSummary()` calls it on every
    *  `buildState()`. */
-  private perSessionCost(): Record<string, { costUsd: number; tokens: number }> {
+  private perSessionCost(): Record<string, { costUsd: number | null; tokens: number }> {
     if (this.perSessionCostCache?.version === this.usageVersion) return this.perSessionCostCache.value;
     const per = this.db
       .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens FROM usage GROUP BY session_id`)
-      .all() as { session_id: string; cost: number; tokens: number }[];
-    const value: Record<string, { costUsd: number; tokens: number }> = {};
+      .all() as { session_id: string; cost: number | null; tokens: number }[];
+    const value: Record<string, { costUsd: number | null; tokens: number }> = {};
     for (const r of per) value[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
     this.perSessionCostCache = { version: this.usageVersion, value };
     return value;
@@ -596,33 +649,59 @@ export class Store {
 
   /** Today's total + per-model breakdown. Memoized on `(usageVersion,
    *  midnightMs)` (§1.3) - the day boundary is part of the cache key so a
-   *  fresh calendar day recomputes exactly once, on its first call. */
-  private todayCost(midnightMs: number): { todayUsd: number; byModelToday: { model: string; costUsd: number }[] } {
+   *  fresh calendar day recomputes exactly once, on its first call.
+   *
+   *  `todayUsd` is NOT coalesced to 0 (§2.3, finding): `SUM(cost_usd)` already
+   *  returns NULL when every row seen today is unpriced, and forcing that to a
+   *  fabricated $0.00 is exactly the thing goal 2 forbids. A caller wanting a
+   *  never-null display value combines this with `unpricedTokens` below to
+   *  show the truth ("$4.12 + 900 unpriced tokens") instead of a wrong total. */
+  private todayCost(midnightMs: number): { todayUsd: number | null; byModelToday: { model: string; costUsd: number | null }[] } {
     if (this.todayCostCache?.version === this.usageVersion && this.todayCostCache.midnight === midnightMs) {
       return this.todayCostCache.value;
     }
     const today = this.db
-      .query(`SELECT COALESCE(SUM(cost_usd), 0) AS c FROM usage WHERE at >= $m`)
-      .get({ $m: midnightMs }) as { c: number };
+      .query(`SELECT SUM(cost_usd) AS c FROM usage WHERE at >= $m`)
+      .get({ $m: midnightMs }) as { c: number | null };
+    // §2.3: no HAVING here any more -- a model with only unpriced usage today
+    // must still appear (with `costUsd: null`, from SUM over an all-NULL
+    // group), not silently vanish the way a `HAVING c > 0` filter would.
     const byModel = this.db
-      .query(
-        `SELECT model, SUM(cost_usd) AS c FROM usage WHERE at >= $m
-         GROUP BY model HAVING c > 0 ORDER BY c DESC`
-      )
-      .all({ $m: midnightMs }) as { model: string; c: number }[];
+      .query(`SELECT model, SUM(cost_usd) AS c FROM usage WHERE at >= $m GROUP BY model ORDER BY c DESC`)
+      .all({ $m: midnightMs }) as { model: string; c: number | null }[];
     const value = { todayUsd: today.c, byModelToday: byModel.map((r) => ({ model: r.model, costUsd: r.c })) };
     this.todayCostCache = { version: this.usageVersion, midnight: midnightMs, value };
     return value;
   }
 
+  /** All-time unpriced usage (§2.3): the token total, and a per-model
+   *  breakdown, of every row whose `cost_usd` is NULL -- an unknown model that
+   *  slipped past `costOf`, or a row awaiting the next generic reprice pass.
+   *  Memoized on `usageVersion` like the other all-time aggregates. */
+  private unpricedUsage(): { unpricedTokens: number; unpricedModels: { model: string; tokens: number }[] } {
+    if (this.unpricedCache?.version === this.usageVersion) return this.unpricedCache.value;
+    const rows = this.db
+      .query(`SELECT model, SUM${TOKEN_SUM} AS tokens FROM usage WHERE cost_usd IS NULL GROUP BY model ORDER BY tokens DESC`)
+      .all() as { model: string; tokens: number }[];
+    const value = {
+      unpricedTokens: rows.reduce((sum, r) => sum + r.tokens, 0),
+      unpricedModels: rows.map((r) => ({ model: r.model, tokens: r.tokens })),
+    };
+    this.unpricedCache = { version: this.usageVersion, value };
+    return value;
+  }
+
   costSummary(midnightMs: number): {
-    perSession: Record<string, { costUsd: number; tokens: number }>;
+    perSession: Record<string, { costUsd: number | null; tokens: number }>;
     liveTotalUsd: number;
-    todayUsd: number;
-    byModelToday: { model: string; costUsd: number }[];
+    todayUsd: number | null;
+    byModelToday: { model: string; costUsd: number | null }[];
+    unpricedTokens: number;
+    unpricedModels: { model: string; tokens: number }[];
   } {
     const perSession = this.perSessionCost();
     const { todayUsd, byModelToday } = this.todayCost(midnightMs);
+    const { unpricedTokens, unpricedModels } = this.unpricedUsage();
 
     // Deliberately NOT memoized: this depends on `sessions.status`, which
     // changes on its own (sweeps, stop/session_end) without any usage write
@@ -642,14 +721,16 @@ export class Store {
       )
       .get() as { c: number };
 
-    return { perSession, liveTotalUsd: live.c, todayUsd, byModelToday };
+    return { perSession, liveTotalUsd: live.c, todayUsd, byModelToday, unpricedTokens, unpricedModels };
   }
 
   /** Lifetime (or ranged) cost + tokens grouped by project, highest spend first.
    *  Usage with no resolvable project (e.g. pre-attribution rows) buckets under
    *  'unknown'. `range` filters on the message timestamp (since inclusive, until
    *  exclusive); omit it for all-time. */
-  costByProject(range: { since?: number; until?: number } = {}): { project: string; costUsd: number; tokens: number }[] {
+  costByProject(
+    range: { since?: number; until?: number } = {}
+  ): { project: string; costUsd: number | null; tokens: number; unpricedTokens: number }[] {
     // Only the unbounded (all-time) call is memoized (§1.3): it's the one
     // buildState() hits on every request, and the only shape whose cache key
     // (usageVersion alone) is exact. A ranged call is rare (cost-page drill-
@@ -659,11 +740,12 @@ export class Store {
     const { where, params } = rangeClause(range);
     const rows = this.db
       .query(
-        `SELECT COALESCE(usage.project, 'unknown') AS project, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+        `SELECT COALESCE(usage.project, 'unknown') AS project, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens,
+                ${UNPRICED_TOKEN_SUM} AS unpriced
          FROM usage ${where} GROUP BY usage.project ORDER BY cost DESC, usage.project`
       )
-      .all(params) as { project: string; cost: number; tokens: number }[];
-    const result = rows.map((r) => ({ project: r.project, costUsd: r.cost, tokens: r.tokens }));
+      .all(params) as { project: string; cost: number | null; tokens: number; unpriced: number }[];
+    const result = rows.map((r) => ({ project: r.project, costUsd: r.cost, tokens: r.tokens, unpricedTokens: r.unpriced }));
     if (unranged) this.costByProjectCache = { version: this.usageVersion, rows: result };
     return result;
   }
@@ -673,7 +755,7 @@ export class Store {
    *  from merging across repos; `branch` stays null when the session had none. */
   costByBranch(
     range: { since?: number; until?: number } = {}
-  ): { project: string; branch: string | null; costUsd: number; tokens: number }[] {
+  ): { project: string; branch: string | null; costUsd: number | null; tokens: number; unpricedTokens: number }[] {
     // See costByProject: only the unbounded call is cached (§1.3).
     const unranged = range.since === undefined && range.until === undefined;
     if (unranged && this.costByBranchCache?.version === this.usageVersion) return this.costByBranchCache.rows;
@@ -681,11 +763,17 @@ export class Store {
     const rows = this.db
       .query(
         `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
-                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
          FROM usage ${where} GROUP BY usage.project, usage.branch ORDER BY cost DESC, usage.project, usage.branch`
       )
-      .all(params) as { project: string; branch: string | null; cost: number; tokens: number }[];
-    const result = rows.map((r) => ({ project: r.project, branch: r.branch, costUsd: r.cost, tokens: r.tokens }));
+      .all(params) as { project: string; branch: string | null; cost: number | null; tokens: number; unpriced: number }[];
+    const result = rows.map((r) => ({
+      project: r.project,
+      branch: r.branch,
+      costUsd: r.cost,
+      tokens: r.tokens,
+      unpricedTokens: r.unpriced,
+    }));
     if (unranged) this.costByBranchCache = { version: this.usageVersion, rows: result };
     return result;
   }
@@ -697,17 +785,24 @@ export class Store {
    *  stable baseline. */
   costDaily(
     range: { since?: number; until?: number } = {}
-  ): { project: string; branch: string | null; day: string; costUsd: number; tokens: number }[] {
+  ): { project: string; branch: string | null; day: string; costUsd: number | null; tokens: number; unpricedTokens: number }[] {
     const { where, params } = rangeClause(range);
     const rows = this.db
       .query(
         `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
                 strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime') AS day,
-                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+                SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
          FROM usage ${where} GROUP BY usage.project, usage.branch, day ORDER BY day DESC, cost DESC`
       )
-      .all(params) as { project: string; branch: string | null; day: string; cost: number; tokens: number }[];
-    return rows.map((r) => ({ project: r.project, branch: r.branch, day: r.day, costUsd: r.cost, tokens: r.tokens }));
+      .all(params) as { project: string; branch: string | null; day: string; cost: number | null; tokens: number; unpriced: number }[];
+    return rows.map((r) => ({
+      project: r.project,
+      branch: r.branch,
+      day: r.day,
+      costUsd: r.cost,
+      tokens: r.tokens,
+      unpricedTokens: r.unpriced,
+    }));
   }
 
   createTodo(input: CreateTodoInput, now: number): Todo {
@@ -770,6 +865,80 @@ export class Store {
   deleteTodo(id: string): boolean {
     const res = this.db.query(`DELETE FROM todos WHERE id = $id`).run({ $id: id });
     return res.changes > 0;
+  }
+
+  // --- Task subagents (§2.4, non-workflow) --------------------------------
+
+  /** Register one newly-discovered `agent-<id>.jsonl` file. A no-op if the
+   *  agent id is already known -- enrichment (tail offset, resolved model)
+   *  happens through `setSubagentTail`, never here, so a later discovery pass
+   *  can never rewind an already-advancing tail. */
+  upsertSubagent(a: {
+    agent_id: string;
+    session_id: string;
+    agent_type: string | null;
+    description: string | null;
+    model: string | null;
+    parent_agent_id: string | null;
+    path: string;
+    started_at: number | null;
+    last_seen_at: number | null;
+  }): void {
+    this.db
+      .query(
+        `INSERT INTO subagents
+           (agent_id, session_id, agent_type, description, model, parent_agent_id, path, offset, started_at, last_seen_at)
+         VALUES ($id, $sess, $type, $desc, $model, $parent, $path, 0, $started, $seen)
+         ON CONFLICT(agent_id) DO NOTHING`
+      )
+      .run({
+        $id: a.agent_id,
+        $sess: a.session_id,
+        $type: a.agent_type,
+        $desc: a.description,
+        $model: a.model,
+        $parent: a.parent_agent_id,
+        $path: a.path,
+        $started: a.started_at,
+        $seen: a.last_seen_at,
+      });
+  }
+
+  /** Agent ids already known for a session, so the discovery pass can tell a
+   *  brand-new `agent-*.jsonl` file from one it has already registered. */
+  subagentIdsForSession(sessionId: string): Set<string> {
+    const rows = this.db.query(`SELECT agent_id FROM subagents WHERE session_id = $s`).all({ $s: sessionId }) as {
+      agent_id: string;
+    }[];
+    return new Set(rows.map((r) => r.agent_id));
+  }
+
+  subagentsForSession(
+    sessionId: string
+  ): { agent_id: string; path: string; offset: number; model: string | null; model_resolved: boolean }[] {
+    const rows = this.db
+      .query(`SELECT agent_id, path, offset, model, model_resolved FROM subagents WHERE session_id = $s`)
+      .all({ $s: sessionId }) as { agent_id: string; path: string; offset: number; model: string | null; model_resolved: number }[];
+    return rows.map((r) => ({ ...r, model_resolved: r.model_resolved === 1 }));
+  }
+
+  /** Persist a subagent's tail progress. `model`, when given, OVERWRITES the
+   *  stored value and marks it resolved -- the resolved `message.model` from
+   *  the transcript always wins over the meta file's alias (§2.4), and once
+   *  resolved a later tail never reads the header again (`model_resolved`,
+   *  not "was this the very first tail" -- a subagent's first API call can
+   *  land outside the sweep window that first discovers its file, so the
+   *  caller must be able to try resolving on ANY tail that records usage
+   *  until it succeeds). Omit `model` (null) to leave the stored value and
+   *  its resolved flag alone. */
+  setSubagentTail(agentId: string, offset: number, lastSeenAt: number, model: string | null): void {
+    this.db
+      .query(
+        `UPDATE subagents SET offset = $o, last_seen_at = $t, model = COALESCE($m, model),
+           model_resolved = CASE WHEN $m IS NOT NULL THEN 1 ELSE model_resolved END
+         WHERE agent_id = $id`
+      )
+      .run({ $o: offset, $t: lastSeenAt, $m: model, $id: agentId });
   }
 
   // --- workflows ---------------------------------------------------------
@@ -934,16 +1103,24 @@ export class Store {
 
     const rollup = this.db
       .query(
-        `SELECT run_id, agent_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens
+        // NOT coalesced to 0 (§2.3, finding): an agent/run whose usage is
+        // entirely unpriced must show as unknown, not a fabricated $0.00 --
+        // the same rule §1.3's other cost aggregates already follow.
+        // `unpriced` carries the token total of just the unpriced rows, so a
+        // partial (some priced, some not) rollup is never mistaken for whole.
+        `SELECT run_id, agent_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
          FROM usage WHERE run_id IN (${ph}) GROUP BY run_id, agent_id`
       )
-      .all(params) as { run_id: string; agent_id: string | null; cost: number; tokens: number }[];
-    const byAgent = new Map<string, { cost: number; tokens: number }>();
-    const byRun = new Map<string, { cost: number; tokens: number }>();
+      .all(params) as { run_id: string; agent_id: string | null; cost: number | null; tokens: number; unpriced: number }[];
+    const byAgent = new Map<string, { cost: number | null; tokens: number; unpriced: number }>();
+    const byRun = new Map<string, { cost: number | null; tokens: number; unpriced: number }>();
     for (const r of rollup) {
-      byAgent.set(`${r.run_id} ${r.agent_id ?? ""}`, { cost: r.cost, tokens: r.tokens });
-      const t = byRun.get(r.run_id) ?? { cost: 0, tokens: 0 };
-      byRun.set(r.run_id, { cost: t.cost + r.cost, tokens: t.tokens + r.tokens });
+      byAgent.set(`${r.run_id} ${r.agent_id ?? ""}`, { cost: r.cost, tokens: r.tokens, unpriced: r.unpriced });
+      const t = byRun.get(r.run_id) ?? { cost: 0, tokens: 0, unpriced: 0 };
+      // null + a real number stays that number (some agents priced, one not);
+      // null + null stays null (the whole run is unpriced so far).
+      const cost = r.cost == null ? t.cost : t.cost == null ? r.cost : t.cost + r.cost;
+      byRun.set(r.run_id, { cost, tokens: t.tokens + r.tokens, unpriced: t.unpriced + r.unpriced });
     }
 
     const agentRows = this.db
@@ -951,7 +1128,7 @@ export class Store {
       .all(params) as Record<string, any>[];
     const agentsByRun = new Map<string, WorkflowAgentView[]>();
     for (const a of agentRows) {
-      const roll = byAgent.get(`${a.run_id} ${a.agent_id}`) ?? { cost: 0, tokens: 0 };
+      const roll = byAgent.get(`${a.run_id} ${a.agent_id}`) ?? { cost: 0, tokens: 0, unpriced: 0 };
       const list = agentsByRun.get(a.run_id) ?? [];
       list.push({
         agent_id: a.agent_id,
@@ -971,6 +1148,7 @@ export class Store {
         tool_calls: a.tool_calls,
         costUsd: roll.cost,
         tokens: roll.tokens,
+        unpricedTokens: roll.unpriced,
       });
       agentsByRun.set(a.run_id, list);
     }
@@ -989,7 +1167,7 @@ export class Store {
       } catch {
         phases = [];
       }
-      const roll = byRun.get(r.run_id) ?? { cost: 0, tokens: 0 };
+      const roll = byRun.get(r.run_id) ?? { cost: 0, tokens: 0, unpriced: 0 };
       return {
         run_id: r.run_id,
         session_id: r.session_id,
@@ -1018,6 +1196,7 @@ export class Store {
         total_tokens_reported: r.total_tokens_reported,
         costUsd: roll.cost,
         tokens: roll.tokens,
+        unpricedTokens: roll.unpriced,
         agents: agentsByRun.get(r.run_id) ?? [],
       };
     });
@@ -1097,6 +1276,7 @@ export class Store {
           schema_ok: r.schema_ok,
           costUsd: r.costUsd,
           tokens: r.tokens,
+          unpricedTokens: r.unpricedTokens,
           agents: r.agents,
         };
       });

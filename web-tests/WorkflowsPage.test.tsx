@@ -68,6 +68,22 @@ describe("WorkflowsPage", () => {
     expect(within(totals).getByText("$11.00")).toBeTruthy(); // 2 + 9
   });
 
+  it("renders a null (unpriced) run/agent cost as text, and excludes it from the totals sum, instead of crashing (§2.3, finding)", async () => {
+    const unpriced: WorkflowRun = {
+      ...RUNS[0],
+      run_id: "wf_u",
+      name: "unpriced-run",
+      costUsd: null,
+      agents: [agent({ agent_id: "u1", costUsd: null })],
+    };
+    mockFetch([...RUNS, unpriced]);
+    render(<WorkflowsPage />);
+    await screen.findByText("unpriced-run");
+    expect(screen.getAllByText("unpriced").length).toBeGreaterThanOrEqual(1);
+    const totals = screen.getByTestId("wf-totals");
+    expect(within(totals).getByText("$11.00")).toBeTruthy(); // unchanged: null contributes 0, not NaN
+  });
+
   it("sorts by cost descending when the Cost header is clicked", async () => {
     mockFetch(RUNS);
     render(<WorkflowsPage />);

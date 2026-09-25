@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from
 import type { Server } from "node:http";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/server/db.ts";
@@ -131,6 +131,37 @@ describe("POST /events", () => {
     expect(res.status).toBe(204);
     const state = (await (await fetch(`${base}/api/state`)).json()) as any;
     expect(state.sessions.find((x: any) => x.id === "s9").status).toBe("working");
+  });
+
+  it("session_end also sweeps that session's Task subagents (§2.4, finding), not just the parent transcript", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "am-http-subagents-"));
+    try {
+      const transcriptPath = join(dir, "s-sub2.jsonl");
+      writeFileSync(transcriptPath, "");
+      const subDir = join(dir, "s-sub2", "subagents");
+      mkdirSync(subDir, { recursive: true });
+      writeFileSync(
+        join(subDir, "agent-a1.jsonl"),
+        JSON.stringify({
+          uuid: "u1",
+          isSidechain: true,
+          timestamp: "2026-08-01T08:00:00.000Z",
+          message: { model: "claude-sonnet-5", usage: { input_tokens: 10, output_tokens: 5 } },
+        }) + "\n"
+      );
+      const post = (type: string, body: object) =>
+        fetch(`${base}/events?type=${type}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      await post("session_start", { session_id: "s-sub2", cwd: dir, transcript_path: transcriptPath });
+      await post("session_end", { session_id: "s-sub2" });
+      const row = store.db.query("SELECT session_id, agent_id FROM usage").get();
+      expect(row).toEqual({ session_id: "s-sub2", agent_id: "a1" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("stop sets idle_reason 'stopped' (surfaced in state)", async () => {
@@ -359,7 +390,13 @@ describe("buildState", () => {
     expect(state.cost).toBeDefined();
     expect(state.cost.perSession).toEqual({});
     expect(state.cost.liveTotalUsd).toBe(0);
-    expect(state.cost.todayUsd).toBe(0);
+    // No usage rows at all -- SUM(cost_usd) is NULL, never coalesced to a
+    // fabricated $0.00 (§2.3, finding); this differs from liveTotalUsd, which
+    // masks its own "no live sessions" case (a real, known zero, not an
+    // unknown) deliberately.
+    expect(state.cost.todayUsd).toBeNull();
+    expect(state.cost.unpricedTokens).toBe(0);
+    expect(state.cost.unpricedModels).toEqual([]);
     expect(state.cost.byModelToday).toEqual([]);
     expect(state.cost.byProject).toEqual([]);
     expect(state.cost.byBranch).toEqual([]);

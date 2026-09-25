@@ -454,7 +454,7 @@ const HEADER_READ_CAP = 256 * 1024;
  *  fewer UTF-16 code units than bytes read, so comparing string length
  *  against the byte budget would signal "hit EOF" prematurely and stop
  *  growing before the model line is actually reached. */
-function readAgentHeader(path: string): ReturnType<typeof parseAgentHeader> {
+export function readAgentHeader(path: string): ReturnType<typeof parseAgentHeader> {
   let fileSize: number;
   try {
     fileSize = statSync(path).size;

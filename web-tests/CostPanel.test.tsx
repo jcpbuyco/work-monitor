@@ -42,4 +42,28 @@ describe("CostPanel", () => {
     expect(screen.getByTestId("cost-today").className).toContain("text-ink");
     expect(screen.getByTestId("cost-live-total").className).toContain("text-ink-3");
   });
+
+  it("renders a null today/model cost as text, instead of crashing the dashboard (§2.3, finding)", () => {
+    render(
+      <CostPanel
+        cost={{
+          perSession: {},
+          liveTotalUsd: 3.71,
+          todayUsd: null,
+          byModelToday: [{ model: "totally-unknown-model", costUsd: null }],
+          byProject: [],
+          byBranch: [],
+        }}
+      />
+    );
+    expect(screen.getByTestId("cost-today").textContent).toBe("unpriced");
+    expect(screen.getAllByText("unpriced").length).toBe(2); // the today tile AND the per-model row
+  });
+
+  it("still renders nothing when both today and live total are genuinely nothing (null today, zero live)", () => {
+    const { container } = render(
+      <CostPanel cost={{ perSession: {}, liveTotalUsd: 0, todayUsd: null, byModelToday: [], byProject: [], byBranch: [] }} />
+    );
+    expect(container.firstChild).toBeNull();
+  });
 });

@@ -6,7 +6,8 @@ import { resolveRepoInfo } from "./resolve-project.ts";
 import type { EventType, HookEvent, SessionPatch, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 import { tailUsage } from "./usage.ts";
-import { workflowsDegraded, logOnce, bumpDegraded } from "./workflows.ts";
+import { sweepSubagents } from "./subagents.ts";
+import { workflowsDegraded, logOnce, bumpDegraded, sessionDirFor } from "./workflows.ts";
 import type { Store as StoreType } from "./store.ts";
 import { createThrottle, type Throttled } from "./throttle.ts";
 import { STATE_THROTTLE_MS } from "./config.ts";
@@ -210,6 +211,11 @@ export function createApp(deps: AppDeps) {
           const info = store.getTailInfo(sessionId);
           if (info) {
             tailUsage(store, { id: sessionId, transcript_path: info.transcript_path, usage_offset: info.usage_offset });
+            // §2.4, finding: `sessionsToTail()` (the 60s sweep) excludes ended
+            // sessions, so a Task subagent's usage written since the last sweep
+            // would otherwise sit unrecorded until the next server restart's
+            // backfill. Give it the same final tail as the parent transcript.
+            if (info.transcript_path) sweepSubagents(store, sessionId, sessionDirFor(info.transcript_path), t);
           }
         }
         scheduleState();

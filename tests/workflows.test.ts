@@ -376,7 +376,7 @@ describe("scanWorkflows", () => {
     expect(rows.length).toBe(2);
     expect(rows[0]).toEqual({ run_id: "wf_t1", agent_id: "a1", project: "alpha", branch: "feat/x", cost_usd: 5 });
     // The keystone: parent attribution means no `unknown` bucket appears.
-    expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: 10, tokens: 2_000_000 }]);
+    expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: 10, tokens: 2_000_000, unpricedTokens: 0 }]);
   });
 
   it("creates one agent row per transcript file even when the manifest lists fewer", () => {
@@ -1083,7 +1083,7 @@ describe("backfillWorkflows", () => {
     expect(backfillWorkflows(store, NOW, root).runs).toBe(1);
     // Skipping it would silently drop spend — the one thing this feature exists
     // to prevent. The existing queries already bucket a NULL project as 'unknown'.
-    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 5, tokens: 1_000_000 }]);
+    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 5, tokens: 1_000_000, unpricedTokens: 0 }]);
   });
 
   it("is idempotent — a second backfill records nothing new", () => {

@@ -44,35 +44,46 @@ export interface ToolStat {
 }
 
 export interface SessionCost {
-  costUsd: number;
+  /** null when every usage row for the session is unpriced -- never a
+   *  fabricated $0.00 (server: store.ts §2.3). */
+  costUsd: number | null;
   tokens: number;
 }
 
 export interface ModelCost {
   model: string;
-  costUsd: number;
+  costUsd: number | null;
 }
 
 export interface ProjectCost {
   project: string;
-  costUsd: number;
+  costUsd: number | null;
   tokens: number;
+  // OPTIONAL like `workflows_degraded` (State): a live dashboard can briefly
+  // talk to a server from just before this field shipped (the restart-skew
+  // gotcha) -- always read as `?? 0`.
+  unpricedTokens?: number;
 }
 
 export interface BranchCost {
   project: string;
   branch: string | null;
-  costUsd: number;
+  costUsd: number | null;
   tokens: number;
+  unpricedTokens?: number;
 }
 
 export interface Cost {
   perSession: Record<string, SessionCost>;
   liveTotalUsd: number;
-  todayUsd: number;
+  /** null only when there is no priced usage at all today (no usage yet, or
+   *  every row seen is unpriced) -- never a fabricated $0.00. */
+  todayUsd: number | null;
   byModelToday: ModelCost[];
   byProject: ProjectCost[];
   byBranch: BranchCost[];
+  unpricedTokens?: number;
+  unpricedModels?: { model: string; tokens: number }[];
 }
 
 export interface State {
@@ -103,7 +114,8 @@ export interface WorkflowAgentView {
   duration_ms: number | null;
   tool_calls: number | null;
   tokens: number;
-  costUsd: number;
+  costUsd: number | null;
+  unpricedTokens?: number;
 }
 
 export interface WorkflowRun {
@@ -126,8 +138,9 @@ export interface WorkflowRun {
   cc_version: string | null;
   schema_ok: boolean;
   total_tokens_reported: number | null;
-  costUsd: number;
+  costUsd: number | null;
   tokens: number;
+  unpricedTokens?: number;
   agents: WorkflowAgentView[];
 }
 
@@ -142,7 +155,8 @@ export interface LiveWorkflow {
   started_at: number | null;
   phase: { index: number; total: number; title: string } | null;
   schema_ok: boolean;
-  costUsd: number;
+  costUsd: number | null;
   tokens: number;
+  unpricedTokens?: number;
   agents: WorkflowAgentView[];
 }

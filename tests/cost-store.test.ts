@@ -57,6 +57,29 @@ describe("Store usage rows", () => {
     ]);
   });
 
+  it("keeps an unknown-today model visible in byModelToday with costUsd: null, instead of a HAVING c > 0 filter dropping it (§2.3)", () => {
+    const MIDNIGHT = 2_000_000;
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "totally-unknown-model", tokens: tok(5), at: MIDNIGHT + 1, cost: null });
+    const s = store.costSummary(MIDNIGHT);
+    expect(s.byModelToday).toEqual([{ model: "totally-unknown-model", costUsd: null }]);
+    // The whole day's total is null too -- SUM(cost_usd) over an all-NULL
+    // group, never coalesced to a fabricated $0.00 (§2.3, finding).
+    expect(s.todayUsd).toBeNull();
+  });
+
+  it("costSummary reports unpricedTokens/unpricedModels for an unknown model, all-time (§2.3)", () => {
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 1, cost: 1.0 });
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "totally-unknown-model", tokens: tok(7), at: 1, cost: null });
+    const s = store.costSummary(0);
+    expect(s.unpricedTokens).toBe(7);
+    expect(s.unpricedModels).toEqual([{ model: "totally-unknown-model", tokens: 7 }]);
+    // The priced row is unaffected -- unpriced usage is additional information,
+    // never something that shrinks or masks the known total.
+    expect(s.perSession.a.costUsd).toBeCloseTo(1.0, 6);
+  });
+
   it("stamps the session's current project and branch onto the usage row", () => {
     store.applyEvent("s1", { status: "working", project: "acme", branch: "feat/x", last_activity_at: 1 }, 1);
     store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-opus-4-8", tokens: tok(10), at: 1000, cost: 0.5 });
@@ -78,8 +101,8 @@ describe("Store usage rows", () => {
     store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 200, cost: 2.0 });
     store.recordUsage({ uuid: "b1", sessionId: "b", model: "claude-opus-4-8", tokens: tok(5), at: 100, cost: 0.5 });
     expect(store.costByProject()).toEqual([
-      { project: "alpha", costUsd: 3.0, tokens: 20 },
-      { project: "beta", costUsd: 0.5, tokens: 5 },
+      { project: "alpha", costUsd: 3.0, tokens: 20, unpricedTokens: 0 },
+      { project: "beta", costUsd: 0.5, tokens: 5, unpricedTokens: 0 },
     ]);
   });
 
@@ -88,13 +111,28 @@ describe("Store usage rows", () => {
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
     store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 200, cost: 2.0 });
     store.recordUsage({ uuid: "a3", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 300, cost: 4.0 });
-    expect(store.costByProject({ since: 200, until: 300 })).toEqual([{ project: "alpha", costUsd: 2.0, tokens: 0 }]);
+    expect(store.costByProject({ since: 200, until: 300 })).toEqual([
+      { project: "alpha", costUsd: 2.0, tokens: 0, unpricedTokens: 0 },
+    ]);
   });
 
   it("buckets usage with no resolvable project under 'unknown'", () => {
     // usage for a session row that doesn't exist → project stamps NULL
     store.recordUsage({ uuid: "x1", sessionId: "ghost", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
-    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 1.0, tokens: 0 }]);
+    expect(store.costByProject()).toEqual([{ project: "unknown", costUsd: 1.0, tokens: 0, unpricedTokens: 0 }]);
+  });
+
+  it("costByProject surfaces unpricedTokens instead of silently shrinking the total when a project mixes priced and unpriced usage", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 100, cost: 1.0 });
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "totally-unknown-model", tokens: tok(7), at: 100, cost: null });
+    expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 17, unpricedTokens: 7 }]);
+  });
+
+  it("costByProject returns costUsd: null (not $0.00) plus unpricedTokens when a project's usage is ENTIRELY unpriced", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "totally-unknown-model", tokens: tok(9), at: 100, cost: null });
+    expect(store.costByProject()).toEqual([{ project: "alpha", costUsd: null, tokens: 9, unpricedTokens: 9 }]);
   });
 
   it("aggregates costByBranch by (project, branch) so same-named branches don't merge across repos", () => {
@@ -103,15 +141,15 @@ describe("Store usage rows", () => {
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: 100, cost: 1.0 });
     store.recordUsage({ uuid: "b1", sessionId: "b", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 2.0 });
     expect(store.costByBranch()).toEqual([
-      { project: "beta", branch: "main", costUsd: 2.0, tokens: 0 },
-      { project: "alpha", branch: "main", costUsd: 1.0, tokens: 10 },
+      { project: "beta", branch: "main", costUsd: 2.0, tokens: 0, unpricedTokens: 0 },
+      { project: "alpha", branch: "main", costUsd: 1.0, tokens: 10, unpricedTokens: 0 },
     ]);
   });
 
   it("preserves a null branch in costByBranch", () => {
     store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1); // no branch
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
-    expect(store.costByBranch()).toEqual([{ project: "alpha", branch: null, costUsd: 1.0, tokens: 0 }]);
+    expect(store.costByBranch()).toEqual([{ project: "alpha", branch: null, costUsd: 1.0, tokens: 0, unpricedTokens: 0 }]);
   });
 
   it("sums all token types into perSession.tokens", () => {
@@ -157,6 +195,15 @@ describe("Store usage rows", () => {
     expect(rows[0].costUsd).toBeCloseTo(2.0, 6);
   });
 
+  it("costDaily surfaces unpricedTokens per day instead of silently shrinking the total", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "d1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: T, cost: 1.0 });
+    store.recordUsage({ uuid: "d2", sessionId: "a", model: "totally-unknown-model", tokens: tok(4), at: T, cost: null });
+    const rows = store.costDaily();
+    expect(rows).toEqual([{ project: "alpha", branch: "main", day: rows[0].day, costUsd: 1.0, tokens: 14, unpricedTokens: 4 }]);
+  });
+
   it("costDaily buckets unattributed usage under 'unknown' and keeps null branch", () => {
     // usage for a session row that doesn't exist → project/branch stamp NULL
     store.recordUsage({ uuid: "g1", sessionId: "ghost", model: "claude-opus-4-8", tokens: tok(0), at: 1_700_000_000_000, cost: 1.0 });
@@ -170,7 +217,7 @@ describe("Store usage rows", () => {
     store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
     const first = store.costByProject();
-    expect(first).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0 }]);
+    expect(first).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0, unpricedTokens: 0 }]);
 
     // A duplicate uuid is INSERT OR IGNORE'd -- must not bump usageVersion, so
     // the cached result (a fresh object built by that first call) is reused.
@@ -181,7 +228,7 @@ describe("Store usage rows", () => {
     store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 2.0 });
     const second = store.costByProject();
     expect(second).not.toBe(first);
-    expect(second).toEqual([{ project: "alpha", costUsd: 3.0, tokens: 0 }]);
+    expect(second).toEqual([{ project: "alpha", costUsd: 3.0, tokens: 0, unpricedTokens: 0 }]);
   });
 
   it("bumpUsageVersion invalidates the memoized cost caches for a usage write that bypassed recordUsage", () => {
@@ -198,15 +245,15 @@ describe("Store usage rows", () => {
     store.bumpUsageVersion();
     const second = store.costByProject();
     expect(second).not.toBe(first);
-    expect(second).toEqual([{ project: "alpha", costUsd: 5.0, tokens: 0 }]);
+    expect(second).toEqual([{ project: "alpha", costUsd: 5.0, tokens: 0, unpricedTokens: 0 }]);
   });
 
   it("a ranged costByProject call is never cached and always reflects the latest write", () => {
     store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
-    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0 }]);
+    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0, unpricedTokens: 0 }]);
     store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 5.0 });
-    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 6.0, tokens: 0 }]);
+    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 6.0, tokens: 0, unpricedTokens: 0 }]);
   });
 
   it("costSummary's live total reflects a session ending even with no new usage write (never memoized on usageVersion alone)", () => {
@@ -222,7 +269,9 @@ describe("Store usage rows", () => {
     const T = 1_700_000_000_000;
     store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 1.0 });
     expect(store.costSummary(T - 1).todayUsd).toBeCloseTo(1.0, 6); // midnight before the row -> included
-    expect(store.costSummary(T + 1).todayUsd).toBeCloseTo(0, 6); // a later "midnight" excludes it, distinct cache entry
+    // A later "midnight" excludes the row entirely -- SUM() over zero matching
+    // rows is NULL, not a fabricated $0.00 (§2.3); distinct cache entry either way.
+    expect(store.costSummary(T + 1).todayUsd).toBeNull();
   });
 
   it("records run_id and agent_id when given, NULL when not", () => {
@@ -266,6 +315,29 @@ describe("Store usage rows", () => {
     expect(a1.costUsd).toBeCloseTo(3, 6);
     expect(a1.tokens).toBe(30);
     expect(a1.phase_title).toBe("Explore");
+  });
+
+  it("workflowHistory never turns an unpriced agent's cost into a fabricated $0.00 (§2.3, finding)", () => {
+    const T = 1_700_000_000_000;
+    store.applyEvent("p", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_u", session_id: "p", dir: "/d/wf_u", status: "running", started_at: T });
+    store.upsertWorkflowAgent({ run_id: "wf_u", agent_id: "u1", state: "running" });
+    store.upsertWorkflowAgent({ run_id: "wf_u", agent_id: "u2", state: "running" });
+    // u1 is entirely unpriced (unknown model); u2 is normally priced.
+    store.recordUsage({ uuid: "wf_u-1", sessionId: "p", model: "totally-unknown-model", tokens: tok(8), at: T, cost: null, runId: "wf_u", agentId: "u1" });
+    store.recordUsage({ uuid: "wf_u-2", sessionId: "p", model: "claude-opus-5", tokens: tok(30), at: T, cost: 3, runId: "wf_u", agentId: "u2" });
+
+    const r = store.workflowHistory({}, T + 1000)[0];
+    const u1 = r.agents.find((a) => a.agent_id === "u1")!;
+    const u2 = r.agents.find((a) => a.agent_id === "u2")!;
+    expect(u1.costUsd).toBeNull(); // not a fabricated $0.00
+    expect(u1.unpricedTokens).toBe(8);
+    expect(u2.costUsd).toBeCloseTo(3, 6);
+    expect(u2.unpricedTokens).toBe(0);
+    // The run total is the KNOWN partial sum (u2's $3), not null and not $0 --
+    // u1's unknown portion is visible separately via the run's unpricedTokens.
+    expect(r.costUsd).toBeCloseTo(3, 6);
+    expect(r.unpricedTokens).toBe(8);
   });
 
   it("workflowHistory derives run state from liveness, not from the stored status", () => {

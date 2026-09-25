@@ -3,7 +3,10 @@ import { formatUsd, prettyModel } from "../cost.ts";
 import { SectionHeader } from "./primitives.tsx";
 
 export function CostPanel({ cost }: { cost: Cost }) {
-  if (cost.liveTotalUsd === 0 && cost.todayUsd === 0) return null;
+  // `todayUsd` is null both when nothing happened today and when everything
+  // that happened is unpriced -- treat null like 0 for the "nothing to show"
+  // check so a quiet server doesn't grow this section out of nowhere.
+  if (cost.liveTotalUsd === 0 && (cost.todayUsd === 0 || cost.todayUsd == null)) return null;
 
   return (
     <section className="mt-6">

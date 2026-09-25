@@ -6,7 +6,9 @@ interface Row {
   project: string;
   branch: string | null;
   day: string;
-  costUsd: number;
+  /** null when every usage row that day is unpriced -- never a fabricated
+   *  $0.00 (server: store.ts §2.3). */
+  costUsd: number | null;
   tokens: number;
 }
 type SortKey = "project" | "branch" | "day" | "costUsd" | "tokens";

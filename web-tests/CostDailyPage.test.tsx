@@ -45,6 +45,13 @@ describe("CostDailyPage", () => {
     expect(String(fn.mock.calls.at(-1)![0])).not.toContain("since="); // all → no bound
   });
 
+  it("renders a null (unpriced) cost row as text, instead of crashing the page (§2.3, finding)", async () => {
+    mockFetch([{ project: "gamma", branch: null, day: "2026-06-14", costUsd: null, tokens: 50 }]);
+    render(<CostDailyPage />);
+    expect(await screen.findByText("gamma")).toBeTruthy();
+    expect(screen.getByText("unpriced")).toBeTruthy();
+  });
+
   it("shows an empty state when there is no usage", async () => {
     mockFetch([]);
     render(<CostDailyPage />);

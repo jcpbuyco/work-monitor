@@ -1,4 +1,8 @@
-export function formatUsd(n: number): string {
+/** `null` means unpriced (an unknown model, or a row awaiting the next
+ *  repricing pass) -- never a fabricated $0.00 (server: pricing.ts §2.1/§2.3).
+ *  Renders as a plain word so it reads as "we don't know" rather than "free". */
+export function formatUsd(n: number | null): string {
+  if (n == null) return "unpriced";
   if (n > 0 && n < 0.01) return "<$0.01";
   return "$" + n.toFixed(2);
 }

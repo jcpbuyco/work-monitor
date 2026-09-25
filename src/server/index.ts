@@ -7,7 +7,10 @@ import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { createApp, createStateScheduler, type AppDeps } from "./http.ts";
 import { tailUsage } from "./usage.ts";
-import { repriceFiveSeries, REPRICE_MARKER } from "./reprice.ts";
+import { repriceIfNeeded } from "./reprice.ts";
+import { dedupeHistoricUsage } from "./usage-dedupe.ts";
+import { mergeOrphanMessageKeys } from "./usage-orphan-merge.ts";
+import { sweepSubagents, backfillSubagents } from "./subagents.ts";
 import {
   PORT,
   HOST,
@@ -21,7 +24,7 @@ import {
   WF_TICK_MS,
   WORKFLOWS_ENABLED,
 } from "./config.ts";
-import { backfillWorkflows, logOnce, bumpDegraded, workflowTick } from "./workflows.ts";
+import { backfillWorkflows, logOnce, bumpDegraded, workflowTick, sessionDirFor } from "./workflows.ts";
 import { backfillEventsColumns } from "./events-migrate.ts";
 import { retentionSweep, runPendingVacuum } from "./retention.ts";
 
@@ -70,11 +73,30 @@ const server = createServer(async (req, res) => {
   await app(req, res);
 });
 
+// Runs exactly once, on the FIRST 60s sweep tick below -- see the
+// usage-orphan-merge module doc for why it cannot run any earlier at startup
+// (the "later" half of a split message has not been tailed yet at that point)
+// or on every tick thereafter (its one job, per database, is done after that).
+let orphanMergeAttempted = false;
+
 setInterval(() => {
   const affected = store.sweepStale(Date.now(), STALE_MS, DEAD_MS, NEEDS_YOU_DEAD_MS);
   let changed = affected.length > 0;
+  const now = Date.now();
   for (const s of store.sessionsToTail()) {
     if (tailUsage(store, s)) changed = true;
+    // §2.4: Task subagents live under the same session's transcript dir --
+    // ride the same 60s cadence rather than adding a third interval.
+    if (s.transcript_path && sweepSubagents(store, s.id, sessionDirFor(s.transcript_path), now)) changed = true;
+  }
+  if (!orphanMergeAttempted) {
+    orphanMergeAttempted = true;
+    try {
+      const { merged } = mergeOrphanMessageKeys(store);
+      if (merged > 0) changed = true;
+    } catch (err) {
+      if (logOnce("usage-orphan-merge", err)) bumpDegraded();
+    }
   }
   if (changed) scheduleState();
 }, SWEEP_INTERVAL_MS);
@@ -107,12 +129,31 @@ if (WORKFLOWS_ENABLED) {
   setInterval(() => workflowTick(store, sse, Date.now()), WF_TICK_MS);
 }
 
-// One-shot: reprice the pre-existing $0.00 5-series rows (spec §0b). Gated behind
-// AM_REPRICE=1 for the manual first run and guarded by a marker so a restart
-// cannot re-run it.
-if (process.env.AM_REPRICE === "1" && !store.getMeta(REPRICE_MARKER)) {
-  const r = repriceFiveSeries(store, Date.now());
-  console.log(`[reprice] sessions=${r.sessions} deleted=${r.deleted} re-tailed=${r.recorded}`);
+// One-time (§2.2): collapse historic usage rows that pre-date message_key,
+// back up the DB first (§1.4). Guarded by app_meta `usage_dedupe_v1`. Wrapped
+// in try/catch like wf-backfill below: this is a destructive migration, so
+// failing CLOSED on it (the marker stays unset, so it retries next boot) is
+// right, but failing the WHOLE server over it -- a crash loop under systemd --
+// is not. The module itself already logs row counts and cost totals, so this
+// only logs elapsed time, never a near-duplicate of that line (past finding).
+try {
+  const t0 = Date.now();
+  const r = dedupeHistoricUsage(store, DB_PATH, t0);
+  if (r.deleted > 0) console.log(`[usage-dedupe] completed in ${Date.now() - t0}ms`);
+} catch (err) {
+  if (logOnce("usage-dedupe", err)) bumpDegraded();
+}
+
+// Generic reprice (§2.3): whenever the rate table changes (RATES_VERSION),
+// recompute cost_usd for every row from its stored tokens/model. Runs after
+// the dedupe above so it prices the corrected (deduped) token values, and is
+// a no-op once app_meta.rates_version already matches.
+try {
+  const t0 = Date.now();
+  const r = repriceIfNeeded(store, t0);
+  if (r) console.log(`[reprice] ${r.updated} rows repriced to rates ${r.version} in ${Date.now() - t0}ms`);
+} catch (err) {
+  if (logOnce("reprice", err)) bumpDegraded();
 }
 
 if (WORKFLOWS_ENABLED) {
@@ -123,6 +164,16 @@ if (WORKFLOWS_ENABLED) {
   } catch (err) {
     if (logOnce("wf-backfill", err)) bumpDegraded();
   }
+}
+
+// One-time startup pass (§2.4): ingest Task subagents for every known session
+// plus a global glob for sessions the store doesn't have a row for yet.
+try {
+  const t0 = Date.now();
+  const { discovered, recorded } = backfillSubagents(store, t0);
+  console.log(`[subagents-backfill] discovered=${discovered} recorded=${recorded} in ${Date.now() - t0}ms`);
+} catch (err) {
+  if (logOnce("subagents-backfill", err)) bumpDegraded();
 }
 
 // One-shot: populate the new `events` columns for historic rows and rebuild

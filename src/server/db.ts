@@ -73,7 +73,7 @@ export function migrate(db: Database): void {
       cache_read_tokens INTEGER NOT NULL DEFAULT 0,
       cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
       cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0,
-      cost_usd REAL NOT NULL,
+      cost_usd REAL,
       project TEXT,
       branch TEXT,
       at INTEGER NOT NULL
@@ -103,6 +103,20 @@ export function migrate(db: Database): void {
       total_tokens_reported INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at);
+    CREATE TABLE IF NOT EXISTS subagents (
+      agent_id       TEXT PRIMARY KEY,
+      session_id     TEXT NOT NULL,
+      agent_type     TEXT,
+      description    TEXT,
+      model          TEXT,
+      model_resolved INTEGER NOT NULL DEFAULT 0,
+      parent_agent_id TEXT,
+      path           TEXT NOT NULL,
+      offset         INTEGER NOT NULL DEFAULT 0,
+      started_at     INTEGER,
+      last_seen_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_subagents_session ON subagents(session_id);
     CREATE TABLE IF NOT EXISTS workflow_agents (
       run_id            TEXT NOT NULL,
       agent_id          TEXT NOT NULL,
@@ -153,7 +167,76 @@ export function migrate(db: Database): void {
   if (!usageCols.some((c) => c.name === "agent_id")) {
     db.exec("ALTER TABLE usage ADD COLUMN agent_id TEXT;");
   }
+  // §2.2: ties every content-block line of one API message together so
+  // recordUsage can upsert instead of inserting one priced row per line.
+  if (!usageCols.some((c) => c.name === "message_key")) {
+    db.exec("ALTER TABLE usage ADD COLUMN message_key TEXT;");
+  }
+  // §4.1: nullable now (NULL means claude for pre-existing rows); populated by
+  // later ingestion work. Added now so that work never needs its own migration.
+  if (!usageCols.some((c) => c.name === "harness")) {
+    db.exec("ALTER TABLE usage ADD COLUMN harness TEXT;");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);");
+  // Partial: only Claude lines with a `message.id` populate this, and two
+  // NULLs never conflict, so pre-message_key historic rows (and any future
+  // source that never gets one) are simply never indexed here.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_message_key ON usage(message_key) WHERE message_key IS NOT NULL;");
+
+  // §2.3: cost_usd becomes nullable (NULL = unpriced, never a silent $0.00).
+  // The base CREATE TABLE above already declares it nullable, so a brand-new
+  // database never hits this. SQLite has no ALTER COLUMN DROP NOT NULL, so a
+  // pre-existing DB (`cost_usd REAL NOT NULL` from before this change) needs a
+  // table rebuild instead -- gated on the column's OWN nullability (via
+  // PRAGMA), not an app_meta flag, so it runs exactly once per database
+  // regardless of when it upgrades and needs no separate one-shot marker.
+  // Runs AFTER the ADD COLUMN steps above so every current column can be
+  // carried over by name.
+  const costCol = (db.query("PRAGMA table_info(usage)").all() as { name: string; notnull: number }[]).find(
+    (c) => c.name === "cost_usd"
+  );
+  if (costCol && costCol.notnull === 1) {
+    db.transaction(() => {
+      db.exec("ALTER TABLE usage RENAME TO usage_pre_nullable_cost;");
+      db.exec(`
+        CREATE TABLE usage (
+          message_uuid TEXT PRIMARY KEY,
+          message_key TEXT,
+          session_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL,
+          project TEXT,
+          branch TEXT,
+          at INTEGER NOT NULL,
+          run_id TEXT,
+          agent_id TEXT,
+          harness TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO usage (message_uuid, message_key, session_id, model, input_tokens, output_tokens,
+          cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
+          run_id, agent_id, harness)
+        SELECT message_uuid, message_key, session_id, model, input_tokens, output_tokens,
+          cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
+          run_id, agent_id, harness
+        FROM usage_pre_nullable_cost;
+      `);
+      db.exec("DROP TABLE usage_pre_nullable_cost;");
+    })();
+  }
+  // Recreated unconditionally (IF NOT EXISTS): the rebuild above drops every
+  // index along with the renamed table, and this must not depend on the
+  // top-of-function CREATE INDEX statements having run again in THIS call.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage(session_id);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_message_key ON usage(message_key) WHERE message_key IS NOT NULL;");
   // Idempotent: real columns for the fields every activity row already carries
   // in its JSON payload, so hot-path reads (recentActivity, toolStats) never
   // need to parse it. A one-time backfill (events-migrate.ts, guarded by
