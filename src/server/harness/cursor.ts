@@ -61,7 +61,9 @@ export function normalizeCursorPayload(payload: Record<string, unknown>): Cursor
   return {
     sessionId,
     cwd: ownCwd ?? rootCwd,
-    model: typeof payload.model === "string" ? payload.model : null,
+    // A sessionStart without --model reports "unknown"; the resolved model
+    // arrives on the next event, so the placeholder must not be stored.
+    model: typeof payload.model === "string" && payload.model && payload.model !== "unknown" ? payload.model : null,
     harnessVersion: typeof payload.cursor_version === "string" ? payload.cursor_version : null,
     durationMs: typeof payload.duration === "number" && Number.isFinite(payload.duration) ? payload.duration : null,
   };

@@ -67,6 +67,11 @@ describe("normalizeCursorPayload (§4.3, table-tested on real captures)", () => 
     expect(n.durationMs).toBeNull();
   });
 
+  it("drops the 'unknown' placeholder model a default-model sessionStart carries", () => {
+    expect(normalizeCursorPayload({ ...SESSION_START, model: "unknown" }).model).toBeNull();
+    expect(normalizeCursorPayload({ ...SESSION_START, model: "" }).model).toBeNull();
+  });
+
   it("preToolUse: cwd falls back to workspace_roots[0] when the tool's own cwd is empty string", () => {
     const n = normalizeCursorPayload(PRE_TOOL_USE);
     expect(n.cwd).toBe("/abs/path/to/project");
