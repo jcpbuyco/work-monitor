@@ -52,7 +52,7 @@ export function CostBreakdown({ cost }: { cost: Cost }) {
     // branch name, same as the NUL did, but no longer makes `file`/`grep`
     // classify this file as binary.
     key: `${b.project}␟${b.branch ?? ""}`,
-    label: `${b.project} · ${b.branch ?? "—"}`,
+    label: `${b.project} · ${b.branch ?? "-"}`,
     costUsd: b.costUsd,
     tokens: b.tokens,
   }));

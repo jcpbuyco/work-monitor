@@ -27,7 +27,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  // The SSE stream test leaves a connection open (by design — that is the
+  // The SSE stream test leaves a connection open (by design - that is the
   // long-lived /api/stream response) and `reader.cancel()` on the client does
   // not synchronously tear down the server-side socket. Without this,
   // server.close() waits forever for that connection to end.
@@ -69,7 +69,7 @@ describe("POST /events", () => {
     await post("session_start", { session_id: "sa", cwd: "/x/repo" });
     await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Read", tool_input: { file_path: "/x/repo/src/web/Board.tsx" } });
     await post("activity", { session_id: "sa", cwd: "/x/repo", tool_name: "Bash", tool_input: { description: "run tests", command: "bun test" }, duration_ms: 1500 });
-    await post("activity", { session_id: "sa", cwd: "/x/repo" }); // no tool_name — excluded
+    await post("activity", { session_id: "sa", cwd: "/x/repo" }); // no tool_name - excluded
     const state = (await (await fetch(`${base}/api/state`)).json()) as any;
     expect(Array.isArray(state.activity)).toBe(true);
     const tools = state.activity.map((a: any) => a.tool);
@@ -435,6 +435,21 @@ describe("GET /api/cost/daily", () => {
     const body = (await res.json()) as any;
     expect(Array.isArray(body.rows)).toBe(true);
   });
+
+  it("§5.3: returns a harness column, and the harness param narrows to it", async () => {
+    store.applyEvent("h", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    const z = { input: 0, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 };
+    store.recordUsage({ uuid: "hu1", sessionId: "h", model: "claude-opus-4-8", tokens: z, at: T, cost: 1.0, harness: "claude" });
+    store.recordUsage({ uuid: "hu2", sessionId: "h", model: "gpt-5.3-codex", tokens: z, at: T, cost: 2.0, harness: "codex" });
+
+    const all = (await (await fetch(`${base}/api/cost/daily`)).json()) as any;
+    expect(new Set(all.rows.map((r: any) => r.harness))).toEqual(new Set(["claude", "codex"]));
+
+    const codexOnly = (await (await fetch(`${base}/api/cost/daily?harness=codex`)).json()) as any;
+    expect(codexOnly.rows.length).toBe(1);
+    expect(codexOnly.rows[0].costUsd).toBeCloseTo(2.0, 6);
+  });
 });
 
 describe("GET /api/workflows", () => {
@@ -511,6 +526,16 @@ describe("GET /api/workflows", () => {
     expect(Array.isArray(((await res.json()) as any).runs)).toBe(true);
   });
 
+  it("§5.3: the project param filters to an exact project match", async () => {
+    seed("wf_a", T); // project "alpha"
+    store.applyEvent("q", { status: "working", project: "alphabet", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_b", session_id: "q", dir: "/d/wf_b", name: "research", status: "completed", manifest_seen: true, last_seen_at: T, started_at: T });
+    const alpha = (await (await fetch(`${base}/api/workflows?project=alpha`)).json()) as any;
+    expect(alpha.runs.map((r: any) => r.run_id)).toEqual(["wf_a"]);
+    const alphabet = (await (await fetch(`${base}/api/workflows?project=alphabet`)).json()) as any;
+    expect(alphabet.runs.map((r: any) => r.run_id)).toEqual(["wf_b"]);
+  });
+
   it("keeps workflows OUT of the state blob (buildState must not get slower)", () => {
     const state = buildState(store) as any;
     expect(state.workflows).toBeUndefined();
@@ -531,7 +556,7 @@ describe("workflows on the stream", () => {
 
   it("exposes workflows_degraded as a top-level scalar reflecting the shared counter, not nested under cost", () => {
     // `typeof === "number"` alone would pass for a hardcoded `workflows_degraded: 0`
-    // in buildState() — drive the counter to a known, non-zero value through its
+    // in buildState() - drive the counter to a known, non-zero value through its
     // own public API and assert buildState() reflects that EXACT value, proving
     // it is actually wired to workflowsDegraded() and not a stub.
     resetDegraded();

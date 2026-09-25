@@ -4,28 +4,17 @@ import { ago } from "../time.ts";
 import { prettyTool, toolDot, formatDur } from "../tools.ts";
 import { useFeedLimit } from "../useFeedLimit.ts";
 import { HarnessMark } from "./HarnessMark.tsx";
-import { SectionHeader, Rail, ROW_BASE, ROW_TONE } from "./primitives.tsx";
+import { SectionHeader, Rail, ROW_BASE, ROW_TONE, DownCaret } from "./primitives.tsx";
 
 /** Bottom fade so the feed ends instead of being guillotined. React does not
  *  auto-prefix maskImage, so BOTH properties are set to the SAME value. rem,
  *  not px, so the fade scales with the text-size ladder. */
 const FADE = "linear-gradient(to bottom,#000 calc(100% - 1.5rem),transparent)";
 
-const CARET =
-  "M2.5 4.5 6 8l3.5-3.5";
-
-function DownCaret() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 12 12" className="pointer-events-none absolute right-2 h-2.5 w-2.5 text-ink-4">
-      <path d={CARET} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 export function ActivityFeed({ activity, sessions }: { activity: Activity[]; sessions: Session[] }) {
   const { limit, setLimit, options } = useFeedLimit();
   const [sessionFilter, setSessionFilter] = useState<string>("all");
-  const projectFor = (id: string) => sessions.find((s) => s.id === id)?.project ?? "—";
+  const projectFor = (id: string) => sessions.find((s) => s.id === id)?.project ?? "-";
   const labelFor = (a: Activity) => a.session_label ?? projectFor(a.session_id);
 
   // §5.2: distinct sessions actually present in the feed, for the filter
@@ -124,7 +113,16 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                     </div>
                   </div>
                   <div className="flex items-baseline gap-2 pl-rail">
-                    <span className="min-w-0 flex-1 truncate text-ink-3">{a.detail ?? ""}</span>
+                    {/* Finding fix: this sidebar is a FIXED 20rem column
+                        (Board.tsx) regardless of viewport width, so the
+                        session-label span's old `max-w-[14rem]` cap (over
+                        two-thirds of the whole row) squeezed this - the
+                        actual tool-call detail, the primary content of a Live
+                        Activity row - down to a handful of characters
+                        ("Look …") at every desktop width. `min-w` gives it a
+                        readable floor before the label wrapper's own cap
+                        below gets to claim the rest. */}
+                    <span className="min-w-[6rem] flex-1 truncate text-ink-3">{a.detail ?? ""}</span>
                     {/* §5.2: harness mark + session label + agent label, replacing
                         the bare project - the thing that used to make every row
                         under a workflow read as the same undifferentiated
@@ -135,9 +133,11 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                         label - the one thing that actually tells sibling
                         workflow-agent rows apart - never rendered at all. The
                         agent label now has its own `shrink-0` span so it always
-                        shows in full; only the session label truncates. */}
+                        shows in full; only the session label truncates. Its own
+                        max-width was also cut from 14rem to 8rem (finding fix,
+                        above) so it can no longer eat most of the row on its own. */}
                     <span
-                      className="flex min-w-0 max-w-[14rem] shrink items-center gap-1 text-ink-4"
+                      className="flex min-w-0 max-w-[8rem] shrink items-center gap-1 text-ink-4"
                       title={labelFor(a) + (a.label ? ` · ${a.label}` : "")}
                     >
                       <HarnessMark harness={a.harness ?? "claude"} />

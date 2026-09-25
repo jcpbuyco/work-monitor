@@ -22,7 +22,7 @@ interface TodoItem {
 // synthetic "task finished" notifications too, injecting this XML wrapper as
 // the prompt text with no other marker distinguishing it from a real,
 // human-typed prompt. Keyed only off the one shape actually observed in real
-// data — see investigation notes for the survey across stored prompt events.
+// data - see investigation notes for the survey across stored prompt events.
 const SYNTHETIC_PROMPT_PREFIXES = ["<task-notification>"];
 
 export function isSyntheticPrompt(prompt: string): boolean {

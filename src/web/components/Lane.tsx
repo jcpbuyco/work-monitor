@@ -77,7 +77,7 @@ export function Lane({
         <span className="text-2xs text-ink-4">{hint}</span>
         {right && <div className="ml-auto flex items-center">{right}</div>}
       </div>
-      {/* was: grid grid-cols-1 sm:grid-cols-3 gap-3 — todos and sessions are
+      {/* was: grid grid-cols-1 sm:grid-cols-3 gap-3 - todos and sessions are
           list-shaped; a single column is what makes them scannable */}
       <div>{children}</div>
     </section>

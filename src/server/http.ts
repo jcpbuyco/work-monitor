@@ -126,7 +126,7 @@ export function buildState(store: StoreType) {
     todos: store.listTodos(),
     activity: store.recentActivity(ACTIVITY_LIMIT),
     stats: store.toolStats(),
-    // A scalar sibling of sessions/todos/activity/stats/cost — NOT nested in cost,
+    // A scalar sibling of sessions/todos/activity/stats/cost - NOT nested in cost,
     // and never an array. buildState() must stay under 50ms warm (§1.3;
     // scripts/profile-state.ts measures it) - it must not get slower.
     // §3: the process-lifetime counter (non-run causes: a broadcast that threw,
@@ -300,9 +300,11 @@ export function createApp(deps: AppDeps) {
           const n = v == null ? NaN : Number(v);
           return Number.isFinite(n) ? n : undefined;
         };
+        const harness = url.searchParams.get("harness");
         const rows = store.costDaily({
           since: num(url.searchParams.get("since")),
           until: num(url.searchParams.get("until")),
+          harness: harness && harness.trim() ? harness.trim() : undefined,
         });
         json(res, 200, { rows });
         return;
@@ -318,8 +320,10 @@ export function createApp(deps: AppDeps) {
           return Number.isFinite(n) ? n : undefined;
         };
         const q = url.searchParams.get("q");
+        const project = url.searchParams.get("project");
         const { runs, total } = store.workflowList({
           q: q && q.trim() ? q.trim() : undefined,
+          project: project && project.trim() ? project.trim() : undefined,
           since: num(url.searchParams.get("since")),
           until: num(url.searchParams.get("until")),
           limit: num(url.searchParams.get("limit")),

@@ -1,14 +1,14 @@
 import type { HTMLAttributes, ReactNode } from "react";
 
 /** React's HTMLAttributes has no index signature, and the JSX checker only
- *  special-cases data-* on intrinsic elements — so a component that forwards
+ *  special-cases data-* on intrinsic elements - so a component that forwards
  *  them has to declare them. */
 type DataAttrs = { [k: `data-${string}`]: string | undefined };
 
 /** THE rail. Every list row's leading mark sits in this fixed-width slot, so
  *  line-1 text starts at exactly --rail no matter how wide the mark is (14px
  *  glyph, 16px checkbox, 6px dot). Rows put NO gap at this level and nest their
- *  content in a gapped flex — see the row components. */
+ *  content in a gapped flex - see the row components. */
 export function Rail({ children }: { children?: ReactNode }) {
   return <span className="flex w-rail shrink-0 items-center justify-center">{children}</span>;
 }
@@ -34,7 +34,21 @@ export function ListRow({
   return <div className={`${ROW_BASE} ${ROW_TONE[tone]} ${className}`} {...rest} />;
 }
 
-/** 10px disclosure caret. aria-hidden, so it never enters an accessible name —
+const DOWN_CARET_PATH = "M2.5 4.5 6 8l3.5-3.5";
+
+/** The decorative caret on a plain `<select>` styled with `appearance-none`
+ *  (ActivityFeed's session/limit selects; the Workflows/Cost pages' project
+ *  and harness filters). One shared shape so a native select's affordance
+ *  looks identical everywhere it's re-skinned. */
+export function DownCaret() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 12 12" className="pointer-events-none absolute right-2 h-2.5 w-2.5 text-ink-4">
+      <path d={DOWN_CARET_PATH} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 10px disclosure caret. aria-hidden, so it never enters an accessible name -
  *  which is why `"▸ ★ Todos (5)"` can become `"★ Todos (5)"` with every role
  *  query in the suite still matching. */
 export function Chevron({ open }: { open: boolean }) {
@@ -53,7 +67,7 @@ export function Chevron({ open }: { open: boolean }) {
 }
 
 /** The uppercase micro-label idiom, which occurred 12 times across 9 files.
- *  `label` is ONE string in ONE element — including its parenthesised count —
+ *  `label` is ONE string in ONE element - including its parenthesised count -
  *  because accessible-name computation concatenates element text with
  *  unpredictable spacing and three of these names are regex-pinned by tests. */
 export function SectionHeader({
@@ -112,7 +126,7 @@ const CHIP_TONE = {
 /** A LOOKUP, never `text-${size}`: Tailwind's content scanner is a regex over
  *  source text and cannot see an interpolated class name. Written this way both
  *  classes are literal in this file, so they are guaranteed emitted from Task 2
- *  onward — no safelist, and no window (Tasks 5/8, before the §4.12 group labels
+ *  onward - no safelist, and no window (Tasks 5/8, before the §4.12 group labels
  *  land) where `text-3xs` exists nowhere in the source and chips render at the
  *  inherited size. */
 const CHIP_SIZE = { "3xs": "text-3xs", "2xs": "text-2xs" } as const;
@@ -229,7 +243,7 @@ export function Segmented<T extends string | number>({
 }
 
 /** Shared chrome for #/cost and #/workflows. HARD CONSTRAINT: this must
- *  introduce no <button> whose accessible name contains "cost" — two tests do
+ *  introduce no <button> whose accessible name contains "cost" - two tests do
  *  getByRole("button", { name: /cost/i }) expecting the Cost COLUMN header.
  *  `← Dashboard` is therefore an <a> and the title a <span>. */
 export function PageHeader({ title, right }: { title: string; right?: ReactNode }) {

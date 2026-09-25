@@ -210,7 +210,7 @@ export function setupCursor(env: SetupEnv) {
 /** One-time migration: supersede a pre-rename work-monitor install. Stale
  *  hook entries are pruned automatically by mergeHooks; here we drop the old
  *  systemd unit + MCP registration so a single `bun run setup` fully cleans up.
- *  All best-effort — fresh installs have nothing to remove. */
+ *  All best-effort - fresh installs have nothing to remove. */
 export function cleanupLegacy(env: SetupEnv) {
   try {
     env.exec("systemctl", ["--user", "disable", "--now", "wm-server.service"], { stdio: "ignore" });

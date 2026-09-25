@@ -5,19 +5,19 @@ import { takeUsage } from "./usage.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS, CLAUDE_PROJECTS_DIR } from "./config.ts";
 import { truncate } from "./derive.ts";
 
-/** A session's on-disk directory is its transcript path minus `.jsonl` — exact
+/** A session's on-disk directory is its transcript path minus `.jsonl` - exact
  *  for 20 of 20 surveyed runs (C9). Never recompute the project slug from cwd. */
 export function sessionDirFor(transcriptPath: string): string {
   return transcriptPath.replace(/\.jsonl$/, "");
 }
 
-/** Liveness from two independent signals — structure (`manifest_seen`) and motion
+/** Liveness from two independent signals - structure (`manifest_seen`) and motion
  *  (`last_seen_at`, which is the run dir's mtime OR the newest mtime among the
- *  run's agent-*.jsonl/journal files, as of the last tick that saw it — NOT the
+ *  run's agent-*.jsonl/journal files, as of the last tick that saw it - NOT the
  *  time we last looked). Pure: no I/O, no agent argument.
  *
  *  Rules in force order (spec §1.4):
- *   1. manifest + quiet ⇒ settled. A manifest is terminal for STRUCTURE only —
+ *   1. manifest + quiet ⇒ settled. A manifest is terminal for STRUCTURE only -
  *      it never stops cost tailing, which is why "running" wins while the dir moves.
  *   2. quiet with no manifest, or an ended owning session ⇒ orphaned (display only,
  *      never persisted; self-healing if files move again).
@@ -38,13 +38,13 @@ export function deriveRunState(
 }
 
 /** One console.warn per key per process, modelled on the `warned` Set in
- *  pricing.ts. Keys are run ids — once per run, not per tick (§5.5). */
+ *  pricing.ts. Keys are run ids - once per run, not per tick (§5.5). */
 const warnedRuns = new Set<string>();
 
 /** The serialized `liveWorkflows` payload last put on the wire (§3.1).
  *
- *  This is THE broadcast contract, and the only one: a tick broadcasts when —
- *  and only when — the payload it would send differs from the one the client
+ *  This is THE broadcast contract, and the only one: a tick broadcasts when -
+ *  and only when - the payload it would send differs from the one the client
  *  already has. No scan signal, derived-state cache or `changed` boolean feeds
  *  that decision any more, so there is nothing left for it to disagree with.
  *  Two rejected attempts died on exactly that disagreement: a remembered
@@ -63,8 +63,8 @@ const lastBroadcast = new WeakMap<Store, string>();
  *  cross-check has already had its one shot, keyed per Store (a fresh Store per
  *  test means no cross-test pollution). The check needs a full pass (to re-read
  *  the manifest and query the usage rollup), but the disk-motion flags below
- *  are false BY DEFINITION on the exact tick a run goes quiet — that's what
- *  "settled" means — so without this a run discovered while ACTIVE would hit
+ *  are false BY DEFINITION on the exact tick a run goes quiet - that's what
+ *  "settled" means - so without this a run discovered while ACTIVE would hit
  *  the cheap-re-stat early return forever and never get checked (findings 5 &
  *  7). The shot is consumed after ONE attempt whatever that attempt found, so
  *  the forced pass is a one-time cost per run and can never become a recurring
@@ -84,7 +84,7 @@ export function workflowsDegraded(): number {
 export function bumpDegraded(n = 1): void {
   degraded += n;
 }
-/** Tests only. Clears the once-per-key log memory as well as the counter — the
+/** Tests only. Clears the once-per-key log memory as well as the counter - the
  *  two are coupled now, and fixtures reuse a fixed run id (`wf_t1`) across tests,
  *  so a stale key would silently suppress the next test's bump. */
 export function resetDegraded(): void {
@@ -193,7 +193,7 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 
 /** Parse a workflow manifest. Returns null only when the text is not JSON at all;
  *  a structurally surprising manifest still yields a partial view with
- *  `schema_ok = false` (the toolStats() precedent — degrade, never throw). */
+ *  `schema_ok = false` (the toolStats() precedent - degrade, never throw). */
 export function parseManifest(text: string): ManifestView | null {
   let o: any;
   try {
@@ -254,7 +254,7 @@ export function parseManifest(text: string): ManifestView | null {
 
   return {
     name: str(o.workflowName),
-    status: str(o.status), // RAW passthrough — no enum, no validation
+    status: str(o.status), // RAW passthrough - no enum, no validation
     summary: str(o.summary),
     started_at: num(o.startTime),
     ended_at: Number.isFinite(endedAt) ? endedAt : null,
@@ -289,7 +289,7 @@ export interface JournalAgent {
 /** Reduce a run's journal.jsonl into per-agent states (§1.3, C7; §3 for
  *  `launched`/`failed`/label/phase).
  *
- *  `key` is an opaque content hash (`v2:<sha256>`) — a grouping key only, never
+ *  `key` is an opaque content hash (`v2:<sha256>`) - a grouping key only, never
  *  rendered. Journal lines carry no timestamp, so FILE ORDER is the tiebreak:
  *  the last agentId seen for a key wins and earlier ones become `abandoned`.
  *  Abandoned agents keep their row so their tokens still attribute.
@@ -402,7 +402,7 @@ export function parseAgentMeta(
 
 /** Read what we need from the head of an agent transcript: the Claude Code
  *  `version` (for the "format last verified on X" badge), the first line
- *  carrying a `message.model` (the fallback when the meta file omits `model` —
+ *  carrying a `message.model` (the fallback when the meta file omits `model` -
  *  32 of 116 do), and the prompt preview.
  *
  *  `head` is the first few KB of the file; pass whatever you have. */
@@ -433,7 +433,7 @@ export function parseAgentHeader(head: string): {
         const part = content.find((c: any) => typeof c?.text === "string");
         text = str(part?.text);
       }
-      // 160 MUST be passed explicitly — truncate()'s default is MAX_INTENT_LEN (140).
+      // 160 MUST be passed explicitly - truncate()'s default is MAX_INTENT_LEN (140).
       if (text) prompt_preview = truncate(text, 160);
     }
     if (cc_version && model && prompt_preview) break;
@@ -443,7 +443,7 @@ export function parseAgentHeader(head: string): {
 
 /** The workflow script is the ONLY live source of phase titles. It is plain JS
  *  with an `export const meta = { name, description, phases: [{title, detail}] }`
- *  header, so this is a deliberately shallow regex read of that header — not a
+ *  header, so this is a deliberately shallow regex read of that header - not a
  *  parser. Best-effort: 2 of 20 runs have no script at all and 3 more have one
  *  only under a sibling project slug, which we deliberately do NOT search (§1.3).
  *  A miss costs a phase label on a live run; the completed run gets full phases
@@ -472,7 +472,7 @@ function readdirSafe(p: string): string[] {
   }
 }
 
-/** Primary script lookup, matched by the `-<runId>.js` SUFFIX — never by the
+/** Primary script lookup, matched by the `-<runId>.js` SUFFIX - never by the
  *  manifest's `scriptPath`, whose filename is unreliable (C11). One readdir of a
  *  small dir; cheap enough to run on every ACTIVE tick. 15 of 20 runs hit here. */
 export function findScriptFile(sessionDir: string, runId: string): string | null {
@@ -485,13 +485,13 @@ export function findScriptFile(sessionDir: string, runId: string): string | null
  *  Code writes that run's script under a DIFFERENT project slug carrying the SAME
  *  sessionId (3 of 20 runs). Equivalent to the glob
  *  `~/.claude/projects/*<sessionId>/workflows/scripts/*-<runId>.js`, with the
- *  projects root derived by path structure — <sessionDir> is
+ *  projects root derived by path structure - <sessionDir> is
  *  <root>/<slug>/<sessionId>, so the root is two levels up. That keeps the search
  *  inside the tree that already holds the run and needs no config (the same
  *  resolve-by-structure rule the backfill uses).
  *
  *  Pinned to ONE sessionId and ONE runId: a readdir per slug, never a tree walk.
- *  The CALLER is responsible for running this at most once per run (Task 12) —
+ *  The CALLER is responsible for running this at most once per run (Task 12) -
  *  it must never land on a steady-state 5s tick. */
 export function findScriptAcrossSlugs(sessionDir: string, runId: string): string | null {
   const sessionId = basename(sessionDir);
@@ -528,7 +528,7 @@ function readFileSafe(p: string): string {
   }
 }
 
-/** First `bytes` of a file — enough for version/model/prompt without paying for a
+/** First `bytes` of a file - enough for version/model/prompt without paying for a
  *  6.3MB read. */
 function readHead(path: string, bytes = 8192): string {
   let fd: number;
@@ -554,7 +554,7 @@ function readHead(path: string, bytes = 8192): string {
  *  (assistant) transcript line, and the FIRST (user) line alone reaches
  *  65,902 bytes on real transcripts, with the model line itself starting as
  *  late as byte 86,774. A bigger fixed constant would just move the cliff, so
- *  this grows instead — bounded so a pathological transcript can't turn one
+ *  this grows instead - bounded so a pathological transcript can't turn one
  *  header read into a multi-MB scan. */
 const HEADER_READ_CAP = 256 * 1024;
 
@@ -566,7 +566,7 @@ const HEADER_READ_CAP = 256 * 1024;
  *  bounded cost that stops for good the moment a real model id resolves --
  *  not a per-5s-tick one, since a full pass only happens when the disk moved.
  *
- *  File size is checked via `statSync`, not the decoded string's `.length` —
+ *  File size is checked via `statSync`, not the decoded string's `.length` -
  *  a multi-byte UTF-8 line (non-English prompt text, emoji, …) decodes to
  *  fewer UTF-16 code units than bytes read, so comparing string length
  *  against the byte budget would signal "hit EOF" prematurely and stop
@@ -590,7 +590,7 @@ export function readAgentHeader(path: string): ReturnType<typeof parseAgentHeade
  *
  *  Returns true when this pass changed something durable (new run, disk motion,
  *  manifest arrived or was rewritten in place, or usage recorded). That boolean
- *  is INTERNAL BOOKKEEPING ONLY — the SSE broadcast no longer keys off it, or
+ *  is INTERNAL BOOKKEEPING ONLY - the SSE broadcast no longer keys off it, or
  *  off anything else this function knows. Whether the client is told is decided
  *  in workflowTick by diffing the payload itself (§3.1).
  *
@@ -601,10 +601,10 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const prev = store.getWorkflowRun(t.run_id);
   // NOTE: the scanner never calls deriveRunState. Liveness is derived at READ time
   // (hydrateWorkflowRuns / liveWorkflows), from `manifest_seen` + `last_seen_at` +
-  // the joined session status — so nothing here needs the owning session's status.
+  // the joined session status - so nothing here needs the owning session's status.
 
   // The manifest lives OUTSIDE the run dir, so neither its arrival nor an in-place
-  // rewrite bumps the run dir mtime — it has to be stat'd explicitly, and its own
+  // rewrite bumps the run dir mtime - it has to be stat'd explicitly, and its own
   // mtime remembered.
   const sessionDir = resolve(t.dir, "..", "..", "..");
   const manifestPath = join(sessionDir, "workflows", `${t.run_id}.json`);
@@ -629,18 +629,18 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   const offsets = new Map(store.workflowAgentOffsets(t.run_id).map((o) => [o.agent_id, o.offset]));
   const files: { agent_id: string; path: string }[] = [];
   let grew = false;
-  // last_seen_at (spec §1.4): the BLEND — max(run dir mtime, journal.jsonl
+  // last_seen_at (spec §1.4): the BLEND - max(run dir mtime, journal.jsonl
   // mtime, every agent-*.jsonl mtime). PURE disk truth, never `now`. An append
   // bumps that FILE's own mtime even when it leaves the run dir's mtime
   // untouched (rule 3: "an append to an ALREADY-TRACKED transcript... leaves
   // the dir mtime alone"), so this un-settles a growing run without ever
   // fabricating a clock reading, and it settles correctly the instant real
-  // writes stop — including a transcript stuck at size > offset forever (an
+  // writes stop - including a transcript stuck at size > offset forever (an
   // unterminated trailing line): its mtime freezes the moment writes actually
   // stop, independent of the offset.
   //
   // The SAME value is the full-pass trigger below, the `quiet` input, and what
-  // gets persisted — one number, three uses, incapable of disagreeing.
+  // gets persisted - one number, three uses, incapable of disagreeing.
   let lastSeenAt = mtime;
   for (const name of readdirSafe(t.dir)) {
     const m = AGENT_RE.exec(name);
@@ -654,7 +654,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     }
     files.push({ agent_id: m[1], path });
     // Size-vs-offset is a signal to bypass the cheap early-return and pay for
-    // the tail below — NEVER a liveness input (a file stuck with an
+    // the tail below - NEVER a liveness input (a file stuck with an
     // unterminated final line satisfies this forever; see `lastSeenAt`
     // above for how that case still settles correctly).
     if (st.size > (offsets.get(m[1]) ?? 0)) grew = true;
@@ -671,20 +671,20 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // THE full-pass trigger: did the disk move? `lastSeenAt` is the blend above,
   // and the value stored on the previous full pass is the same blend, so this
   // asks precisely "has ANY file this run writes been touched since we last
-  // looked properly" — dir, journal or transcript alike. Nothing else is
+  // looked properly" - dir, journal or transcript alike. Nothing else is
   // needed and nothing else is trusted; in particular this is deliberately NOT
   // the raw dir mtime, which for an ordinary long-running workflow is touched
   // once, at creation, and never again (a journal append or a transcript
-  // append would otherwise be invisible — the rejected journal-append hole).
+  // append would otherwise be invisible - the rejected journal-append hole).
   const diskMoved = !prev || prev.last_seen_at == null || lastSeenAt > prev.last_seen_at;
 
   // §5.8's cross-check needs a full pass to re-read the manifest's
   // total_tokens_reported and query the usage rollup. Force exactly one when a
-  // previously-known run first reads settled — otherwise a run discovered while
+  // previously-known run first reads settled - otherwise a run discovered while
   // ACTIVE hits the cheap re-stat below forever and the check written
   // specifically for silently-wrong cost never runs for it (findings 5 & 7).
   //
-  // `manifest_seen` here is the PERSISTED, sticky value — never this pass's
+  // `manifest_seen` here is the PERSISTED, sticky value - never this pass's
   // parse result, which does not exist yet and, when the manifest is
   // momentarily unreadable, would flip a settled run to "orphaned" and back on
   // alternating ticks.
@@ -706,7 +706,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
       now
     ) === "settled";
 
-  // Cheap re-stat only. This path persists NOTHING — and is correct by
+  // Cheap re-stat only. This path persists NOTHING - and is correct by
   // construction, because "quiet" now MEANS the blend did not advance, so
   // there is nothing to write back.
   if (prev && !diskMoved && !grew && !manifestNew && !manifestRewritten && !needsCrosscheck) return false;
@@ -714,7 +714,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // Reading the manifest and PARSING it are different failures and must be
   // reported differently. A read that throws (permissions, a half-replaced
   // file) tells us nothing new about structure, so it must leave structure
-  // exactly as it was — most importantly it must NOT be mistaken for "no
+  // exactly as it was - most importantly it must NOT be mistaken for "no
   // manifest", which would un-settle the run and make it bypass the early
   // return forever.
   let manifestText: string | null = null;
@@ -761,7 +761,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   }
 
   // STICKY structure (§1.4): a manifest that has ever been seen has been seen.
-  // `!!manifest` is this pass's parse result and must never feed state — the
+  // `!!manifest` is this pass's parse result and must never feed state - the
   // persisted flag is what deriveRunState reads at read time, so anything here
   // that derives state from the momentary result instead flip-flops the run
   // between settled and orphaned on alternating ticks. The MAX() in
@@ -787,15 +787,15 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     let scriptPath = findScriptFile(sessionDir, t.run_id);
     // Fallback (C9): 3 of 20 runs park their script under a SIBLING project slug
     // carrying the same sessionId. `!prev` pins this to the pass that DISCOVERS
-    // the run — the first tick that sees it, or the startup backfill on a fresh
-    // DB — so it is a discovery-time cost and NEVER lands on a 5s tick (§1.3).
+    // the run - the first tick that sees it, or the startup backfill on a fresh
+    // DB - so it is a discovery-time cost and NEVER lands on a 5s tick (§1.3).
     if (!scriptPath && !prev) scriptPath = findScriptAcrossSlugs(sessionDir, t.run_id);
     if (scriptPath) script = parseScriptMeta(readFileSafe(scriptPath));
   }
 
   const manifestById = new Map((manifest?.agents ?? []).map((a) => [a.agent_id, a]));
   const ids = new Set<string>([...files.map((f) => f.agent_id), ...journalAgents.keys(), ...manifestById.keys()]);
-  // `quiet` uses the SAME `lastSeenAt` computed above — the single value that
+  // `quiet` uses the SAME `lastSeenAt` computed above - the single value that
   // also gets persisted below and fed to deriveRunState both here and at read
   // time (liveWorkflows). One source of truth, incapable of disagreeing
   // (spec §1.4, finding-3 redo).
@@ -872,7 +872,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     const r = takeUsage(store, {
       path: file.path,
       offset: before,
-      sessionId: t.session_id, // PARENT session id — the keystone (C3)
+      sessionId: t.session_id, // PARENT session id - the keystone (C3)
       runId: t.run_id,
       agentId: id,
     });
@@ -896,18 +896,18 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     // (~42s early on a sample); mtimeMs is the fallback where birthtime is 0.
     // On a pass where the manifest is unreadable, send null so upsert's COALESCE
     // keeps the stored manifest startTime; the dir birthtime is only a first-sight
-    // fallback — it must never overwrite a value the manifest already provided.
+    // fallback - it must never overwrite a value the manifest already provided.
     started_at: manifest?.started_at ?? (prev ? null : Math.round(dirStat.birthtimeMs || dirStat.mtimeMs)),
     ended_at: manifest?.ended_at ?? null,
     duration_ms: manifest?.duration_ms ?? null,
     agent_count: manifest?.agent_count ?? null,
     phases: phases.length ? JSON.stringify(phases) : null,
     cc_version: ccVersion,
-    manifest_seen: manifestSeen, // sticky — see above
+    manifest_seen: manifestSeen, // sticky - see above
     // Stored whenever the FILE exists, parsed or not: a corrupt manifest that is
     // later fixed in place must still re-trigger on its new mtime.
     manifest_mtime: manifestMtime,
-    last_seen_at: lastSeenAt, // the blend — pure disk truth (spec §1.4)
+    last_seen_at: lastSeenAt, // the blend - pure disk truth (spec §1.4)
     default_model: manifest?.default_model ?? null,
     total_tool_calls: manifest?.total_tool_calls ?? null,
     // §3: schema_ok tracks structural validity -- a manifest that parses fine
@@ -920,12 +920,12 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
     total_tokens_reported: manifest?.total_tokens_reported ?? null,
   });
 
-  // Cross-check §5.8 — PRESENCE, not proportion. Claude Code's `totalTokens` is
+  // Cross-check §5.8 - PRESENCE, not proportion. Claude Code's `totalTokens` is
   // not comparable to our rollup (24x–276x across 19 manifests), so the only
   // sound signal is "it says tokens were burned and we ingested none". It runs
   // on any full pass that can actually answer the question, which is what
   // covers backfilled historical runs (they are settled on first sight, so
-  // `needsCrosscheck` — which requires a previously-known run — is false for
+  // `needsCrosscheck` - which requires a previously-known run - is false for
   // them).
   if (manifest && quiet && (manifest.total_tokens_reported ?? 0) > 0) {
     const row = store.db
@@ -944,7 +944,7 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // The §5.8 one-shot is consumed HERE, after ONE attempt, whatever that
   // attempt found. A run whose manifest cannot be read (or has not landed
   // despite the run reading settled) would otherwise re-force a full pass on
-  // every 5s tick for the rest of the process's life — the check is a
+  // every 5s tick for the rest of the process's life - the check is a
   // best-effort diagnostic, not something worth an unbounded retry. The skipped
   // case is reported instead, once, so it is visible rather than silent.
   if (needsCrosscheck) {
@@ -958,17 +958,17 @@ export function scanRun(store: Store, t: RunTarget, now: number): boolean {
   // Durable-change bookkeeping for scanWorkflows' `changed` return. NOT a
   // broadcast signal: a full pass forced purely by the cross-check changes
   // nothing and correctly reports false, while a time-only ACTIVE→SETTLED
-  // transition never reaches this line at all — both are handled by
+  // transition never reaches this line at all - both are handled by
   // workflowTick's payload diff, which sees them because it re-derives the
   // payload every tick (§3.1).
   return recorded || diskMoved || manifestNew || manifestRewritten || !prev;
 }
 
 /** One scan pass over every run worth touching. Discovery is per-session
- *  `readdir` (~100µs), never a glob — the only global glob in this feature is
+ *  `readdir` (~100µs), never a glob - the only global glob in this feature is
  *  the one-time startup backfill.
  *
- *  Returns `changed` ONLY — no `live` payload; computing one here would pay for
+ *  Returns `changed` ONLY - no `live` payload; computing one here would pay for
  *  it on every 5s tick regardless of who is looking. The boolean is internal
  *  bookkeeping ("did this pass write anything durable"), NOT the broadcast
  *  gate: workflowTick decides that by diffing the payload (§3.1). */
@@ -995,7 +995,7 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
       // Per-run isolation: one unreadable run can never break the others, the
       // stale sweep, or session cost tailing. Counted once per run, not per tick.
       // Qualified key (":scan"): a manifest-parse failure inside scanRun logs
-      // under the BARE run id (§5.5's `error` cause) — sharing that key here
+      // under the BARE run id (§5.5's `error` cause) - sharing that key here
       // would let whichever cause hits first permanently suppress the other's
       // log line and degraded bump for this run (finding 8).
       logOnce(`${t.run_id}:scan`, err);
@@ -1007,7 +1007,7 @@ export function scanWorkflows(store: Store, now: number): { changed: boolean } {
 
 /** Structural hub type: only what a 5s tick needs to publish a change, so tests
  *  can pass a plain counting stub instead of a real SseHub (or anything else
- *  that happens to have a `broadcast` method — that's the point of typing this
+ *  that happens to have a `broadcast` method - that's the point of typing this
  *  structurally rather than importing SseHub itself). */
 export interface BroadcastHub {
   broadcast(event: string, payload: unknown): void;
@@ -1042,7 +1042,7 @@ export interface BroadcastHub {
  *  `JSON.stringify` is a sound diff basis here because the payload is stable
  *  across quiet ticks: every key order is fixed by the object literals
  *  `liveWorkflows`/`hydrateWorkflowRuns` build, row order by their ORDER BY
- *  clauses, and NO field is derived from `now` except the discrete `state` —
+ *  clauses, and NO field is derived from `now` except the discrete `state` -
  *  elapsed times are computed client-side from `started_at` (useNow), never
  *  sent. A field that moved with the clock would make every tick a "change". */
 export function workflowTick(store: Store, hub: BroadcastHub, now: number): void {
@@ -1072,11 +1072,11 @@ export function workflowTick(store: Store, hub: BroadcastHub, now: number): void
  *  Each hit is resolved to its session by PATH STRUCTURE, never by string-matching
  *  `transcript_path`: the session dir is the run dir's third parent and the
  *  session id is that directory's basename. A run whose session id is absent from
- *  `sessions` is still ingested — recordUsage's subquery yields NULL project, which
+ *  `sessions` is still ingested - recordUsage's subquery yields NULL project, which
  *  the cost queries already bucket under 'unknown'. Dropping it would lose spend.
  *
  *  Every run here is a first sight on a fresh DB, so this is also where scanRun's
- *  once-per-run cross-slug script lookup (§1.3) happens for historical runs — at
+ *  once-per-run cross-slug script lookup (§1.3) happens for historical runs - at
  *  backfill time, never on a 5s tick. On a warm DB the run rows already exist and
  *  scanRun skips it. */
 export function backfillWorkflows(

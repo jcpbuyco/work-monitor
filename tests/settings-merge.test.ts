@@ -31,7 +31,7 @@ describe("mergeHooks", () => {
     expect(stopCmds.some((c: string) => c.includes("am-hook.sh"))).toBe(true);
   });
 
-  it("is idempotent — re-merging does not duplicate our entries", () => {
+  it("is idempotent - re-merging does not duplicate our entries", () => {
     const once = mergeHooks({}, HOOK);
     const twice = mergeHooks(once, HOOK);
     const stopWm = twice.hooks.Stop.flatMap((g: any) => g.hooks)

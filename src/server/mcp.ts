@@ -13,7 +13,7 @@ export interface McpDeps {
   now?: () => number;
 }
 
-/** Plain tool implementations — unit-testable without the transport. */
+/** Plain tool implementations - unit-testable without the transport. */
 export function makeTools(deps: McpDeps) {
   const now = deps.now ?? (() => Date.now());
   const { store, onChange } = deps;
@@ -62,14 +62,14 @@ function buildServer(deps: McpDeps): McpServer {
     "add_todo",
     {
       description:
-        "Record a todo on the agent-monitor dashboard — any task, reminder, or hand-off worth not forgetting, for yourself or someone else (not limited to engineer hand-offs). Use whenever you or the user want something tracked on the board. Put any useful context in note.",
+        "Record a todo on the agent-monitor dashboard - any task, reminder, or hand-off worth not forgetting, for yourself or someone else (not limited to engineer hand-offs). Use whenever you or the user want something tracked on the board. Put any useful context in note.",
       inputSchema: {
         title: z.string().describe("Short title, e.g. 'Run bun run setup' or 'Hand off payments spec'"),
-        note: z.string().optional().describe("Optional context — what's done, what's left, paths"),
-        for_who: z.string().optional().describe("Optional — who it's for, if you're handing off to someone"),
+        note: z.string().optional().describe("Optional context - what's done, what's left, paths"),
+        for_who: z.string().optional().describe("Optional - who it's for, if you're handing off to someone"),
         project: z.string().optional().describe("Optional project name"),
         branch: z.string().optional().describe("Optional git branch the work is on"),
-        links: z.array(z.string()).optional().describe("Optional — spec paths, PR URLs, etc."),
+        links: z.array(z.string()).optional().describe("Optional - spec paths, PR URLs, etc."),
       },
     },
     async (args) => ({
@@ -81,7 +81,7 @@ function buildServer(deps: McpDeps): McpServer {
     "list_todos",
     {
       description:
-        "List todos on the agent-monitor dashboard (optionally filtered by status) — e.g. to avoid creating duplicates or to check what's still open.",
+        "List todos on the agent-monitor dashboard (optionally filtered by status) - e.g. to avoid creating duplicates or to check what's still open.",
       inputSchema: { status: z.enum(["todo", "done"]).optional() },
     },
     async (args) => ({
@@ -93,7 +93,7 @@ function buildServer(deps: McpDeps): McpServer {
     "update_todo",
     {
       description:
-        "Update a todo on the agent-monitor dashboard — mark it done (or back to todo), or amend its note.",
+        "Update a todo on the agent-monitor dashboard - mark it done (or back to todo), or amend its note.",
       inputSchema: {
         id: z.string(),
         status: z.enum(["todo", "done"]).optional(),

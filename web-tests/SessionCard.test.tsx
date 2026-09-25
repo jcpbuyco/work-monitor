@@ -76,7 +76,7 @@ describe("SessionCard §5.1: A+ truncation order (P2-6)", () => {
 
   it("weights branch and cost to shrink well before the task text (finding fix - was reversed)", () => {
     render(<SessionCard s={{ ...base, branch: "feat/x" }} cost={{ costUsd: 1.24, tokens: 312_000 }} />);
-    const task = screen.getByTitle(/—/); // base has no current_task/current_intent
+    const task = screen.getByTitle("-"); // base has no current_task/current_intent
     expect(screen.getByTitle("⎇ feat/x").className).toContain("shrink-[6]");
     expect(screen.getByTestId("cost-cell").className).toContain("shrink-[6]");
     // the task keeps plain `flex-1` (basis 0, so it gets none of the shrink
@@ -242,7 +242,7 @@ describe("SessionCard row", () => {
   afterEach(cleanup);
 
   it("keeps status in the accessibility tree after the visible label is removed", () => {
-    // The coloured uppercase status line is gone — the glyph is aria-hidden, so
+    // The coloured uppercase status line is gone - the glyph is aria-hidden, so
     // an sr-only label is the only thing carrying status to a screen reader.
     const { container } = render(<SessionCard s={{ ...base, status: "needs_you", attention_reason: "why?" }} />);
     expect(screen.getByText("Needs you").className).toContain("sr-only");
@@ -257,7 +257,7 @@ describe("SessionCard row", () => {
     expect(row.className).not.toContain("hover:bg-surface-2"); // tone replaces, never appends
   });
 
-  it("draws an idle row as one compact line — no tool line, no shimmer, no branch", () => {
+  it("draws an idle row as one compact line - no tool line, no shimmer, no branch", () => {
     const { container } = render(
       <SessionCard s={{ ...base, status: "idle", branch: "feat/x" }} latestTool="Read" cost={{ costUsd: 0.02, tokens: 100 }} />
     );

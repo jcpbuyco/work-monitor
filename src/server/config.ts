@@ -14,7 +14,7 @@ export const DB_PATH = process.env.AM_DB_PATH ?? defaultDbPath();
 
 /** A "working" session with no activity for this long is swept to idle (still shown). */
 export const STALE_MS = 10 * 60 * 1000;
-/** Any session silent this long is retired to "ended" and hidden — a closed
+/** Any session silent this long is retired to "ended" and hidden - a closed
  *  terminal or crash emits no session_end, so prolonged silence is the only tell. */
 export const DEAD_MS = 30 * 60 * 1000;
 /** `needs_you` sessions are exempt from DEAD_MS: the whole point of the status is
@@ -43,7 +43,7 @@ export const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 /** Workflow scan cadence. A live run must feel live; 60s freezes the card. */
 export const WF_TICK_MS = 5 * 1000;
 /** Run dir mtime unchanged this long ⇒ stop tailing (ACTIVE → SETTLED). The same
- *  window, combined with a missing manifest, is what reads as `orphaned` — a
+ *  window, combined with a missing manifest, is what reads as `orphaned` - a
  *  display state only, never persisted. */
 export const WF_QUIET_MS = 10 * 60 * 1000;
 /** Settled runs younger than this are re-stat'd to catch resumed appends (C6). */

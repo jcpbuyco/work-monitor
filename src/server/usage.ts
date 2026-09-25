@@ -33,7 +33,7 @@ export function claudeMessageKey(messageId: string | null, requestId: string | n
 }
 
 /** Parse one transcript JSONL line into priced usage, or null if it carries none.
- *  Reads the top-level `message.usage` (already aggregates `iterations` — reading
+ *  Reads the top-level `message.usage` (already aggregates `iterations` - reading
  *  that array too would double-count). */
 export function parseUsageLine(line: string): ParsedUsage | null {
   let o: any;
@@ -68,7 +68,7 @@ export function parseUsageLine(line: string): ParsedUsage | null {
  *  `sessions.usage_offset`, workflow agents write `workflow_agents.offset`.
  *
  *  `sessionId` is always the PARENT session id, including for workflow agent
- *  transcripts — `recordUsage`'s subquery stamps project/branch from that row,
+ *  transcripts - `recordUsage`'s subquery stamps project/branch from that row,
  *  which is what makes every existing cost aggregation correct for free.
  *
  *  `skipSidechain` is set by the PARENT path only (see tailUsage). Never set it
@@ -95,7 +95,7 @@ export function takeUsage(
     if (parsed.model === "<synthetic>") continue;
     // Double-count guard (§1.5): on the parent path, a line marked as a
     // subagent's (isSidechain / agentId) belongs to an agent-*.jsonl we tail
-    // separately. A no-op today — 0 such lines exist in any parent transcript —
+    // separately. A no-op today - 0 such lines exist in any parent transcript -
     // it neutralises a future fold-into-parent under fresh uuids, which
     // INSERT OR IGNORE could not dedupe. The offset still advances past it.
     if (t.skipSidechain && parsed.sidechain) continue;

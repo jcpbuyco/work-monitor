@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { statusClass, statusKnown, statusGlyphKind } from "../src/web/workflowStatus.ts";
+import {
+  statusClass,
+  statusKnown,
+  statusGlyphKind,
+  agentStateClass,
+  agentStateDotClass,
+  isRunLive,
+} from "../src/web/workflowStatus.ts";
 
 describe("workflowStatus", () => {
   it("colours completed as done and failures as danger", () => {
@@ -29,5 +36,28 @@ describe("workflowStatus", () => {
     for (const k of ["completed", "running", "failed", "killed", "orphaned", "settled"]) {
       expect(statusKnown(k)).toBe(true);
     }
+  });
+
+  it("gives an agent's OWN state vocabulary a colour distinct from a run's (§5.3, ui.md P1-8)", () => {
+    expect(agentStateClass("error")).toBe("text-danger");
+    expect(agentStateClass("killed")).toBe("text-danger");
+    expect(agentStateClass("done")).toBe("text-done");
+    expect(agentStateClass("running")).toBe("text-working");
+    expect(agentStateClass("progress")).toBe("text-working");
+    expect(agentStateClass("abandoned")).toBe("text-ink-4");
+    expect(agentStateClass(null)).toBe("text-ink-4"); // unknown -> neutral, never a throw
+  });
+
+  it("gives the same agent states a status-dot background (WorkflowRunCard's live list)", () => {
+    expect(agentStateDotClass("error")).toBe("bg-danger");
+    expect(agentStateDotClass("killed")).toBe("bg-danger");
+    expect(agentStateDotClass("done")).toBe("bg-idle");
+    expect(agentStateDotClass(null)).toBe("bg-idle");
+  });
+
+  it("isRunLive is true only for a running run, gating live-blue styling on settled runs (§5.3)", () => {
+    expect(isRunLive("running")).toBe(true);
+    expect(isRunLive("settled")).toBe(false);
+    expect(isRunLive("orphaned")).toBe(false);
   });
 });

@@ -47,7 +47,7 @@ function command(hookPath: string, type: string, harnessArg?: string): string {
   return harnessArg ? `${hookPath} ${type} ${harnessArg}` : `${hookPath} ${type}`;
 }
 
-/** A command is one of ours — a hook script under `src/hooks/` (the current
+/** A command is one of ours - a hook script under `src/hooks/` (the current
  *  `am-hook.sh` or a pre-rename `wm-hook.sh`). Matching lets us prune stale
  *  entries on re-merge instead of only ever appending. Matches regardless of
  *  any trailing harness argument (`am-hook.sh tool_start codex`), since the

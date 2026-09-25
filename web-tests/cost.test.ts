@@ -38,6 +38,10 @@ describe("prettyModel", () => {
   it("space-separates a non-Claude, non-GPT family like Grok", () => {
     expect(prettyModel("grok-4.7")).toBe("Grok 4.7");
   });
+  it("renders a bracket-suffixed context-window id as 'Name Ver · SUFFIX' (§5.3)", () => {
+    expect(prettyModel("claude-opus-5-5[1m]")).toBe("Opus 5.5 · 1M");
+    expect(prettyModel("claude-opus-5[1m]")).toBe("Opus 5 · 1M");
+  });
 });
 
 describe("formatDay", () => {

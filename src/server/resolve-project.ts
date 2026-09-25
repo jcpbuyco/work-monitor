@@ -18,7 +18,7 @@ export interface RepoInfo {
 
 const TTL_MS = 30_000;
 // cwd → resolved info. The repo is immutable per path but the branch can change via
-// `git checkout`, so entries expire after the TTL — keeping git off the per-event hot
+// `git checkout`, so entries expire after the TTL - keeping git off the per-event hot
 // path (the activity heartbeat hits the cache) while staying reasonably fresh.
 const cache = new Map<string, { info: RepoInfo; at: number }>();
 
@@ -58,7 +58,7 @@ export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
     if (abbrevRef && abbrevRef !== "HEAD") {
       branch = abbrevRef;
     } else if (abbrevRef === "HEAD") {
-      // detached HEAD — fall back to the short SHA
+      // detached HEAD - fall back to the short SHA
       try {
         const { stdout: sha } = await execFileP("git", ["-C", cwd, "rev-parse", "--short", "HEAD"], { timeout: 1000 });
         branch = sha.trim() || null;
@@ -67,11 +67,11 @@ export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
       }
     }
     info = { project, branch, fromGit: true };
-    // Cache only successful resolutions — a transient git failure must not pin the
+    // Cache only successful resolutions - a transient git failure must not pin the
     // degraded basename fallback (re-introducing the worktree bug) for the whole TTL.
     cache.set(cwd, { info, at: Date.now() });
   } catch {
-    // not a git repo, git missing, or the path is gone — return the basename fallback
+    // not a git repo, git missing, or the path is gone - return the basename fallback
     // WITHOUT caching, so a transient failure just retries on the next event.
   }
 

@@ -207,7 +207,9 @@ describe("Store usage rows", () => {
     store.recordUsage({ uuid: "d1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: T, cost: 1.0 });
     store.recordUsage({ uuid: "d2", sessionId: "a", model: "totally-unknown-model", tokens: tok(4), at: T, cost: null });
     const rows = store.costDaily();
-    expect(rows).toEqual([{ project: "alpha", branch: "main", day: rows[0].day, costUsd: 1.0, tokens: 14, unpricedTokens: 4 }]);
+    expect(rows).toEqual([
+      { project: "alpha", branch: "main", day: rows[0].day, harness: "claude", costUsd: 1.0, tokens: 14, unpricedTokens: 4 },
+    ]);
   });
 
   it("costDaily buckets unattributed usage under 'unknown' and keeps null branch", () => {
@@ -217,6 +219,44 @@ describe("Store usage rows", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].project).toBe("unknown");
     expect(rows[0].branch).toBeNull();
+  });
+
+  it("costDaily reads a NULL usage.harness as 'claude', §5.3's default bucket for pre-B1 rows", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "h1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 1_700_000_000_000, cost: 1.0 });
+    expect(store.costDaily()[0].harness).toBe("claude");
+  });
+
+  it("costDaily merges a NULL-harness row and an explicit 'claude' row for the same project/branch/day into one row (regression: GROUP BY must bind to the COALESCE expression, not the raw `usage.harness` column)", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "n1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(10), at: T, cost: 1.0 }); // harness omitted -> NULL
+    store.recordUsage({ uuid: "n2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(5), at: T, cost: 2.0, harness: "claude" });
+    const rows = store.costDaily();
+    expect(rows.length).toBe(1);
+    expect(rows[0].harness).toBe("claude");
+    expect(rows[0].costUsd).toBeCloseTo(3.0, 6);
+    expect(rows[0].tokens).toBe(15);
+  });
+
+  it("costDaily groups by harness too, and keeps a project's harnesses in separate rows on the same day", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "hc1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 1.0, harness: "claude" });
+    store.recordUsage({ uuid: "hc2", sessionId: "a", model: "gpt-5.3-codex", tokens: tok(0), at: T, cost: 2.0, harness: "codex" });
+    const rows = store.costDaily();
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((r) => r.harness))).toEqual(new Set(["claude", "codex"]));
+  });
+
+  it("costDaily's harness filter narrows to exactly that harness", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "hf1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 1.0, harness: "claude" });
+    store.recordUsage({ uuid: "hf2", sessionId: "a", model: "gpt-5.3-codex", tokens: tok(0), at: T, cost: 2.0, harness: "codex" });
+    const rows = store.costDaily({ harness: "codex" });
+    expect(rows.length).toBe(1);
+    expect(rows[0].costUsd).toBeCloseTo(2.0, 6);
   });
 
   it("memoizes costByProject/costByBranch on usageVersion: a duplicate recordUsage (no-op) does not invalidate a stale query plan, and a real write does", () => {
@@ -511,6 +551,15 @@ describe("Store §3: workflowList / workflowRunDetail / lastSettledRun", () => {
     expect(store.workflowList({ q: "resea" }, T).runs.map((r) => r.run_id)).toEqual(["wf_a"]);
     expect(store.workflowList({ q: "ALPHA" }, T).runs.map((r) => r.run_id)).toEqual(["wf_a"]);
     expect(store.workflowList({ q: "nonesuch" }, T).runs).toEqual([]);
+  });
+
+  it("§5.3: workflowList's project filter is an exact match, not a substring, and never crosses projects", () => {
+    seedRun("wf_a", T); // project "alpha", via seedRun's session "p"
+    store.applyEvent("q", { status: "working", project: "alphabet", branch: "main", last_activity_at: 1 }, 1);
+    store.upsertWorkflowRun({ run_id: "wf_b", session_id: "q", dir: "/d/wf_b", name: "research", status: "completed", manifest_seen: true, last_seen_at: T, started_at: T });
+    expect(store.workflowList({ project: "alpha" }, T).runs.map((r) => r.run_id)).toEqual(["wf_a"]); // NOT "alphabet" too
+    expect(store.workflowList({ project: "alphabet" }, T).runs.map((r) => r.run_id)).toEqual(["wf_b"]);
+    expect(store.workflowList({ project: "nonesuch" }, T).runs).toEqual([]);
   });
 
   it("workflowRunDetail returns one run WITH its agents, or null for an unknown run", () => {

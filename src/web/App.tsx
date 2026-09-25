@@ -51,7 +51,7 @@ export default function App() {
       bump();
     };
     fetchState().then(apply).catch(() => {});
-    // Workflow updates are applied straight through setWorkflows — no
+    // Workflow updates are applied straight through setWorkflows - no
     // runViewTransition, because a 5s token tick is not a layout change
     // worth animating.
     const unsub = subscribe({

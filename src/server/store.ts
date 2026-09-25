@@ -995,27 +995,58 @@ export class Store {
     return result;
   }
 
-  /** Cost + tokens grouped by (project, branch, local day "YYYY-MM-DD"), newest
-   *  day first. `range` filters on the message timestamp (since inclusive, until
-   *  exclusive); omit for all-time. Unattributed usage buckets under 'unknown';
-   *  branch stays null when absent. Client re-sorts as needed — this order is a
-   *  stable baseline. */
+  /** Cost + tokens grouped by (project, branch, harness, local day "YYYY-MM-DD"),
+   *  newest day first. `range` filters on the message timestamp (since
+   *  inclusive, until exclusive); omit for all-time. `harness` filters to
+   *  exactly that harness (§5.3's Cost-page harness filter); omit for every
+   *  harness. Unattributed usage buckets under 'unknown'; branch stays null
+   *  when absent; a NULL `usage.harness` (pre-B1 rows) reads as 'claude', the
+   *  same convention every other harness-aware read uses. Client re-sorts as
+   *  needed - this order is a stable baseline. */
   costDaily(
-    range: { since?: number; until?: number } = {}
-  ): { project: string; branch: string | null; day: string; costUsd: number | null; tokens: number; unpricedTokens: number }[] {
-    const { where, params } = rangeClause(range);
-    const rows = this.db
-      .query(
-        `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
+    range: { since?: number; until?: number; harness?: string } = {}
+  ): {
+    project: string;
+    branch: string | null;
+    day: string;
+    harness: string;
+    costUsd: number | null;
+    tokens: number;
+    unpricedTokens: number;
+  }[] {
+    const { where, params: rangeParams } = rangeClause(range);
+    const params: Record<string, number | string> = { ...rangeParams };
+    let sql = `SELECT COALESCE(usage.project, 'unknown') AS project, usage.branch AS branch,
                 strftime('%Y-%m-%d', at / 1000, 'unixepoch', 'localtime') AS day,
+                COALESCE(usage.harness, 'claude') AS harness,
                 SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
-         FROM usage ${where} GROUP BY usage.project, usage.branch, day ORDER BY day DESC, cost DESC`
-      )
-      .all(params) as { project: string; branch: string | null; day: string; cost: number | null; tokens: number; unpriced: number }[];
+         FROM usage ${where}`;
+    if (range.harness) {
+      sql += where ? " AND " : " WHERE ";
+      sql += "COALESCE(usage.harness, 'claude') = $harness";
+      params.$harness = range.harness;
+    }
+    // GROUP BY the COALESCE expression itself, not the bare `harness` alias:
+    // SQLite resolves a GROUP BY identifier to an input column (usage.harness)
+    // before it considers a result-set alias of the same name, so a bare
+    // `harness` here would split a day's NULL-harness rows (pre-B1) and its
+    // 'claude' rows into two groups that both DISPLAY as 'claude' -- verified
+    // against a real SQLite database; see the regression test below.
+    sql += " GROUP BY usage.project, usage.branch, day, COALESCE(usage.harness, 'claude') ORDER BY day DESC, cost DESC";
+    const rows = this.db.query(sql).all(params) as {
+      project: string;
+      branch: string | null;
+      day: string;
+      harness: string;
+      cost: number | null;
+      tokens: number;
+      unpriced: number;
+    }[];
     return rows.map((r) => ({
       project: r.project,
       branch: r.branch,
       day: r.day,
+      harness: r.harness,
       costUsd: r.cost,
       tokens: r.tokens,
       unpricedTokens: r.unpriced,
@@ -1321,7 +1352,7 @@ export class Store {
   }
 
   /** Insert-or-enrich an agent row. `offset` is deliberately absent from this
-   *  method — it is owned by setWorkflowAgentOffset so enrichment can never
+   *  method - it is owned by setWorkflowAgentOffset so enrichment can never
    *  rewind the tail position. */
   upsertWorkflowAgent(a: WorkflowAgentUpsert): void {
     this.db
@@ -1481,7 +1512,7 @@ export class Store {
 
   /** Turn raw workflow_runs rows into API views: parse `phases` back from JSON,
    *  derive the liveness state, and join the per-agent usage rollup. Per-agent
-   *  tokens and cost are NOT stored — they are derived from `usage`, so there is
+   *  tokens and cost are NOT stored - they are derived from `usage`, so there is
    *  one priced source of truth and it works live, before any manifest exists. */
   private hydrateWorkflowRuns(rows: Record<string, any>[], now: number): WorkflowRun[] {
     if (rows.length === 0) return [];
@@ -1638,11 +1669,11 @@ export class Store {
   }
 
   /** Runs to show on the board strip: everything unsettled within the 24h recheck
-   *  window. Orphaned runs stay visible deliberately — the state is self-healing,
+   *  window. Orphaned runs stay visible deliberately - the state is self-healing,
    *  so a run whose files move again flips back to running.
    *
    *  This is the ONLY payload the 5s tick broadcasts. It must never grow into a
-   *  buildState()-sized query — which is why the settled predicate is applied
+   *  buildState()-sized query - which is why the settled predicate is applied
    *  HERE, in SQL, rather than left to the `.filter()` below: a heavy workflow
    *  day can leave many settled runs inside the 24h window, and hydrating all
    *  of them (per-agent usage rollup, workflow_agents fetch, sessions scan)
@@ -1708,15 +1739,18 @@ export class Store {
     return this.hydrateWorkflowRuns([row], now)[0] ?? null;
   }
 
-  /** §3: the `/api/workflows` list -- runs WITHOUT their per-agent array, plus
-   *  a cheap `agent_counts` rollup, `total` for pagination, and an optional
-   *  `q` substring match against name/project (case-insensitive). Newest
-   *  first; `limit`/`offset` page through it. Deliberately does NOT reuse
+  /** §3/§5.3: the `/api/workflows` list -- runs WITHOUT their per-agent array,
+   *  plus a cheap `agent_counts` rollup, `total` for pagination, an optional
+   *  `q` substring match against name/project (case-insensitive), and an
+   *  optional exact `project` filter (the Workflows page's project dropdown --
+   *  exact match, not a substring, since it's populated from the same project
+   *  names `state.cost.byProject` already lists verbatim). Newest first;
+   *  `limit`/`offset` page through it. Deliberately does NOT reuse
    *  `hydrateWorkflowRuns`: that pays for a full per-agent view (including a
    *  per-agent usage JOIN) that a run-listing page never renders -- exactly
    *  the cost this endpoint exists to avoid. */
   workflowList(
-    opts: { q?: string; since?: number; until?: number; limit?: number; offset?: number } = {},
+    opts: { q?: string; project?: string; since?: number; until?: number; limit?: number; offset?: number } = {},
     now: number = Date.now()
   ): { runs: WorkflowRunSummary[]; total: number } {
     const conds: string[] = [];
@@ -1724,6 +1758,10 @@ export class Store {
     if (opts.q) {
       conds.push("(name LIKE $q OR project LIKE $q)");
       params.$q = `%${opts.q}%`;
+    }
+    if (opts.project) {
+      conds.push("project = $project");
+      params.$project = opts.project;
     }
     // Kept alongside the new §3 params (q/limit/offset/total) rather than
     // removed -- the workflows page's day-window filter already relies on it

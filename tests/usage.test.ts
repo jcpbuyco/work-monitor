@@ -173,7 +173,7 @@ describe("takeUsage", () => {
     expect(row).toEqual({ run_id: "wf_1", agent_id: "a1", project: "alpha", branch: "feat/x" });
   });
 
-  it("is idempotent — re-reading from offset 0 records nothing new", () => {
+  it("is idempotent - re-reading from offset 0 records nothing new", () => {
     const dir = mkdtempSync(join(tmpdir(), "am-take-"));
     const file = join(dir, "t.jsonl");
     writeFileSync(file, line("m1") + line("m2"));
@@ -209,7 +209,7 @@ describe("takeUsage", () => {
     const file = join(dir, "parent.jsonl");
     // A synthetic parent transcript: one ordinary assistant line plus two lines
     // folded in from subagents. No real parent transcript on this machine holds
-    // such a line today — the guard exists so that if Claude Code ever starts
+    // such a line today - the guard exists so that if Claude Code ever starts
     // folding them in under FRESH uuids, the same spend is not counted twice
     // (once here, once from agent-*.jsonl).
     writeFileSync(file, line("p1") + markedLine("s1", { isSidechain: true }) + markedLine("s2", { agentId: "a-1" }));
@@ -221,7 +221,7 @@ describe("takeUsage", () => {
     expect(store.db.query("SELECT message_uuid FROM usage ORDER BY message_uuid").all()).toEqual([
       { message_uuid: "p1" },
     ]);
-    // The offset still advances past every line — skipped, not deferred.
+    // The offset still advances past every line - skipped, not deferred.
     expect(r.offset).toBe(Buffer.byteLength(readFileSync(file, "utf8")));
   });
 
@@ -235,7 +235,7 @@ describe("takeUsage", () => {
     expect(store.costSummary(0).perSession.s1.costUsd).toBeCloseTo(5, 6); // one line, not two
   });
 
-  it("still records a marked line through the WORKFLOW path — every agent line is a sidechain (C3)", () => {
+  it("still records a marked line through the WORKFLOW path - every agent line is a sidechain (C3)", () => {
     const dir = mkdtempSync(join(tmpdir(), "am-take-"));
     const file = join(dir, "agent-a1.jsonl");
     writeFileSync(file, markedLine("w1", { isSidechain: true }));

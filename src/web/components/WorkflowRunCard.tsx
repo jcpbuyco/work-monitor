@@ -1,18 +1,10 @@
 import type { LiveWorkflow } from "../types.ts";
 import { formatUsd, formatTokens, prettyModel } from "../cost.ts";
 import { formatDuration } from "../time.ts";
-import { statusClass, statusKnown, statusGlyphKind } from "../workflowStatus.ts";
+import { statusClass, statusKnown, statusGlyphKind, agentStateDotClass } from "../workflowStatus.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
 import { StatusGlyph } from "./StatusGlyph.tsx";
 import { ListRow, Rail, Chip, Chevron } from "./primitives.tsx";
-
-/** Agent rows keep the 5px dot and do NOT use StatusGlyph: they sit one rail
- *  level in, and a second glyph family there over-signals a sub-list. */
-const AGENT_DOT: Record<string, string> = {
-  running: "bg-working am-pulse",
-  done: "bg-idle",
-  abandoned: "bg-attention/60",
-};
 
 export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
   const [collapsed, toggleCollapsed] = usePersistedToggle(`am-wf-${w.run_id}`);
@@ -45,9 +37,9 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
           </button>
           <span
             className="min-w-0 max-w-full flex-1 truncate font-mono text-2xs text-ink-4"
-            title={`${w.project} · ${w.branch ?? "—"}`}
+            title={`${w.project} · ${w.branch ?? "-"}`}
           >
-            {w.project} · {w.branch ?? "—"}
+            {w.project} · {w.branch ?? "-"}
           </span>
           <span
             data-status-known={String(statusKnown(label))}
@@ -58,7 +50,7 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
           {!w.schema_ok && <Chip>structure unavailable</Chip>}
           <span className="ml-auto shrink-0 font-mono text-2xs tabular-nums text-ink-3">
             {/* Ticks because WorkflowsSection re-renders at 1Hz via useNow(). */}
-            {w.started_at != null ? formatDuration(Date.now() - w.started_at) : "—"}
+            {w.started_at != null ? formatDuration(Date.now() - w.started_at) : "-"}
           </span>
         </div>
       </div>
@@ -85,10 +77,10 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
         <div className="mt-1 flex flex-col">
           {w.agents.map((a) => (
             <div key={a.agent_id} className="flex h-6 min-w-0 items-center gap-2 pl-10 font-mono text-2xs">
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${AGENT_DOT[a.state ?? ""] ?? "bg-idle"}`} />
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${agentStateDotClass(a.state)}`} />
               {/* Labels live only in the manifest, so agentId is the common live case. */}
               <span className="truncate text-ink-2">{a.label ?? a.agent_id}</span>
-              <span className="shrink-0 text-ink-4">{a.model ? prettyModel(a.model) : "—"}</span>
+              <span className="shrink-0 text-ink-4">{a.model ? prettyModel(a.model) : "-"}</span>
               <span className="w-14 shrink-0 text-right tabular-nums text-ink-4">{formatTokens(a.tokens)}</span>
               {a.last_tool && <span className="truncate text-working/70">▸ {a.last_tool}</span>}
             </div>

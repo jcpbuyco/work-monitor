@@ -8,10 +8,36 @@ import { StatusGlyph, type GlyphKind } from "./StatusGlyph.tsx";
 import { Chip } from "./primitives.tsx";
 
 /** Ghost control: no border, no fill, no colour. Every call site appends
- *  EXACTLY ONE text colour — two `text-*` classes on one element are resolved
+ *  EXACTLY ONE text colour - two `text-*` classes on one element are resolved
  *  by stylesheet order, not by className order. */
 const GHOST =
   "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors duration-quick ease-quad hover:bg-surface-2 hover:text-ink";
+
+/** The Motion toggle's own icon, drawn like `StatusGlyph`/`HarnessMark` (a
+ *  currentColor stroke, no fill dependent on a font) rather than the emoji it
+ *  replaces (P2-10, ui.md): "✨" rendered as an illegible fallback glyph on a
+ *  machine with no emoji font, the exact tofu problem the Todos empty state
+ *  was already fixed for. A dot trailing two motion lines when on, the same
+ *  dot struck through when off. */
+function MotionIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false" className="h-3 w-3 shrink-0">
+      <circle cx="11" cy="8" r="1.6" fill="currentColor" />
+      {on ? (
+        <path
+          d="M6.5 4.5C5 5.8 5 10.2 6.5 11.5M3.5 3C1.5 5 1.5 11 3.5 13"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          opacity=".6"
+        />
+      ) : (
+        <path d="M3 3l10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
 
 function Count({
   testId,
@@ -162,7 +188,7 @@ export function AppBar({
         title={motionOn ? "Animations on" : "Animations off"}
         className={`${GHOST} ${motionOn ? "text-ink" : "text-ink-3"}`}
       >
-        <span aria-hidden="true" className="text-2xs">{motionOn ? "✨" : "⊘"}</span>
+        <MotionIcon on={motionOn} />
         <span>Motion</span>
       </button>
       <button type="button" data-press onClick={toggle} aria-label="Toggle theme" className={`${GHOST} text-ink-3`}>
@@ -181,7 +207,7 @@ export function AppBar({
         aria-current={route === "#/" ? "page" : undefined}
         className={`flex shrink-0 items-center gap-2 rounded-md transition-colors duration-quick ease-quad ${route === "#/" ? "text-ink" : "text-ink"}`}
       >
-        {/* the inline boxShadow glow ring is deleted — pure decoration */}
+        {/* the inline boxShadow glow ring is deleted - pure decoration */}
         <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm bg-accent" />
         {/* §5.2 phone-overflow finding fix: `whitespace-nowrap` - without it,
             a flex row this tight lets the browser shrink the text below its
@@ -194,7 +220,7 @@ export function AppBar({
       <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-weak" />
 
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-        {/* keyed on the COUNT only — never on the 1Hz clock (§5.5) */}
+        {/* keyed on the COUNT only - never on the 1Hz clock (§5.5) */}
         <Count key={`w-${working}`} testId="appbar-count-working" kind="working" label="working" n={working} pending={!ready} />
         <Count
           key={`n-${needsYou}`}

@@ -125,7 +125,7 @@ export function SessionCard({
   const st = STATUS[s.status] ?? STATUS.idle;
   const isWorking = s.status === "working";
   const compact = s.status === "idle" || s.status === "ended";
-  const task = s.current_task ?? s.current_intent ?? "—";
+  const task = s.current_task ?? s.current_intent ?? "-";
   const harness = s.harness ?? "claude";
   const cell = costCell(s, cost);
   const subagents = s.subagents ?? [];
@@ -213,7 +213,7 @@ export function SessionCard({
             restores the original single-line desktop layout untouched. */}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 sm:flex-nowrap">
           {/* removing the visible status label must not remove status from the
-              accessibility tree — the glyph is aria-hidden */}
+              accessibility tree - the glyph is aria-hidden */}
           <span className="sr-only">{st.label}</span>
           <HarnessMark harness={harness} version={s.harness_version} className="text-ink-4" />
           <span className="shrink-0 text-sm font-medium text-ink">{s.project}</span>
@@ -280,7 +280,20 @@ export function SessionCard({
                   meaningless fragment ("unpric…") - only the token-count
                   suffix gives way, and disappears first. */}
               <span className="shrink-0 whitespace-nowrap">{cell.text}</span>
-              {cost && <span className="min-w-0 truncate text-ink-4/70"> · {formatTokens(cost.tokens)} tok</span>}
+              {cost && (
+                <>
+                  {/* finding fix: the separator used to be a leading space
+                      inside the truncating span below - a flex item is its
+                      own block container, so a browser trims a leading (and
+                      trailing) space at the START of its content exactly
+                      like `<p> text</p>` trims its own - the cell rendered
+                      "$176.21· 660.9M tok" with no visible gap. Its own
+                      shrink-0 span carries a real margin instead, which a
+                      browser never trims regardless of the text inside it. */}
+                  <span className="mx-1 shrink-0 text-ink-4/70"> · </span>
+                  <span className="min-w-0 truncate text-ink-4/70">{formatTokens(cost.tokens)} tok</span>
+                </>
+              )}
             </span>
           )}
         </div>

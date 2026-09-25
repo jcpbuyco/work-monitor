@@ -16,14 +16,24 @@ export function formatTokens(n: number): string {
 /** "claude-opus-4-8" → "Opus 4.8"; unknown ids are best-effort title-cased.
  *  Strips a trailing date snapshot (e.g. "-20251001") for clean labels. GPT
  *  ids keep their conventional hyphen ("gpt-5.5" → "GPT-5.5") rather than the
- *  Claude/Grok-style space - §5.1's per-harness model pill. */
+ *  Claude/Grok-style space - §5.1's per-harness model pill.
+ *
+ *  §5.3: a bracket-suffixed context-window variant (`claude-opus-5-5[1m]`,
+ *  from a workflow manifest's `model`/`defaultModel` -- never `message.model`
+ *  itself) renders as "Opus 5.5 · 1M" rather than the raw "Opus 5.5[1m]": the
+ *  bracket is stripped BEFORE the name/version split, and its content re-
+ *  appended as a separate, uppercased " · 1M" token so it reads as a distinct
+ *  fact (the context window), not part of the version number. */
 export function prettyModel(id: string): string {
-  const parts = id.replace(/^claude-/, "").replace(/-\d{8}$/, "").split("-");
+  const bracket = /\[([^\]]+)\]$/.exec(id);
+  const base = bracket ? id.slice(0, bracket.index) : id;
+  const parts = base.replace(/^claude-/, "").replace(/-\d{8}$/, "").split("-");
+  const suffix = bracket ? ` · ${bracket[1].toUpperCase()}` : "";
   if (parts.length === 0 || !parts[0]) return id;
   const ver = parts.slice(1).join(".");
-  if (parts[0].toLowerCase() === "gpt") return ver ? `GPT-${ver}` : "GPT";
+  if (parts[0].toLowerCase() === "gpt") return (ver ? `GPT-${ver}` : "GPT") + suffix;
   const name = parts[0][0].toUpperCase() + parts[0].slice(1);
-  return ver ? `${name} ${ver}` : name;
+  return (ver ? `${name} ${ver}` : name) + suffix;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

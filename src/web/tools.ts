@@ -2,7 +2,7 @@
 
 const MCP_RE = /^mcp__.*?__(.+)$/;
 
-/** Shorten a tool name for display — strips the verbose `mcp__<server>__` prefix
+/** Shorten a tool name for display - strips the verbose `mcp__<server>__` prefix
  *  so `mcp__plugin_..__navigate_page` shows as `navigate_page`. */
 export function prettyTool(name: string): string {
   const m = name.match(MCP_RE);

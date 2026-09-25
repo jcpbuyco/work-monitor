@@ -26,7 +26,7 @@ export function CostPanel({ cost }: { cost: Cost }) {
         right={
           <span
             className="text-3xs text-ink-4"
-            title="Notional API-equivalent cost — subscription plans aren't billed per token."
+            title="Notional API-equivalent cost - subscription plans aren't billed per token."
           >
             ≈ API list price
           </span>

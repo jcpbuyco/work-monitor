@@ -27,7 +27,7 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
             <MeterRow
               key={s.tool}
               frac={s.calls / max}
-              /* tool dots encode a CATEGORY, not a state — they stay 6px dots
+              /* tool dots encode a CATEGORY, not a state - they stay 6px dots
                  and must not read as status (K17) */
               leading={<span className={`h-1.5 w-1.5 rounded-full ${toolDot(s.tool)}`} />}
               label={prettyTool(s.tool)}

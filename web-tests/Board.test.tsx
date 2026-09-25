@@ -95,7 +95,7 @@ describe("Board layout", () => {
     expect(ids).toEqual(["session-group-needs_you", "session-group-working", "session-group-idle"]);
   });
 
-  it("still renders an empty group's header with a zero count — it is the board's legend", () => {
+  it("still renders an empty group's header with a zero count - it is the board's legend", () => {
     render(<Board state={state} />);
     const idle = screen.getByTestId("session-group-idle");
     expect(within(idle).getByText("Idle / done")).toBeTruthy();
