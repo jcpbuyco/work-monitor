@@ -45,11 +45,17 @@ function idleReasonText(s: Session): string | null {
 }
 
 /** §5.1: the cost cell's four states - priced / partial / unpriced / n-a.
- *  Cursor never records token usage locally at all (a harness-level fact, not
- *  a per-session one), so it short-circuits before even looking at `cost`.
+ *  Cursor never records token usage locally; only runs wrapped by am-cursor
+ *  report it, so a cursor session without usage reads n/a rather than $0.
  *  Returns null only for "nothing to show yet" (no usage rows, non-cursor) -  *  the existing "omit the cost line entirely" behaviour. */
 function costCell(s: Session, cost?: SessionCost): { text: string; title?: string } | null {
-  if (s.harness === "cursor") return { text: "n/a", title: "Cursor does not record token usage locally" };
+  if (s.harness === "cursor") {
+    // Only am-cursor-wrapped headless runs report usage; everything else has none to show.
+    if (!cost || cost.tokens === 0) {
+      return { text: "n/a", title: "Cursor records no usage locally; run headless sessions through am-cursor to capture tokens" };
+    }
+    return { text: formatUsd(cost.costUsd), title: "Cursor models have no per-token list price" };
+  }
   if (!cost) return null;
   if (cost.costUsd == null) return { text: formatUsd(null) }; // "unpriced" - fully unpriced usage
   if ((cost.unpricedTokens ?? 0) > 0) {

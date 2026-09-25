@@ -84,7 +84,18 @@ When `~/.cursor` exists, `bun run setup` merges `{"mcpServers": {"agent-monitor"
 **No `~/.cursor/hooks.json` is written.**
 `cursor-agent` already parses `~/.claude/settings.json`/`.claude/settings.local.json` through its own Claude-compat layer and runs the exact same `am-hook.sh` commands that `bun run setup` installs for Claude Code - a second, native hooks file would just double-deliver every event.
 
-Cursor never writes token/cost data to disk anywhere, and its own hooks don't carry it either, so cost for Cursor sessions always shows as **n/a** on the dashboard - this is a known, permanent gap, not a bug.
+Cursor never writes token usage to disk, and its hooks don't carry it either.
+The only source is `cursor-agent`'s own `--output-format json|stream-json` output, so setup also installs a wrapper, `~/.local/bin/am-cursor`:
+
+```bash
+am-cursor -p --force "fix the flaky test"          # instead of: cursor-agent -p --force "..."
+am-cursor -p --output-format json "summarize this"  # any output format works
+```
+
+For headless runs (`-p`/`--print`) it runs `cursor-agent` with `stream-json`, prints exactly what `cursor-agent` would have printed in the format you asked for, keeps its exit code, and posts the run's token usage to `POST /api/usage/cursor`.
+Interactive runs pass straight through, uncaptured.
+Captured sessions show their token count as **unpriced**: Cursor models have no per-token list price, and Cursor bills by subscription.
+Sessions not run through `am-cursor` show cost as **n/a**.
 Everything else (status, tool activity, project/branch, nesting under a parent session) works the same as Claude Code and Codex.
 
 ### How harness detection works

@@ -135,10 +135,20 @@ describe("SessionCard §5.1: cost cell priced/partial/unpriced/n-a semantics", (
     expect(screen.getByTestId("cost-cell").textContent).toBe("unpriced · 900 tok");
   });
 
-  it("shows n/a with a Cursor-specific tooltip for a cursor session, regardless of cost data", () => {
+  it("shows n/a with a Cursor-specific tooltip for a cursor session with no captured usage", () => {
     render(<SessionCard s={{ ...base, harness: "cursor" }} />);
     expect(screen.getByText("n/a")).toBeTruthy();
-    expect(screen.getByTitle("Cursor does not record token usage locally")).toBeTruthy();
+    expect(
+      screen.getByTitle("Cursor records no usage locally; run headless sessions through am-cursor to capture tokens")
+    ).toBeTruthy();
+  });
+
+  it("shows tokens and 'unpriced' once am-cursor has captured a cursor session's usage", () => {
+    render(
+      <SessionCard s={{ ...base, harness: "cursor" }} cost={{ costUsd: null, tokens: 22941, unpricedTokens: 22941 }} />
+    );
+    expect(screen.getByTestId("cost-cell").textContent).toBe("unpriced · 23K tok");
+    expect(screen.getByTitle("Cursor models have no per-token list price")).toBeTruthy();
   });
 });
 

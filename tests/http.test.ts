@@ -766,3 +766,51 @@ describe("§4 multi-harness ingestion, wired end-to-end through POST /events", (
     expect(row.session_label).toBe("labelled-project - fix the thing");
   });
 });
+
+describe("POST /api/usage/cursor (am-cursor)", () => {
+  const usage = { inputTokens: 12080, outputTokens: 109, cacheReadTokens: 10752, cacheWriteTokens: 0 };
+  const post = (body: unknown) =>
+    fetch(`${base}/api/usage/cursor`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+
+  it("records one unpriced cursor usage row, preferring the session's hook model, idempotently", async () => {
+    await fetch(`${base}/events?type=session_start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: "c1", cursor_version: "2026.09.23", model: "grok-4.7", workspace_roots: ["/x/app"] }),
+    });
+    const body = { session_id: "c1", request_id: "r1", model: "Grok 4.7 256K Low", usage, at: 1000 };
+    expect((await post(body)).status).toBe(204);
+    expect((await post(body)).status).toBe(204); // replay
+    const rows = store.db.query("SELECT * FROM usage WHERE session_id = 'c1'").all() as any[];
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({
+      harness: "cursor",
+      model: "grok-4.7",
+      message_key: "cursor:r1",
+      input_tokens: 12080,
+      output_tokens: 109,
+      cache_read_tokens: 10752,
+      cache_create_5m_tokens: 0,
+      cost_usd: null,
+    });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.cost.perSession.c1.tokens).toBe(12080 + 109 + 10752);
+    expect(state.cost.perSession.c1.costUsd).toBeNull();
+  });
+
+  it("falls back to the payload model when the session is unknown", async () => {
+    expect((await post({ session_id: "c2", request_id: "r2", model: "Grok 4.7", usage, at: 1 })).status).toBe(204);
+    expect((store.db.query("SELECT model FROM usage WHERE session_id = 'c2'").get() as any).model).toBe("Grok 4.7");
+  });
+
+  it("ignores garbage without recording anything", async () => {
+    for (const bad of ["not json", {}, { session_id: "c3" }, { session_id: "c3", usage: { inputTokens: "x" } }]) {
+      expect((await post(bad)).status).toBe(204);
+    }
+    expect((store.db.query("SELECT count(*) AS n FROM usage").get() as any).n).toBe(0);
+  });
+});

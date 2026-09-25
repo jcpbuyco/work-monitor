@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/home/user/project","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","model":"Grok 4.7 256K High Fast","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"reply with just the word pong"}]},"session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe"}
+{"type":"thinking","subtype":"delta","text":"The user wants a reply","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","timestamp_ms":1790346464635}
+{"type":"thinking","subtype":"delta","text":" containing only the","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","timestamp_ms":1790346466616}
+{"type":"thinking","subtype":"delta","text":" word \"pong\".","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","timestamp_ms":1790346466616}
+{"type":"thinking","subtype":"completed","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","timestamp_ms":1790346466616}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe"}
+{"type":"result","subtype":"success","duration_ms":7435,"duration_api_ms":7435,"is_error":false,"result":"pong","session_id":"bf0ff3dc-127c-45e6-baf0-3c2bbbbc47fe","request_id":"3ccb3028-f3b3-4692-abd0-9efaa230cd13","usage":{"inputTokens":9509,"outputTokens":186,"cacheReadTokens":10752,"cacheWriteTokens":0}}

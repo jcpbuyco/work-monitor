@@ -6,6 +6,7 @@ import { resolveRepoInfo } from "./resolve-project.ts";
 import type { EventType, HookEvent, SessionPatch, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 import { tailUsage } from "./usage.ts";
+import { costOf } from "./pricing.ts";
 import { sweepSubagents } from "./subagents.ts";
 import { workflowsDegraded, logOnce, bumpDegraded, sessionDirFor } from "./workflows.ts";
 import type { Store as StoreType } from "./store.ts";
@@ -93,6 +94,35 @@ function tryParse(raw: string): { ok: true; value: any } | { ok: false } {
   } catch {
     return { ok: false };
   }
+}
+
+interface CursorUsagePost {
+  session_id: string;
+  request_id: string | null;
+  model: string | null;
+  at: number;
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
+}
+
+/** Validate an am-cursor usage post; null for anything malformed. */
+export function parseCursorUsage(raw: string): CursorUsagePost | null {
+  let o: any;
+  try {
+    o = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const u = o?.usage;
+  const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  if (typeof o?.session_id !== "string" || !o.session_id) return null;
+  if (!u || !["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].every((k) => n(u[k]))) return null;
+  return {
+    session_id: o.session_id,
+    request_id: typeof o.request_id === "string" && o.request_id ? o.request_id : null,
+    model: typeof o.model === "string" && o.model ? o.model : null,
+    at: n(o.at) ? o.at : Date.now(),
+    usage: u,
+  };
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -367,6 +397,37 @@ export function createApp(deps: AppDeps) {
           `event: workflows\ndata: ${JSON.stringify({ runs: store.liveWorkflows(), last_run: store.lastSettledRun() })}\n\n`
         );
         sse.add(res);
+        return;
+      }
+
+      // --- Cursor usage from the am-cursor wrapper ---
+      // Cursor never writes usage to disk; am-cursor reads it from
+      // cursor-agent's own stream-json output and posts it here once per
+      // invocation. Always 204: the wrapper is fire-and-forget.
+      if (method === "POST" && path === "/api/usage/cursor") {
+        const u = parseCursorUsage(await readBody(req));
+        if (u) {
+          const model = store.getTailInfo(u.session_id)?.model ?? u.model ?? "unknown";
+          const tokens = {
+            input: u.usage.inputTokens,
+            output: u.usage.outputTokens,
+            cache_read: u.usage.cacheReadTokens,
+            cache_create_5m: u.usage.cacheWriteTokens,
+            cache_create_1h: 0,
+          };
+          const recorded = store.recordUsage({
+            uuid: `cursor:${u.request_id ?? `${u.session_id}:${u.at}`}`,
+            messageKey: `cursor:${u.request_id ?? `${u.session_id}:${u.at}`}`,
+            sessionId: u.session_id,
+            model,
+            tokens,
+            at: u.at,
+            cost: costOf(model, tokens),
+            harness: "cursor",
+          });
+          if (recorded) scheduleState();
+        }
+        res.writeHead(204).end();
         return;
       }
 

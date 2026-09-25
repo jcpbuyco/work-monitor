@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -214,6 +214,29 @@ export function setupCursor(env: SetupEnv) {
   console.log("\nCursor CLI detected (~/.cursor exists):");
   mergeCursorMcpFile(env);
   step("No ~/.cursor/hooks.json written - Cursor already delivers events via its Claude-compat hook layer.");
+  installAmCursorShim(env);
+}
+
+/** Marks a file at ~/.local/bin/am-cursor as ours, so a re-run may replace it
+ *  and a same-named file from anything else is never touched. */
+const SHIM_MARKER = "# agent-monitor am-cursor shim";
+
+/** Cursor writes no token usage anywhere; `am-cursor` (src/cli/am-cursor.ts)
+ *  wraps headless cursor-agent runs to capture it. */
+function installAmCursorShim(env: SetupEnv) {
+  const binDir = join(env.home, ".local", "bin");
+  const shimPath = join(binDir, "am-cursor");
+  if (existsSync(shimPath) && !readFileSync(shimPath, "utf8").includes(SHIM_MARKER)) {
+    console.warn(`  ${shimPath} exists and is not ours - left untouched.`);
+    return;
+  }
+  mkdirSync(binDir, { recursive: true });
+  const script = join(projectRoot, "src", "cli", "am-cursor.ts");
+  writeFileSync(shimPath, `#!/bin/sh\n${SHIM_MARKER}\nexec "${bunPath}" run "${script}" "$@"\n`);
+  chmodSync(shimPath, 0o755);
+  step(`Installed ${shimPath}`);
+  console.log("  Cursor records no token usage locally. Run headless sessions as `am-cursor -p ...`");
+  console.log("  instead of `cursor-agent -p ...` to capture their tokens (interactive runs pass straight through).");
 }
 
 /** One-time migration: supersede a pre-rename work-monitor install. Stale

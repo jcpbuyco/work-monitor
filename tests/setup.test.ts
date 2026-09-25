@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -181,6 +181,33 @@ describe("setupCursor (~/.cursor)", () => {
 
     expect(() => setupCursor(env(home))).not.toThrow();
     expect(readFileSync(mcpPath, "utf8")).toBe("{not json");
+  });
+});
+
+describe("setupCursor: am-cursor shim", () => {
+  const shim = (home: string) => join(home, ".local", "bin", "am-cursor");
+
+  it("installs an executable shim that runs the repo's am-cursor.ts", () => {
+    const home = tmpHome();
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    setupCursor(env(home));
+    const text = readFileSync(shim(home), "utf8");
+    expect(text.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(text).toContain("src/cli/am-cursor.ts");
+    expect(text).toContain('"$@"');
+    expect(statSync(shim(home)).mode & 0o111).not.toBe(0);
+  });
+
+  it("replaces its own shim on re-run but never a foreign am-cursor", () => {
+    const home = tmpHome();
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    setupCursor(env(home));
+    setupCursor(env(home)); // idempotent re-run
+    expect(readFileSync(shim(home), "utf8")).toContain("src/cli/am-cursor.ts");
+
+    writeFileSync(shim(home), "#!/bin/sh\necho mine\n");
+    setupCursor(env(home));
+    expect(readFileSync(shim(home), "utf8")).toBe("#!/bin/sh\necho mine\n");
   });
 });
 
