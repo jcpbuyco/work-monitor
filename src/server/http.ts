@@ -3,17 +3,68 @@ import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
 import { reduceEvent } from "./events.ts";
 import { resolveRepoInfo } from "./resolve-project.ts";
-import type { EventType, HookEvent, TodoStatus } from "./types.ts";
+import type { EventType, HookEvent, SessionPatch, TodoStatus } from "./types.ts";
 import { handleMcpRequest, type McpDeps } from "./mcp.ts";
 import { tailUsage } from "./usage.ts";
-import { workflowsDegraded } from "./workflows.ts";
+import { workflowsDegraded, logOnce, bumpDegraded } from "./workflows.ts";
 import type { Store as StoreType } from "./store.ts";
+import { createThrottle, type Throttled } from "./throttle.ts";
+import { STATE_THROTTLE_MS } from "./config.ts";
+import { compactPayload, extractEventColumns } from "./payload.ts";
 
 export interface AppDeps {
   store: Store;
   sse: SseHub;
   now?: () => number;
   mcp?: McpDeps;
+  /** Shared trailing-edge broadcaster (§1.1). When omitted, createApp builds
+   *  its own - fine standalone, but a real deployment must build ONE with
+   *  `createStateScheduler` and pass the SAME instance here and to the MCP
+   *  `onChange`/the 60s sweep, so every source of a state change coalesces
+   *  into a single broadcast instead of each mutator throttling on its own. */
+  scheduleState?: () => void;
+}
+
+/** Build the shared "state changed" broadcaster: a trailing-edge throttle
+ *  (§1.1) around `sse.broadcast("state", buildState(store))`. One instance
+ *  should be shared by every mutation path (POST /events, todo CRUD, MCP
+ *  onChange, the 60s sweep) so a burst across all of them still collapses to
+ *  one broadcast per window. */
+export function createStateScheduler(store: StoreType, sse: SseHub, ms: number = STATE_THROTTLE_MS): Throttled {
+  return createThrottle(() => {
+    try {
+      sse.broadcast("state", buildState(store));
+    } catch (err) {
+      // This runs inside a bare setTimeout callback (createThrottle's), with
+      // no try/catch upstream: an uncaught throw here is an uncaught
+      // exception for the whole process, and Bun/Node exits on one -- every
+      // POST /events, todo edit, or sweep that lands while buildState() is
+      // broken would then crash and restart the server instead of just
+      // failing to refresh the board once. Degrade instead (matches
+      // workflowTick's own logOnce/bumpDegraded pattern in workflows.ts).
+      if (logOnce("state-broadcast", err)) bumpDegraded();
+    }
+  }, ms);
+}
+
+/** §1.5's no-downgrade rule, as a pure decision: does a fresh git resolution
+ *  get applied to the session's project/branch, or does the session keep what
+ *  it already has? A resolution that came from git (this call, or a cached
+ *  earlier success) always applies. A basename fallback only applies when the
+ *  session has no project resolved from git YET - an already-resolved session
+ *  never regresses to a basename on a transient git failure/timeout. Exported
+ *  so this decision is unit-testable without staging a real git failure
+ *  mid-session.
+ *
+ *  `sessionResolved` is deliberately not just "the session row exists": a
+ *  session whose only events so far were subagents' (project stamped
+ *  "unknown" by applyEvent's own insert fallback, since a subagent patch
+ *  carries no project field at all) has never had a chance at git resolution.
+ *  Callers pass false for that case too, so the FIRST main-agent event with a
+ *  usable cwd still gets the ordinary new-session basename fallback instead
+ *  of being stuck on "unknown" forever. */
+export function shouldApplyGitInfo(fromGit: boolean, sessionResolved: boolean): boolean {
+  return fromGit || !sessionResolved;
 }
 
 const EVENT_TYPES = new Set<EventType>([
@@ -67,7 +118,8 @@ export function buildState(store: StoreType) {
     activity: store.recentActivity(ACTIVITY_LIMIT),
     stats: store.toolStats(),
     // A scalar sibling of sessions/todos/activity/stats/cost — NOT nested in cost,
-    // and never an array. buildState() is already 243ms; it must not get slower.
+    // and never an array. buildState() must stay under 50ms warm (§1.3;
+    // scripts/profile-state.ts measures it) - it must not get slower.
     workflows_degraded: workflowsDegraded(),
     cost: {
       ...store.costSummary(startOfLocalDay(Date.now())),
@@ -81,10 +133,7 @@ export function buildState(store: StoreType) {
 export function createApp(deps: AppDeps) {
   const now = deps.now ?? (() => Date.now());
   const { store, sse } = deps;
-
-  function pushState(): void {
-    sse.broadcast("state", buildState(store));
-  }
+  const scheduleState = deps.scheduleState ?? createStateScheduler(store, sse);
 
   return async function app(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -113,25 +162,57 @@ export function createApp(deps: AppDeps) {
           return;
         }
         const t = now();
-        const { sessionId, patch } = reduceEvent(event, t);
-        // Refine project + branch from git so a worktree reports its repo, not the
-        // branch directory the cwd basename gives (reduceEvent stays pure).
-        if (event.cwd) {
+        const { sessionId, patch: fullPatch } = reduceEvent(event, t);
+        const cols = extractEventColumns(payload);
+
+        // §1.5: only main-agent events (no `agent_id` in the payload) may steer
+        // a session's identity/status. A Task/workflow subagent's own tool
+        // calls still prove the session as a whole is alive (last_activity_at)
+        // and are stored as activity either way, but must not overwrite the
+        // main agent's displayed project/branch/cwd/status/attention_reason/
+        // active_tool/current_task/current_intent/transcript_path - a fresh
+        // object (not `fullPatch`) so none of reduceEvent's other fields leak.
+        const isSubagentEvent = cols.agentId != null;
+        const patch: SessionPatch = isSubagentEvent ? { last_activity_at: fullPatch.last_activity_at } : fullPatch;
+
+        if (!isSubagentEvent && event.cwd) {
+          // Refine project + branch from git so a worktree reports its repo, not
+          // the branch directory the cwd basename gives (reduceEvent stays pure).
           const info = await resolveRepoInfo(event.cwd);
-          patch.project = info.project;
-          patch.branch = info.branch;
+          const existing = store.getSession(sessionId);
+          // A session created by a subagent-first event (or a main event with
+          // no cwd) is stamped project "unknown" and has never actually been
+          // resolved from git -- treat it like a brand-new session for the
+          // no-downgrade rule so it isn't stuck on "unknown" forever.
+          const sessionResolved = existing != null && existing.project !== "unknown";
+          if (shouldApplyGitInfo(info.fromGit, sessionResolved)) {
+            patch.project = info.project;
+            patch.branch = info.branch;
+          } else {
+            // git failed/timed out on an EXISTING session: never downgrade it
+            // to the cwd basename reduceEvent set by default -- keep what it
+            // already has (§1.5).
+            delete patch.project;
+          }
         }
         store.applyEvent(sessionId, patch, t);
-        store.db
-          .query(`INSERT INTO events (session_id, type, payload, at) VALUES ($s, $t, $p, $a)`)
-          .run({ $s: sessionId, $t: type, $p: raw.slice(0, 8000), $a: t });
+        store.recordEvent({
+          sessionId,
+          type,
+          payload: compactPayload(payload),
+          at: t,
+          toolName: cols.toolName,
+          durationMs: cols.durationMs,
+          agentId: cols.agentId,
+          harness: cols.harness,
+        });
         if (type === "stop" || type === "session_end") {
           const info = store.getTailInfo(sessionId);
           if (info) {
             tailUsage(store, { id: sessionId, transcript_path: info.transcript_path, usage_offset: info.usage_offset });
           }
         }
-        pushState();
+        scheduleState();
         res.writeHead(204).end();
         return;
       }
@@ -157,7 +238,8 @@ export function createApp(deps: AppDeps) {
       }
 
       // --- workflow run history; pull, not streamed (live runs use the SSE
-      // `workflows` event instead — buildState() is 243ms and must not grow) ---
+      // `workflows` event instead - buildState() must stay under 50ms warm
+      // (§1.3) and must not grow) ---
       if (method === "GET" && path === "/api/workflows") {
         const num = (v: string | null): number | undefined => {
           const n = v == null ? NaN : Number(v);
@@ -198,7 +280,7 @@ export function createApp(deps: AppDeps) {
           return;
         }
         const todo = store.createTodo(body, now());
-        pushState();
+        scheduleState();
         json(res, 201, todo);
         return;
       }
@@ -226,13 +308,13 @@ export function createApp(deps: AppDeps) {
             json(res, 404, { error: "not found" });
             return;
           }
-          pushState();
+          scheduleState();
           json(res, 200, updated);
           return;
         }
         if (method === "DELETE") {
           const ok = store.deleteTodo(id);
-          if (ok) pushState();
+          if (ok) scheduleState();
           res.writeHead(ok ? 204 : 404).end();
           return;
         }

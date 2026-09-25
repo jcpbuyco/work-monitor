@@ -37,6 +37,15 @@ export function migrate(db: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
     CREATE INDEX IF NOT EXISTS idx_events_type_at ON events(type, at);
+    CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+    CREATE TABLE IF NOT EXISTS tool_stats (
+      harness TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      calls INTEGER NOT NULL,
+      timed INTEGER NOT NULL,
+      total_ms REAL NOT NULL,
+      PRIMARY KEY (harness, tool)
+    );
     CREATE TABLE IF NOT EXISTS todos (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -127,6 +136,9 @@ export function migrate(db: Database): void {
   if (!sessionCols.some((c) => c.name === "usage_offset")) {
     db.exec("ALTER TABLE sessions ADD COLUMN usage_offset INTEGER NOT NULL DEFAULT 0;");
   }
+  if (!sessionCols.some((c) => c.name === "idle_reason")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN idle_reason TEXT;");
+  }
   // Idempotent: stamp project/branch onto usage rows for historical attribution.
   const usageCols = db.query("PRAGMA table_info(usage)").all() as { name: string }[];
   if (!usageCols.some((c) => c.name === "project")) {
@@ -142,6 +154,26 @@ export function migrate(db: Database): void {
     db.exec("ALTER TABLE usage ADD COLUMN agent_id TEXT;");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);");
+  // Idempotent: real columns for the fields every activity row already carries
+  // in its JSON payload, so hot-path reads (recentActivity, toolStats) never
+  // need to parse it. A one-time backfill (events-migrate.ts, guarded by
+  // app_meta `events_columns_v1`) populates these for pre-existing rows.
+  const eventCols = db.query("PRAGMA table_info(events)").all() as { name: string }[];
+  if (!eventCols.some((c) => c.name === "tool_name")) {
+    db.exec("ALTER TABLE events ADD COLUMN tool_name TEXT;");
+  }
+  if (!eventCols.some((c) => c.name === "duration_ms")) {
+    db.exec("ALTER TABLE events ADD COLUMN duration_ms REAL;");
+  }
+  if (!eventCols.some((c) => c.name === "agent_id")) {
+    db.exec("ALTER TABLE events ADD COLUMN agent_id TEXT;");
+  }
+  if (!eventCols.some((c) => c.name === "harness")) {
+    db.exec("ALTER TABLE events ADD COLUMN harness TEXT;");
+  }
+  // Matches recentActivity's `WHERE type = 'activity' ORDER BY id DESC LIMIT n`:
+  // id is monotonic (AUTOINCREMENT) and cheaper to sort on than `at`.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_id ON events(type, id);");
   // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
   db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);
 }

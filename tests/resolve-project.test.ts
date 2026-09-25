@@ -44,20 +44,22 @@ describe("resolveRepoInfo", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("resolves a worktree's cwd to the repo name and its branch", async () => {
-    expect(await resolveRepoInfo(worktree)).toEqual({ project: "myproj", branch: "feature/my-branch" });
+    expect(await resolveRepoInfo(worktree)).toEqual({ project: "myproj", branch: "feature/my-branch", fromGit: true });
   });
   it("resolves a normal repo cwd to the repo name with a non-empty branch", async () => {
     const info = await resolveRepoInfo(repo);
     expect(info.project).toBe("myproj");
     expect(typeof info.branch).toBe("string");
     expect((info.branch ?? "").length).toBeGreaterThan(0);
+    expect(info.fromGit).toBe(true);
   });
-  it("falls back to { basename, null } for a non-git path", async () => {
-    expect(await resolveRepoInfo("/no/such/dir/foobar")).toEqual({ project: "foobar", branch: null });
+  it("falls back to { basename, null, fromGit: false } for a non-git path", async () => {
+    expect(await resolveRepoInfo("/no/such/dir/foobar")).toEqual({ project: "foobar", branch: null, fromGit: false });
   });
   it("uses the short SHA as the branch for a detached HEAD", async () => {
     const info = await resolveRepoInfo(detached);
     expect(info.project).toBe("myproj");
     expect(info.branch).toMatch(/^[0-9a-f]{7,40}$/);
+    expect(info.fromGit).toBe(true);
   });
 });

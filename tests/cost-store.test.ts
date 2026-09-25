@@ -166,6 +166,65 @@ describe("Store usage rows", () => {
     expect(rows[0].branch).toBeNull();
   });
 
+  it("memoizes costByProject/costByBranch on usageVersion: a duplicate recordUsage (no-op) does not invalidate a stale query plan, and a real write does", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", branch: "main", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    const first = store.costByProject();
+    expect(first).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0 }]);
+
+    // A duplicate uuid is INSERT OR IGNORE'd -- must not bump usageVersion, so
+    // the cached result (a fresh object built by that first call) is reused.
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    expect(store.costByProject()).toBe(first); // same array reference: served from cache
+
+    // A genuinely new row must invalidate the cache and be reflected.
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 2.0 });
+    const second = store.costByProject();
+    expect(second).not.toBe(first);
+    expect(second).toEqual([{ project: "alpha", costUsd: 3.0, tokens: 0 }]);
+  });
+
+  it("bumpUsageVersion invalidates the memoized cost caches for a usage write that bypassed recordUsage", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    const first = store.costByProject();
+
+    // A write that bypasses recordUsage (e.g. reprice.ts's raw DELETE, or a
+    // future generic-reprice/dedupe migration) must not silently invalidate
+    // itself -- the cache is stale until the caller explicitly bumps it.
+    store.db.query(`UPDATE usage SET cost_usd = 5.0 WHERE message_uuid = 'a1'`).run();
+    expect(store.costByProject()).toBe(first); // still served from cache
+
+    store.bumpUsageVersion();
+    const second = store.costByProject();
+    expect(second).not.toBe(first);
+    expect(second).toEqual([{ project: "alpha", costUsd: 5.0, tokens: 0 }]);
+  });
+
+  it("a ranged costByProject call is never cached and always reflects the latest write", () => {
+    store.applyEvent("a", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 1.0, tokens: 0 }]);
+    store.recordUsage({ uuid: "a2", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 5.0 });
+    expect(store.costByProject({ since: 0 })).toEqual([{ project: "alpha", costUsd: 6.0, tokens: 0 }]);
+  });
+
+  it("costSummary's live total reflects a session ending even with no new usage write (never memoized on usageVersion alone)", () => {
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: 100, cost: 1.0 });
+    expect(store.costSummary(0).liveTotalUsd).toBeCloseTo(1.0, 6);
+    store.applyEvent("a", { status: "ended", ended_at: 2 }, 2); // no usage write here
+    expect(store.costSummary(0).liveTotalUsd).toBeCloseTo(0, 6);
+  });
+
+  it("costSummary's today block is keyed on the day boundary too, not usageVersion alone", () => {
+    store.applyEvent("a", { status: "working", last_activity_at: 1 }, 1);
+    const T = 1_700_000_000_000;
+    store.recordUsage({ uuid: "a1", sessionId: "a", model: "claude-opus-4-8", tokens: tok(0), at: T, cost: 1.0 });
+    expect(store.costSummary(T - 1).todayUsd).toBeCloseTo(1.0, 6); // midnight before the row -> included
+    expect(store.costSummary(T + 1).todayUsd).toBeCloseTo(0, 6); // a later "midnight" excludes it, distinct cache entry
+  });
+
   it("records run_id and agent_id when given, NULL when not", () => {
     store.recordUsage({ uuid: "w1", sessionId: "s1", model: "claude-opus-5", tokens: tok(10), at: 1, cost: 1, runId: "wf_1", agentId: "a1" });
     store.recordUsage({ uuid: "p1", sessionId: "s1", model: "claude-opus-5", tokens: tok(10), at: 1, cost: 1 });

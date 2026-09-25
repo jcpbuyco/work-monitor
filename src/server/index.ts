@@ -5,18 +5,35 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "./db.ts";
 import { Store } from "./store.ts";
 import { SseHub } from "./sse.ts";
-import { createApp, buildState, type AppDeps } from "./http.ts";
+import { createApp, createStateScheduler, type AppDeps } from "./http.ts";
 import { tailUsage } from "./usage.ts";
 import { repriceFiveSeries, REPRICE_MARKER } from "./reprice.ts";
-import { PORT, HOST, DB_PATH, STALE_MS, DEAD_MS, SWEEP_INTERVAL_MS, WF_TICK_MS, WORKFLOWS_ENABLED } from "./config.ts";
+import {
+  PORT,
+  HOST,
+  DB_PATH,
+  STALE_MS,
+  DEAD_MS,
+  NEEDS_YOU_DEAD_MS,
+  SWEEP_INTERVAL_MS,
+  EVENTS_RETENTION_MS,
+  RETENTION_SWEEP_INTERVAL_MS,
+  WF_TICK_MS,
+  WORKFLOWS_ENABLED,
+} from "./config.ts";
 import { backfillWorkflows, logOnce, bumpDegraded, workflowTick } from "./workflows.ts";
+import { backfillEventsColumns } from "./events-migrate.ts";
+import { retentionSweep, runPendingVacuum } from "./retention.ts";
 
 const store = new Store(openDb(DB_PATH));
 const sse = new SseHub();
-const pushState = () => sse.broadcast("state", buildState(store));
-const onChange = pushState;
+// ONE shared throttle (§1.1): every mutation path below passes this same
+// instance so a burst across POST /events, todo CRUD, MCP onChange, and the
+// 60s sweep still coalesces into a single broadcast per window.
+const scheduleState = createStateScheduler(store, sse);
+const onChange = scheduleState;
 
-const deps: AppDeps = { store, sse, mcp: { store, onChange } };
+const deps: AppDeps = { store, sse, scheduleState, mcp: { store, onChange } };
 const app = createApp(deps);
 
 // Serve built dashboard from dist/web if present (production).
@@ -54,17 +71,34 @@ const server = createServer(async (req, res) => {
 });
 
 setInterval(() => {
-  const affected = store.sweepStale(Date.now(), STALE_MS, DEAD_MS);
+  const affected = store.sweepStale(Date.now(), STALE_MS, DEAD_MS, NEEDS_YOU_DEAD_MS);
   let changed = affected.length > 0;
   for (const s of store.sessionsToTail()) {
     if (tailUsage(store, s)) changed = true;
   }
-  if (changed) pushState();
+  if (changed) scheduleState();
 }, SWEEP_INTERVAL_MS);
 
+// Hourly retention sweep (§1.4): prune events older than 30 days. The first
+// ever prune to actually delete something triggers a one-time safety backup
+// (VACUUM INTO) before anything destructive runs, and marks that the deferred
+// one-time VACUUM (below, at the NEXT startup) has work to do. Wrapped in
+// try/catch: this runs inside a bare setInterval callback, so an uncaught
+// throw here (a wedged VACUUM INTO target, a locked DB) would otherwise be an
+// uncaught exception for the whole process every hour.
+setInterval(() => {
+  try {
+    const deleted = retentionSweep(store, DB_PATH, Date.now(), EVENTS_RETENTION_MS);
+    if (deleted > 0) console.log(`[retention] pruned ${deleted} events older than 30 days`);
+  } catch (err) {
+    if (logOnce("retention-sweep", err)) bumpDegraded();
+  }
+}, RETENTION_SWEEP_INTERVAL_MS);
+
 // A SECOND interval, deliberately separate from the 60s sweep: a live run must
-// feel live. This tick must NEVER call pushState() — buildState() is 243ms and a
-// 5s full-state broadcast would burn ~5% CPU permanently. Usage it records
+// feel live. This tick must NEVER call scheduleState()/pushState() - a 5s
+// full-state broadcast would burn CPU permanently even at buildState()'s new
+// sub-50ms warm cost (§1.3). Usage it records
 // therefore does not reach the cost panels until the next 60s sweep; that
 // asymmetry is accepted. The scan-then-diff-then-broadcast logic itself lives in
 // workflowTick() (workflows.ts), where it can be exercised by a test without
@@ -89,6 +123,39 @@ if (WORKFLOWS_ENABLED) {
   } catch (err) {
     if (logOnce("wf-backfill", err)) bumpDegraded();
   }
+}
+
+// One-shot: populate the new `events` columns for historic rows and rebuild
+// `tool_stats` from them (§1.2). Guarded by app_meta `events_columns_v1`.
+{
+  const t0 = Date.now();
+  const { updated } = backfillEventsColumns(store, t0);
+  if (updated > 0) console.log(`[events-backfill] columns backfilled for ${updated} rows in ${Date.now() - t0}ms`);
+}
+
+// One-time (per boot) retention prune, run synchronously at startup rather
+// than waiting for the first hourly interval tick: a long-running systemd
+// service could otherwise sit on 30+ days of stale events for up to an hour
+// after every restart before the first prune (and the VACUUM below, which
+// depends on it) ever runs. The hourly interval above still owns steady-state
+// pruning after this.
+{
+  const t0 = Date.now();
+  try {
+    const deleted = retentionSweep(store, DB_PATH, Date.now(), EVENTS_RETENTION_MS);
+    if (deleted > 0) console.log(`[retention] startup prune: ${deleted} events older than 30 days in ${Date.now() - t0}ms`);
+  } catch (err) {
+    if (logOnce("retention-sweep", err)) bumpDegraded();
+  }
+}
+
+// Deferred one-time VACUUM (§1.4): only runs once a retention sweep has
+// actually pruned something (across any past run of the server, including the
+// startup prune just above), and only here at startup - never inside the
+// sweep's own interval, which must stay cheap.
+{
+  const t0 = Date.now();
+  if (runPendingVacuum(store)) console.log(`[retention] one-time VACUUM after first prune, ${Date.now() - t0}ms`);
 }
 
 server.listen(PORT, HOST, () => {

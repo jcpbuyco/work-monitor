@@ -848,9 +848,10 @@ export interface BroadcastHub {
  *
  *  Cost when everything is settled: `liveWorkflows` is finding-6's single SQL
  *  query returning no rows (the settled predicate lives in its WHERE clause, so
- *  nothing is hydrated), plus a string compare. The 243ms `buildState()` stays
- *  off this tick entirely — it never calls pushState()/broadcasts "state",
- *  because a 5s full-state broadcast would burn ~5% CPU permanently. Usage this
+ *  nothing is hydrated), plus a string compare. `buildState()` (sub-50ms warm,
+ *  §1.3) stays off this tick entirely - it never calls
+ *  scheduleState()/pushState()/broadcasts "state", because a 5s full-state
+ *  broadcast would burn CPU permanently regardless. Usage this
  *  tick records therefore does not reach the cost panels until the next 60s
  *  sweep; that asymmetry is accepted. This is the one place index.ts's
  *  setInterval calls into.

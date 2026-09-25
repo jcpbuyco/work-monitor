@@ -11,6 +11,10 @@ export interface Session {
   attention_reason: string | null;
   active_tool: string | null;
   branch: string | null;
+  /** Why an `idle` session went idle: "stopped" (a Stop hook) or "quiet"
+   *  (swept for silence past STALE_MS). Meaningless - and not necessarily
+   *  cleared - once the session leaves `idle`. */
+  idle_reason: string | null;
   started_at: number;
   last_activity_at: number;
   ended_at: number | null;
@@ -50,6 +54,7 @@ export interface SessionPatch {
   attention_reason?: string | null;
   active_tool?: string | null;
   branch?: string | null;
+  idle_reason?: string | null;
   last_activity_at?: number;
   ended_at?: number | null;
 }

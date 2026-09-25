@@ -70,4 +70,14 @@ describe("repriceFiveSeries", () => {
     repriceFiveSeries(store, 5000);
     expect(store.getMeta(REPRICE_MARKER)).toBe("5000");
   });
+
+  it("bumps the cost-cache generation, so a costByProject() call warmed on the stale $0 total reflects the repriced one (§1.3)", () => {
+    const { store } = fixture();
+    const stale = store.costByProject();
+    expect(stale).toEqual([{ project: "alpha", costUsd: 0, tokens: 2_000_000 }]);
+    repriceFiveSeries(store, 5000);
+    const fresh = store.costByProject();
+    expect(fresh).not.toBe(stale);
+    expect(fresh[0].costUsd).toBeCloseTo(10, 6); // 2 x $5, not the stale $0
+  });
 });

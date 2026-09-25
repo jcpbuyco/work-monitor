@@ -8,9 +8,15 @@ const execFileP = promisify(execFile);
 export interface RepoInfo {
   project: string;
   branch: string | null;
+  /** True when this result came from a successful git resolution - this call,
+   *  or a cached earlier one (only successes are cached). False means the
+   *  basename fallback: git failed, timed out, or the path isn't a repo.
+   *  Callers use this to avoid downgrading a session already resolved from
+   *  git on a merely transient failure (§1.5). */
+  fromGit: boolean;
 }
 
-const TTL_MS = 60_000;
+const TTL_MS = 30_000;
 // cwd → resolved info. The repo is immutable per path but the branch can change via
 // `git checkout`, so entries expire after the TTL — keeping git off the per-event hot
 // path (the activity heartbeat hits the cache) while staying reasonably fresh.
@@ -34,11 +40,11 @@ export function repoNameFromGitDir(commonDir: string): string {
  * for non-git paths (or when git is unavailable / the path is gone).
  */
 export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
-  if (!cwd) return { project: "unknown", branch: null };
+  if (!cwd) return { project: "unknown", branch: null, fromGit: false };
   const hit = cache.get(cwd);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.info;
 
-  let info: RepoInfo = { project: projectFromCwd(cwd), branch: null };
+  let info: RepoInfo = { project: projectFromCwd(cwd), branch: null, fromGit: false };
   try {
     const { stdout } = await execFileP(
       "git",
@@ -60,7 +66,7 @@ export async function resolveRepoInfo(cwd: string): Promise<RepoInfo> {
         branch = null;
       }
     }
-    info = { project, branch };
+    info = { project, branch, fromGit: true };
     // Cache only successful resolutions — a transient git failure must not pin the
     // degraded basename fallback (re-introducing the worktree bug) for the whole TTL.
     cache.set(cwd, { info, at: Date.now() });

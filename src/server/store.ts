@@ -6,7 +6,7 @@ import { deriveRunState } from "./workflows.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
 
 const SESSION_COLS =
-  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at";
+  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, started_at, last_activity_at, ended_at";
 
 const TODO_COLS =
   "id, title, note, for_who, status, origin_session_id, origin_project, branch, links, position, created_at, updated_at";
@@ -180,13 +180,34 @@ export interface LiveWorkflow {
 export class Store {
   constructor(public db: Database) {}
 
+  // --- cost-aggregate caching (§1.3) --------------------------------------
+  // Bumped by every write to `usage` (recordUsage today; the future generic
+  // reprice/dedupe migrations in §2.2/§2.3 must bump it too). All-time cost
+  // aggregates memoize on this counter so a burst of hook traffic that writes
+  // no new usage (the common case) recomputes nothing on repeat buildState()
+  // calls. In-memory only - a restart naturally invalidates everything.
+  private usageVersion = 0;
+  private perSessionCostCache: { version: number; value: Record<string, { costUsd: number; tokens: number }> } | null =
+    null;
+  private todayCostCache: {
+    version: number;
+    midnight: number;
+    value: { todayUsd: number; byModelToday: { model: string; costUsd: number }[] };
+  } | null = null;
+  private costByProjectCache: { version: number; rows: { project: string; costUsd: number; tokens: number }[] } | null =
+    null;
+  private costByBranchCache: {
+    version: number;
+    rows: { project: string; branch: string | null; costUsd: number; tokens: number }[];
+  } | null = null;
+
   applyEvent(sessionId: string, patch: SessionPatch, now: number): Session {
     const existing = this.getSession(sessionId);
     if (!existing) {
       this.db
         .query(
-          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, started_at, last_activity_at, ended_at)
-           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $active_tool, $branch, $started_at, $last_activity_at, $ended_at)`
+          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, started_at, last_activity_at, ended_at)
+           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $active_tool, $branch, $idle_reason, $started_at, $last_activity_at, $ended_at)`
         )
         .run({
           $id: sessionId,
@@ -199,6 +220,7 @@ export class Store {
           $attention_reason: patch.attention_reason ?? null,
           $active_tool: patch.active_tool ?? null,
           $branch: patch.branch ?? null,
+          $idle_reason: patch.idle_reason ?? null,
           $started_at: now,
           $last_activity_at: patch.last_activity_at ?? now,
           $ended_at: patch.ended_at ?? null,
@@ -218,6 +240,7 @@ export class Store {
       "attention_reason",
       "active_tool",
       "branch",
+      "idle_reason",
       "last_activity_at",
       "ended_at",
     ] as const) {
@@ -245,83 +268,207 @@ export class Store {
       .all() as Session[];
   }
 
-  /** Most recent tool-call activity across all sessions, newest first.
-   *  Parses `tool_name` out of stored `activity` event payloads. */
-  recentActivity(
-    limit: number
-  ): { id: number; session_id: string; tool: string; detail: string | null; dur: number | null; at: number }[] {
+  /** Insert one raw event row plus, for `activity` rows with a known tool, the
+   *  matching `tool_stats` upsert -- in the SAME transaction, so the running
+   *  aggregate can never drift from the events it was built from (§1.2).
+   *  Columns are pre-extracted and the payload pre-compacted by the caller
+   *  (`payload.ts`); this method only owns the write. */
+  recordEvent(e: {
+    sessionId: string;
+    type: string;
+    payload: string;
+    at: number;
+    toolName: string | null;
+    durationMs: number | null;
+    agentId: string | null;
+    harness: string;
+  }): void {
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO events (session_id, type, payload, at, tool_name, duration_ms, agent_id, harness)
+           VALUES ($s, $t, $p, $a, $tool, $dur, $agent, $harness)`
+        )
+        .run({
+          $s: e.sessionId,
+          $t: e.type,
+          $p: e.payload,
+          $a: e.at,
+          $tool: e.toolName,
+          $dur: e.durationMs,
+          $agent: e.agentId,
+          $harness: e.harness,
+        });
+      if (e.type === "activity" && e.toolName) {
+        this.db
+          .query(
+            `INSERT INTO tool_stats (harness, tool, calls, timed, total_ms)
+             VALUES ($h, $tool, 1, $timed, $ms)
+             ON CONFLICT(harness, tool) DO UPDATE SET
+               calls = calls + 1,
+               timed = timed + $timed,
+               total_ms = total_ms + $ms`
+          )
+          .run({ $h: e.harness, $tool: e.toolName, $timed: e.durationMs != null ? 1 : 0, $ms: e.durationMs ?? 0 });
+      }
+    })();
+  }
+
+  /** Delete `events` rows older than `cutoff` (all types) - the hourly
+   *  retention sweep (§1.4). `tool_stats` is a separate accumulating table,
+   *  so historical tool-usage totals survive the prune. Returns rows deleted. */
+  pruneOldEvents(cutoff: number): number {
+    return this.db.query(`DELETE FROM events WHERE at < $cutoff`).run({ $cutoff: cutoff }).changes;
+  }
+
+  /** Most recent tool-call activity across all sessions, newest first. Reads
+   *  `tool_name`/`duration_ms`/`agent_id`/`harness` straight from their
+   *  columns (§1.2) - payload is parsed only for the one-line detail summary,
+   *  and a row whose payload fails to parse still appears (detail stays
+   *  null; the tool itself came from the column, not the payload). When
+   *  `agent_id` matches a known workflow agent, its label is attached too;
+   *  Task-subagent labels land with the `subagents` table (§2.4). */
+  recentActivity(limit: number): {
+    id: number;
+    session_id: string;
+    tool: string;
+    detail: string | null;
+    dur: number | null;
+    at: number;
+    agent_id: string | null;
+    harness: string;
+    label: string | null;
+  }[] {
     const rows = this.db
       .query(
-        `SELECT id, session_id, payload, at FROM events WHERE type = 'activity' ORDER BY at DESC LIMIT $limit`
+        `SELECT e.id, e.session_id, e.payload, e.at, e.tool_name, e.duration_ms, e.agent_id, e.harness,
+                wa.label AS agent_label
+         FROM events e
+         LEFT JOIN workflow_agents wa ON wa.agent_id = e.agent_id
+         WHERE e.type = 'activity'
+         ORDER BY e.id DESC LIMIT $limit`
       )
-      .all({ $limit: limit }) as { id: number; session_id: string; payload: string | null; at: number }[];
-    const out: { id: number; session_id: string; tool: string; detail: string | null; dur: number | null; at: number }[] =
-      [];
+      .all({ $limit: limit }) as {
+      id: number;
+      session_id: string;
+      payload: string | null;
+      at: number;
+      tool_name: string | null;
+      duration_ms: number | null;
+      agent_id: string | null;
+      harness: string | null;
+      agent_label: string | null;
+    }[];
+    const out: {
+      id: number;
+      session_id: string;
+      tool: string;
+      detail: string | null;
+      dur: number | null;
+      at: number;
+      agent_id: string | null;
+      harness: string;
+      label: string | null;
+    }[] = [];
     for (const r of rows) {
-      let tool: string | null = null;
+      if (!r.tool_name) continue; // matches historic behaviour: an untagged row is excluded
       let detail: string | null = null;
-      let dur: number | null = null;
       try {
         if (r.payload) {
-          const p = JSON.parse(r.payload) as { tool_name?: string; tool_input?: unknown; duration_ms?: unknown };
-          tool = p.tool_name ?? null;
-          detail = summarizeTool(tool, p.tool_input);
-          dur = typeof p.duration_ms === "number" ? p.duration_ms : null;
+          const p = JSON.parse(r.payload) as { tool_input?: unknown };
+          detail = summarizeTool(r.tool_name, p.tool_input);
         }
-      } catch {}
-      if (tool) out.push({ id: r.id, session_id: r.session_id, tool, detail, dur, at: r.at });
+      } catch {
+        // payload failed to parse -- the row still appears (tool from the column); no detail.
+      }
+      out.push({
+        id: r.id,
+        session_id: r.session_id,
+        tool: r.tool_name,
+        detail,
+        dur: r.duration_ms,
+        at: r.at,
+        agent_id: r.agent_id,
+        harness: r.harness ?? "claude",
+        label: r.agent_label,
+      });
     }
     return out;
   }
 
-  /** Per-tool usage aggregated across all stored tool calls, busiest first.
-   *  The inner query filters with json_valid first because some payloads were
-   *  truncated to invalid JSON at ingestion (>8000 chars); json_extract would
-   *  otherwise throw on the first malformed row and abort the whole GROUP BY.
-   *  Wrapped in try/catch so stats can never break the rest of /api/state. */
-  toolStats(): { tool: string; calls: number; totalMs: number; avgMs: number | null }[] {
+  /** Per-tool usage, busiest first, summed across harnesses plus a
+   *  per-harness breakdown -- read straight from the incrementally-maintained
+   *  `tool_stats` table (§1.2), so this is an O(distinct tools) GROUP BY over
+   *  a tiny table instead of a full scan of `events`. Wrapped in try/catch so
+   *  stats can never break the rest of /api/state. */
+  toolStats(): {
+    tool: string;
+    calls: number;
+    totalMs: number;
+    avgMs: number | null;
+    byHarness: { harness: string; calls: number; totalMs: number; avgMs: number | null }[];
+  }[] {
     try {
       const rows = this.db
         .query(
-          `SELECT tool,
-                  COUNT(*) AS calls,
-                  COALESCE(SUM(dur), 0) AS total_ms,
-                  SUM(CASE WHEN dur IS NOT NULL THEN 1 ELSE 0 END) AS timed
-           FROM (
-             SELECT json_extract(payload, '$.tool_name') AS tool,
-                    json_extract(payload, '$.duration_ms') AS dur
-             FROM events
-             WHERE type = 'activity' AND json_valid(payload)
-           )
-           WHERE tool IS NOT NULL
-           GROUP BY tool
-           ORDER BY calls DESC`
+          `SELECT tool, harness, calls, timed, total_ms
+           FROM tool_stats
+           ORDER BY tool`
         )
-        .all() as { tool: string; calls: number; total_ms: number; timed: number }[];
-      return rows.map((r) => ({
-        tool: r.tool,
-        calls: r.calls,
-        totalMs: r.total_ms,
-        avgMs: r.timed > 0 ? Math.round(r.total_ms / r.timed) : null,
-      }));
+        .all() as { tool: string; harness: string; calls: number; timed: number; total_ms: number }[];
+      const byTool = new Map<
+        string,
+        { calls: number; timed: number; totalMs: number; byHarness: { harness: string; calls: number; totalMs: number; avgMs: number | null }[] }
+      >();
+      for (const r of rows) {
+        const entry = byTool.get(r.tool) ?? { calls: 0, timed: 0, totalMs: 0, byHarness: [] };
+        entry.calls += r.calls;
+        entry.timed += r.timed;
+        entry.totalMs += r.total_ms;
+        entry.byHarness.push({
+          harness: r.harness,
+          calls: r.calls,
+          totalMs: r.total_ms,
+          avgMs: r.timed > 0 ? Math.round(r.total_ms / r.timed) : null,
+        });
+        byTool.set(r.tool, entry);
+      }
+      return [...byTool.entries()]
+        .map(([tool, e]) => ({
+          tool,
+          calls: e.calls,
+          totalMs: e.totalMs,
+          avgMs: e.timed > 0 ? Math.round(e.totalMs / e.timed) : null,
+          byHarness: e.byHarness,
+        }))
+        .sort((a, b) => b.calls - a.calls);
     } catch {
       return [];
     }
   }
 
   /** Two-tier staleness sweep. Returns ids whose status changed.
-   *  - A *working* session quiet for `staleMs` is marked `idle` (still on the board).
-   *  - ANY non-ended session silent for the longer `deadMs` is retired to `ended`
-   *    (hidden from the board) — a session emits no events while waiting, so this
-   *    prolonged silence is the only signal that a terminal was closed or crashed. */
-  sweepStale(now: number, staleMs: number, deadMs: number): string[] {
+   *  - A *working* session quiet for `staleMs` is marked `idle` (`idle_reason:
+   *    "quiet"`), still on the board.
+   *  - A non-ended, non-`needs_you` session silent for the longer `deadMs` is
+   *    retired to `ended` (hidden from the board) - a session emits no events
+   *    while waiting, so this prolonged silence is the only signal that a
+   *    terminal was closed or crashed.
+   *  - `needs_you` sessions are exempt from `deadMs`: a human hasn't looked
+   *    yet, so the routine dead sweep must not hide the request before anyone
+   *    sees it. They only retire after `needsYouDeadMs` (§1.6). */
+  sweepStale(now: number, staleMs: number, deadMs: number, needsYouDeadMs: number): string[] {
     const affected: string[] = [];
 
     // Retire long-silent sessions first so a working session past `deadMs` goes
     // straight to ended rather than being relabeled idle below.
     const dead = this.db
-      .query(`SELECT id FROM sessions WHERE status != 'ended' AND last_activity_at < $cutoff`)
-      .all({ $cutoff: now - deadMs }) as { id: string }[];
+      .query(
+        `SELECT id FROM sessions WHERE status NOT IN ('ended', 'needs_you') AND last_activity_at < $cutoff
+         UNION
+         SELECT id FROM sessions WHERE status = 'needs_you' AND last_activity_at < $nyCutoff`
+      )
+      .all({ $cutoff: now - deadMs, $nyCutoff: now - needsYouDeadMs }) as { id: string }[];
     for (const { id } of dead) {
       this.db
         .query(`UPDATE sessions SET status = 'ended', ended_at = $now WHERE id = $id`)
@@ -334,7 +481,7 @@ export class Store {
       .query(`SELECT id FROM sessions WHERE status = 'working' AND last_activity_at < $cutoff`)
       .all({ $cutoff: now - staleMs }) as { id: string }[];
     for (const { id } of idle) {
-      this.db.query(`UPDATE sessions SET status = 'idle' WHERE id = $id`).run({ $id: id });
+      this.db.query(`UPDATE sessions SET status = 'idle', idle_reason = 'quiet' WHERE id = $id`).run({ $id: id });
       affected.push(id);
     }
 
@@ -379,7 +526,23 @@ export class Store {
         $run: u.runId ?? null,
         $agent: u.agentId ?? null,
       });
-    return res.changes > 0;
+    const inserted = res.changes > 0;
+    // A no-op (INSERT OR IGNORE on a dupe) changes nothing usage-derived, so
+    // it must not invalidate the cost caches -- that would defeat §1.3 on
+    // exactly the hot path (repeated tailing of an already-recorded message).
+    if (inserted) this.usageVersion++;
+    return inserted;
+  }
+
+  /** Bump the usage-cache generation without writing a `usage` row. Any code
+   *  path that mutates `usage` OUTSIDE of `recordUsage` (today: reprice.ts's
+   *  delete-and-re-tail; the future §2.2 dedupe and §2.3 generic-reprice
+   *  migrations) must call this, or the memoized cost aggregates in §1.3
+   *  (perSessionCost/todayCost/costByProject/costByBranch) can keep serving a
+   *  value computed before that write. `usageVersion` is private for exactly
+   *  this reason -- every writer goes through a method that knows to bump it. */
+  bumpUsageVersion(): void {
+    this.usageVersion++;
   }
 
   setUsageOffset(id: string, offset: number): void {
@@ -417,42 +580,69 @@ export class Store {
       .all() as { id: string; transcript_path: string | null; usage_offset: number }[];
   }
 
-  costSummary(midnightMs: number): {
-    perSession: Record<string, { costUsd: number; tokens: number }>;
-    liveTotalUsd: number;
-    todayUsd: number;
-    byModelToday: { model: string; costUsd: number }[];
-  } {
+  /** Lifetime cost + tokens per session. Memoized on `usageVersion` (§1.3):
+   *  this is a full-table GROUP BY, and `costSummary()` calls it on every
+   *  `buildState()`. */
+  private perSessionCost(): Record<string, { costUsd: number; tokens: number }> {
+    if (this.perSessionCostCache?.version === this.usageVersion) return this.perSessionCostCache.value;
     const per = this.db
       .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens FROM usage GROUP BY session_id`)
       .all() as { session_id: string; cost: number; tokens: number }[];
-    const perSession: Record<string, { costUsd: number; tokens: number }> = {};
-    for (const r of per) perSession[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
+    const value: Record<string, { costUsd: number; tokens: number }> = {};
+    for (const r of per) value[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
+    this.perSessionCostCache = { version: this.usageVersion, value };
+    return value;
+  }
 
-    const live = this.db
-      .query(
-        `SELECT COALESCE(SUM(u.cost_usd), 0) AS c FROM usage u
-         JOIN sessions s ON s.id = u.session_id WHERE s.status != 'ended'`
-      )
-      .get() as { c: number };
-
+  /** Today's total + per-model breakdown. Memoized on `(usageVersion,
+   *  midnightMs)` (§1.3) - the day boundary is part of the cache key so a
+   *  fresh calendar day recomputes exactly once, on its first call. */
+  private todayCost(midnightMs: number): { todayUsd: number; byModelToday: { model: string; costUsd: number }[] } {
+    if (this.todayCostCache?.version === this.usageVersion && this.todayCostCache.midnight === midnightMs) {
+      return this.todayCostCache.value;
+    }
     const today = this.db
       .query(`SELECT COALESCE(SUM(cost_usd), 0) AS c FROM usage WHERE at >= $m`)
       .get({ $m: midnightMs }) as { c: number };
-
     const byModel = this.db
       .query(
         `SELECT model, SUM(cost_usd) AS c FROM usage WHERE at >= $m
          GROUP BY model HAVING c > 0 ORDER BY c DESC`
       )
       .all({ $m: midnightMs }) as { model: string; c: number }[];
+    const value = { todayUsd: today.c, byModelToday: byModel.map((r) => ({ model: r.model, costUsd: r.c })) };
+    this.todayCostCache = { version: this.usageVersion, midnight: midnightMs, value };
+    return value;
+  }
 
-    return {
-      perSession,
-      liveTotalUsd: live.c,
-      todayUsd: today.c,
-      byModelToday: byModel.map((r) => ({ model: r.model, costUsd: r.c })),
-    };
+  costSummary(midnightMs: number): {
+    perSession: Record<string, { costUsd: number; tokens: number }>;
+    liveTotalUsd: number;
+    todayUsd: number;
+    byModelToday: { model: string; costUsd: number }[];
+  } {
+    const perSession = this.perSessionCost();
+    const { todayUsd, byModelToday } = this.todayCost(midnightMs);
+
+    // Deliberately NOT memoized: this depends on `sessions.status`, which
+    // changes on its own (sweeps, stop/session_end) without any usage write
+    // ever happening - caching it on usageVersion would let an ended
+    // session's spend linger in "live" indefinitely.
+    //
+    // Written as `session_id IN (subquery)` rather than a JOIN so the query
+    // planner drives off the small non-ended-sessions set and index-probes
+    // into `usage` per id (idx_usage_session) instead of scanning the whole
+    // usage table: on a 123k-row usage table this is the difference between
+    // ~0.1ms and ~15ms (a JOIN's planner picks `SCAN usage` here because
+    // nothing indexes `usage.session_id -> sessions.status`).
+    const live = this.db
+      .query(
+        `SELECT COALESCE(SUM(cost_usd), 0) AS c FROM usage
+         WHERE session_id IN (SELECT id FROM sessions WHERE status != 'ended')`
+      )
+      .get() as { c: number };
+
+    return { perSession, liveTotalUsd: live.c, todayUsd, byModelToday };
   }
 
   /** Lifetime (or ranged) cost + tokens grouped by project, highest spend first.
@@ -460,6 +650,12 @@ export class Store {
    *  'unknown'. `range` filters on the message timestamp (since inclusive, until
    *  exclusive); omit it for all-time. */
   costByProject(range: { since?: number; until?: number } = {}): { project: string; costUsd: number; tokens: number }[] {
+    // Only the unbounded (all-time) call is memoized (§1.3): it's the one
+    // buildState() hits on every request, and the only shape whose cache key
+    // (usageVersion alone) is exact. A ranged call is rare (cost-page drill-
+    // downs, tests) and always computed fresh.
+    const unranged = range.since === undefined && range.until === undefined;
+    if (unranged && this.costByProjectCache?.version === this.usageVersion) return this.costByProjectCache.rows;
     const { where, params } = rangeClause(range);
     const rows = this.db
       .query(
@@ -467,7 +663,9 @@ export class Store {
          FROM usage ${where} GROUP BY usage.project ORDER BY cost DESC, usage.project`
       )
       .all(params) as { project: string; cost: number; tokens: number }[];
-    return rows.map((r) => ({ project: r.project, costUsd: r.cost, tokens: r.tokens }));
+    const result = rows.map((r) => ({ project: r.project, costUsd: r.cost, tokens: r.tokens }));
+    if (unranged) this.costByProjectCache = { version: this.usageVersion, rows: result };
+    return result;
   }
 
   /** Lifetime (or ranged) cost + tokens grouped by (project, branch), highest
@@ -476,6 +674,9 @@ export class Store {
   costByBranch(
     range: { since?: number; until?: number } = {}
   ): { project: string; branch: string | null; costUsd: number; tokens: number }[] {
+    // See costByProject: only the unbounded call is cached (§1.3).
+    const unranged = range.since === undefined && range.until === undefined;
+    if (unranged && this.costByBranchCache?.version === this.usageVersion) return this.costByBranchCache.rows;
     const { where, params } = rangeClause(range);
     const rows = this.db
       .query(
@@ -484,7 +685,9 @@ export class Store {
          FROM usage ${where} GROUP BY usage.project, usage.branch ORDER BY cost DESC, usage.project, usage.branch`
       )
       .all(params) as { project: string; branch: string | null; cost: number; tokens: number }[];
-    return rows.map((r) => ({ project: r.project, branch: r.branch, costUsd: r.cost, tokens: r.tokens }));
+    const result = rows.map((r) => ({ project: r.project, branch: r.branch, costUsd: r.cost, tokens: r.tokens }));
+    if (unranged) this.costByBranchCache = { version: this.usageVersion, rows: result };
+    return result;
   }
 
   /** Cost + tokens grouped by (project, branch, local day "YYYY-MM-DD"), newest

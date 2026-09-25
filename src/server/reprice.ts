@@ -55,6 +55,11 @@ export function repriceFiveSeries(
       )
       .run(params);
     deleted = res.changes;
+    // The DELETE itself is a usage-affecting write (§1.3) even before the
+    // re-tail below re-inserts anything -- bump the cache generation here so
+    // a stale memoized cost total can never survive it, whatever the re-tail
+    // loop below ends up recording.
+    if (deleted > 0) store.bumpUsageVersion();
     for (const k of kept) {
       store.setUsageOffset(k.id, 0);
       if (tailUsage(store, { id: k.id, transcript_path: k.path, usage_offset: 0 })) recorded++;

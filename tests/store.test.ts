@@ -47,35 +47,51 @@ describe("Store sessions", () => {
 
   const STALE = 10 * 60 * 1000;
   const DEAD = 30 * 60 * 1000;
+  const NEEDS_YOU_DEAD = 24 * 60 * 60 * 1000;
 
-  it("sweepStale moves quiet working sessions (stale < silence < dead) to idle", () => {
+  it("sweepStale moves quiet working sessions (stale < silence < dead) to idle, tagged 'quiet'", () => {
     store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
-    const affected = store.sweepStale(1000 + 11 * 60 * 1000, STALE, DEAD);
+    const affected = store.sweepStale(1000 + 11 * 60 * 1000, STALE, DEAD, NEEDS_YOU_DEAD);
     expect(affected).toContain("s1");
     expect(store.getSession("s1")!.status).toBe("idle");
+    expect(store.getSession("s1")!.idle_reason).toBe("quiet");
   });
 
-  it("sweepStale retires long-silent sessions of ANY status to ended (hidden from the board)", () => {
-    // working, idle, and needs_you all past the dead threshold → ended.
+  it("sweepStale retires long-silent working/idle sessions to ended (hidden from the board)", () => {
     store.applyEvent("w", reduceEvent({ wm_event_type: "session_start", session_id: "w", cwd: "/x/b" }, 1000).patch, 1000);
     store.applyEvent("i", reduceEvent({ wm_event_type: "session_start", session_id: "i", cwd: "/x/b" }, 1000).patch, 1000);
     store.applyEvent("i", reduceEvent({ wm_event_type: "stop", session_id: "i" }, 1000).patch, 1000);
-    store.applyEvent("n", reduceEvent({ wm_event_type: "session_start", session_id: "n", cwd: "/x/b" }, 1000).patch, 1000);
-    store.applyEvent("n", reduceEvent({ wm_event_type: "notification", session_id: "n", message: "needs you" }, 1000).patch, 1000);
 
     const now = 1000 + 31 * 60 * 1000;
-    const affected = store.sweepStale(now, STALE, DEAD);
-    expect(affected).toEqual(expect.arrayContaining(["w", "i", "n"]));
-    for (const id of ["w", "i", "n"]) {
+    const affected = store.sweepStale(now, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affected).toEqual(expect.arrayContaining(["w", "i"]));
+    for (const id of ["w", "i"]) {
       expect(store.getSession(id)!.status).toBe("ended");
       expect(store.getSession(id)!.ended_at).toBe(now);
     }
     expect(store.listSessions().length).toBe(0);
   });
 
+  it("sweepStale exempts needs_you sessions from the ordinary dead sweep (§1.6)", () => {
+    store.applyEvent("n", reduceEvent({ wm_event_type: "session_start", session_id: "n", cwd: "/x/b" }, 1000).patch, 1000);
+    store.applyEvent("n", reduceEvent({ wm_event_type: "notification", session_id: "n", message: "needs you" }, 1000).patch, 1000);
+
+    // Well past the ordinary 30-minute dead threshold, but nowhere near 24h.
+    const now = 1000 + 31 * 60 * 1000;
+    const affected = store.sweepStale(now, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affected).not.toContain("n");
+    expect(store.getSession("n")!.status).toBe("needs_you");
+
+    // Only the much longer needs_you grace period retires it.
+    const muchLater = 1000 + 25 * 60 * 60 * 1000;
+    const affectedLater = store.sweepStale(muchLater, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affectedLater).toContain("n");
+    expect(store.getSession("n")!.status).toBe("ended");
+  });
+
   it("sweepStale leaves recently-active sessions untouched", () => {
     store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
-    const affected = store.sweepStale(1000 + 5 * 60 * 1000, STALE, DEAD);
+    const affected = store.sweepStale(1000 + 5 * 60 * 1000, STALE, DEAD, NEEDS_YOU_DEAD);
     expect(affected).toEqual([]);
     expect(store.getSession("s1")!.status).toBe("working");
   });
@@ -204,6 +220,41 @@ describe("Store sessions", () => {
     expect(has("agent_id")).toBe(1);
   });
 
+  it("idempotently adds sessions.idle_reason to a pre-existing table", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const has = () => (db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).filter((c) => c.name === "idle_reason").length;
+    expect(has()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has()).toBe(1);
+  });
+
+  it("idempotently adds the events columns (tool_name, duration_ms, agent_id, harness) and the type/id index", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, at INTEGER NOT NULL);`);
+    migrate(db);
+    const cols = (db.query("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+    for (const col of ["tool_name", "duration_ms", "agent_id", "harness"]) expect(cols).toContain(col);
+    const hasIndex = (name: string) =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='index' AND name=$n").all({ $n: name }) as unknown[]).length;
+    expect(hasIndex("idx_events_type_id")).toBe(1);
+    expect(hasIndex("idx_events_at")).toBe(1); // the hourly retention prune's WHERE at < cutoff
+    migrate(db); // second run must not throw or duplicate
+    const cols2 = (db.query("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+    expect(cols2.filter((c) => c === "tool_name").length).toBe(1);
+  });
+
+  it("idempotently creates the tool_stats table", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const hasTable = () => (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='tool_stats'").all() as unknown[]).length;
+    expect(hasTable()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable()).toBe(1);
+  });
+
   it("stores an unknown workflow status verbatim (no enum, no CHECK)", () => {
     store.db
       .query(
@@ -212,6 +263,106 @@ describe("Store sessions", () => {
       .run();
     const row = store.db.query("SELECT status FROM workflow_runs WHERE run_id = 'wf_x'").get() as { status: string };
     expect(row.status).toBe("brand-new-status");
+  });
+});
+
+describe("Store events + tool stats", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  function recordActivity(opts: { tool: string; dur?: number | null; agent?: string | null; harness?: string }) {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: JSON.stringify({ tool_name: opts.tool, tool_input: {} }),
+      at: 1000,
+      toolName: opts.tool,
+      durationMs: opts.dur ?? null,
+      agentId: opts.agent ?? null,
+      harness: opts.harness ?? "claude",
+    });
+  }
+
+  it("recordEvent inserts the row AND upserts tool_stats atomically for activity rows", () => {
+    recordActivity({ tool: "Bash", dur: 100 });
+    recordActivity({ tool: "Bash", dur: 300 });
+    const row = store.db.query("SELECT calls, timed, total_ms FROM tool_stats WHERE harness='claude' AND tool='Bash'").get() as any;
+    expect(row).toEqual({ calls: 2, timed: 2, total_ms: 400 });
+    expect((store.db.query("SELECT COUNT(*) AS n FROM events").get() as any).n).toBe(2);
+  });
+
+  it("recordEvent does not touch tool_stats for a non-activity type or a missing tool name", () => {
+    store.recordEvent({ sessionId: "s1", type: "tool_start", payload: "{}", at: 1, toolName: "Bash", durationMs: null, agentId: null, harness: "claude" });
+    store.recordEvent({ sessionId: "s1", type: "activity", payload: "{}", at: 1, toolName: null, durationMs: null, agentId: null, harness: "claude" });
+    expect((store.db.query("SELECT COUNT(*) AS n FROM tool_stats").get() as any).n).toBe(0);
+  });
+
+  it("toolStats sums across harnesses per tool and reports a per-harness breakdown, busiest first", () => {
+    recordActivity({ tool: "Bash", dur: 100, harness: "claude" });
+    recordActivity({ tool: "Bash", dur: 200, harness: "claude" });
+    recordActivity({ tool: "Bash", dur: 900, harness: "cursor" });
+    recordActivity({ tool: "Read", dur: 6, harness: "claude" });
+    const stats = store.toolStats();
+    expect(stats[0].tool).toBe("Bash"); // 3 calls beats Read's 1
+    expect(stats[0].calls).toBe(3);
+    expect(stats[0].totalMs).toBe(1200);
+    expect(stats[0].avgMs).toBe(400);
+    const byHarness = stats[0].byHarness.sort((a, b) => a.harness.localeCompare(b.harness));
+    expect(byHarness).toEqual([
+      { harness: "claude", calls: 2, totalMs: 300, avgMs: 150 },
+      { harness: "cursor", calls: 1, totalMs: 900, avgMs: 900 },
+    ]);
+  });
+
+  it("pruneOldEvents deletes rows at/after the cutoff boundary correctly (before cutoff only)", () => {
+    store.db.query(`INSERT INTO events (session_id, type, payload, at) VALUES ('s', 'activity', '{}', 100)`).run();
+    store.db.query(`INSERT INTO events (session_id, type, payload, at) VALUES ('s', 'activity', '{}', 200)`).run();
+    const deleted = store.pruneOldEvents(200);
+    expect(deleted).toBe(1); // only the row strictly before the cutoff
+    expect((store.db.query("SELECT at FROM events").get() as any).at).toBe(200);
+  });
+
+  it("pruneOldEvents' DELETE ... WHERE at < $cutoff uses idx_events_at rather than a full table scan", () => {
+    const plan = store.db.query("EXPLAIN QUERY PLAN DELETE FROM events WHERE at < $cutoff").all({ $cutoff: 1 }) as {
+      detail: string;
+    }[];
+    expect(plan.some((p) => p.detail.includes("idx_events_at"))).toBe(true);
+    expect(plan.some((p) => p.detail.startsWith("SCAN events"))).toBe(false);
+  });
+
+  it("recentActivity reads tool/duration/agent_id/harness from columns and still shows a row whose payload fails to parse", () => {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: "{not json",
+      at: 1000,
+      toolName: "Bash",
+      durationMs: 42,
+      agentId: "agent-1",
+      harness: "cursor",
+    });
+    const rows = store.recentActivity(10);
+    expect(rows.length).toBe(1);
+    expect(rows[0].tool).toBe("Bash");
+    expect(rows[0].dur).toBe(42);
+    expect(rows[0].agent_id).toBe("agent-1");
+    expect(rows[0].harness).toBe("cursor");
+    expect(rows[0].detail).toBeNull(); // payload didn't parse -- no detail, but the row still appears
+  });
+
+  it("recentActivity attaches a known workflow agent's label", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" });
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", label: "map:packages" });
+    recordActivity({ tool: "Bash", agent: "a1" });
+    const rows = store.recentActivity(10);
+    expect(rows[0].label).toBe("map:packages");
+  });
+
+  it("recentActivity leaves label null for an activity with no matching workflow agent", () => {
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].label).toBeNull();
   });
 });
 
