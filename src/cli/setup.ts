@@ -102,6 +102,15 @@ export function mergeSettings(env: SetupEnv) {
 }
 
 export function registerMcp(env: SetupEnv) {
+  // `claude mcp add` fails when the server already exists, which read as a
+  // setup failure on every re-run.
+  try {
+    env.exec("claude", ["mcp", "get", "agent-monitor"], { stdio: "ignore" });
+    step("agent-monitor MCP server already registered (user scope)");
+    return;
+  } catch {
+    // Not registered yet (or no `claude` binary): try adding it below.
+  }
   try {
     env.exec(
       "claude",

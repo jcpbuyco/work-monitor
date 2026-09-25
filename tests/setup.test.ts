@@ -7,6 +7,7 @@ import {
   setupCodex,
   setupCursor,
   cleanupLegacy,
+  registerMcp,
   type ExecFn,
   type SetupEnv,
 } from "../src/cli/setup.ts";
@@ -199,5 +200,24 @@ describe("cleanupLegacy", () => {
     cleanupLegacy(env(home, exec));
 
     expect(existsSync(join(unitDir, "wm-server.service"))).toBe(false);
+  });
+});
+
+describe("registerMcp (Claude)", () => {
+  it("skips `claude mcp add` when the server is already registered", () => {
+    const { exec, calls } = stubExec(); // `mcp get` succeeds -> already registered
+    registerMcp(env(tmpHome(), exec));
+    expect(calls.map((c) => c.args.slice(0, 2).join(" "))).toEqual(["mcp get"]);
+  });
+
+  it("adds the server when `claude mcp get` reports it missing", () => {
+    const calls: string[][] = [];
+    const exec = ((file: string, args: string[] = []) => {
+      calls.push(args);
+      if (args[1] === "get") throw new Error("No MCP server found");
+      return Buffer.from("");
+    }) as ExecFn;
+    registerMcp(env(tmpHome(), exec));
+    expect(calls.map((a) => a.slice(0, 2).join(" "))).toEqual(["mcp get", "mcp add"]);
   });
 });

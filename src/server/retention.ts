@@ -72,5 +72,8 @@ export function runPendingVacuum(store: Store): boolean {
   if (store.getMeta(EVENTS_VACUUM_MARKER)) return false;
   store.db.exec("VACUUM;");
   store.setMeta(EVENTS_VACUUM_MARKER, String(Date.now()));
+  // In WAL mode VACUUM writes the whole rebuilt file through the WAL, which
+  // then stays on disk at that size until a truncating checkpoint.
+  store.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   return true;
 }
