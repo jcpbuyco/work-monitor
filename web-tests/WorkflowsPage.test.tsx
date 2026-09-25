@@ -213,4 +213,13 @@ describe("WorkflowsPage", () => {
     // the caret must carry no text, or findByText("research") stops resolving
     expect(screen.getAllByTestId("wf-row")[0].querySelector("svg")).toBeTruthy();
   });
+
+  it("shows the shared reconnecting bar when disconnected, same as the board (§5.2 finding fix)", async () => {
+    // The banner used to live on Board alone, so this page - sharing the
+    // exact same App-level SSE subscription - looked falsely healthy while
+    // the stream was actually stale.
+    mockFetch(RUNS);
+    render(<WorkflowsPage connected={false} lastMessageAt={Date.now() - 120_000} />);
+    expect(screen.getByTestId("reconnecting-bar").textContent).toContain("Reconnecting");
+  });
 });

@@ -2,9 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { formatUsd, formatTokens, prettyModel, costDailyRange, type CostWindow } from "../cost.ts";
 import { formatDuration, formatWhen } from "../time.ts";
 import { statusClass, statusKnown, statusGlyphKind } from "../workflowStatus.ts";
-import { PageHeader, Segmented, Chip, Chevron } from "./primitives.tsx";
+import { Segmented, Chip, Chevron } from "./primitives.tsx";
 import { StatusGlyph } from "./StatusGlyph.tsx";
-import type { WorkflowRunSummary, WorkflowRun, WorkflowAgentView } from "../types.ts";
+import { AppBar } from "./AppBar.tsx";
+import type { WorkflowRunSummary, WorkflowRun, WorkflowAgentView, State, LiveWorkflow } from "../types.ts";
+
+const EMPTY_STATE: State = {
+  sessions: [], todos: [], activity: [], stats: [],
+  cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [], byProject: [], byBranch: [] },
+};
 
 type SortKey = "when" | "workflow" | "project" | "status" | "duration" | "agents" | "tokens" | "cost";
 
@@ -56,7 +62,24 @@ function byPhase(agents: WorkflowAgentView[]): { title: string; agents: Workflow
   return out;
 }
 
-export function WorkflowsPage() {
+/** §5.2: `state`/`workflows`/`ready`/`connected`/`lastMessageAt` feed the
+ *  shared AppBar (a single App-level fetch/SSE subscription - this page never
+ *  opens its own). All optional with safe defaults so this page stays
+ *  independently renderable (every existing test mounts it bare, with no App
+ *  around it). */
+export function WorkflowsPage({
+  state = EMPTY_STATE,
+  workflows = [],
+  ready = true,
+  connected = true,
+  lastMessageAt = null,
+}: {
+  state?: State;
+  workflows?: LiveWorkflow[];
+  ready?: boolean;
+  connected?: boolean;
+  lastMessageAt?: number | null;
+} = {}) {
   // Named `range`, not `window`, exactly as in CostDailyPage: a state variable
   // called `window` shadows the DOM global for the whole component body.
   const [range, setRange] = useState<CostWindow>(14);
@@ -140,17 +163,28 @@ export function WorkflowsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-board px-6 pb-16">
-      <PageHeader
-        title="Workflow runs"
-        right={
+    <div className="mx-auto max-w-board px-3 pb-16 sm:px-6">
+      <AppBar
+        state={state}
+        workflows={workflows}
+        ready={ready}
+        route="#/workflows"
+        connected={connected}
+        lastMessageAt={lastMessageAt}
+      />
+      {/* §5.2: the page's own slim toolbar, right under the shared AppBar -
+          replaces the old standalone PageHeader (which dropped the AppBar
+          entirely on this route). */}
+      <div className="sticky top-12 z-10 -mx-3 flex h-11 items-center gap-3 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:px-6">
+        <span className="text-sm font-semibold text-ink">Workflow runs</span>
+        <div className="ml-auto">
           <Segmented
             value={range}
             onChange={setRange}
             options={WINDOWS.map((w) => ({ value: w, label: w === "all" ? "All" : `${w}d` }))}
           />
-        }
-      />
+        </div>
+      </div>
 
       {/* Same four states, in the same order, as CostDailyPage: error → loading →
           empty → table. Without the loading branch the totals row renders "0 runs"
@@ -170,7 +204,7 @@ export function WorkflowsPage() {
                   <th
                     key={c.key}
                     aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                    className={`sticky top-12 z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
+                    className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
                   >
                     <button
                       type="button"

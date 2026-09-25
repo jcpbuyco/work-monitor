@@ -16,7 +16,7 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
   return (
     <section className="mt-6">
       <SectionHeader
-        label={`Tool usage (${total})`}
+        label={`Tool usage · all-time (${total})`}
         collapsed={collapsed}
         onToggle={toggle}
         leading={<span aria-hidden="true" className="text-ink-4">Σ</span>}

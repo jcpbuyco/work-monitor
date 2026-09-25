@@ -29,6 +29,12 @@ export const MAX_INTENT_LEN = 140;
  *  of hook traffic collapses into one broadcast per window. */
 export const STATE_THROTTLE_MS = 1000;
 
+/** §5.2 fix: how often `SseHub.startKeepalive` sends a bare `ping` event to
+ *  every open stream. Well under the client's 90s staleness window (3
+ *  keepalives of margin) so a client never flags a healthy, idle connection
+ *  as disconnected. */
+export const SSE_KEEPALIVE_MS = 30 * 1000;
+
 /** `events` rows older than this are pruned by the hourly retention sweep (§1.4).
  *  `tool_stats` keeps the aggregate, so historical tool-usage totals survive. */
 export const EVENTS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;

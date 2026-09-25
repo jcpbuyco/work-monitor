@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { AppBar } from "../src/web/components/AppBar.tsx";
 import type { State } from "../src/web/types.ts";
 
@@ -76,5 +76,72 @@ describe("AppBar chrome", () => {
     cleanup();
     render(<AppBar state={state} workflows={[liveRun]} />);
     expect(screen.getByTestId("appbar-wf-count").textContent).toBe("1");
+  });
+});
+
+describe("AppBar §5.2: ready state", () => {
+  it("shows … instead of a confident zero before the first state arrives", () => {
+    render(<AppBar state={state} ready={false} />);
+    expect(screen.getByTestId("appbar-count-working").textContent).toContain("… working");
+    expect(screen.getByTestId("appbar-count-needs-you").textContent).toContain("… needs you");
+    expect(screen.getByTestId("appbar-count-todo").textContent).toContain("… to do");
+    expect(screen.queryByText("0 working")).toBeNull();
+  });
+
+  it("never escalates a pending needs-you count, even with a nonzero real value underneath", () => {
+    render(<AppBar state={state} ready={false} />);
+    expect(screen.getByTestId("appbar-count-needs-you").className).not.toContain("text-attention");
+  });
+
+  it("shows real counts once ready (the default)", () => {
+    render(<AppBar state={state} />);
+    expect(screen.getByText("1 working")).toBeTruthy();
+  });
+});
+
+describe("AppBar §5.2: active route highlight", () => {
+  it("marks the board link current at '#/'", () => {
+    render(<AppBar state={state} route="#/" />);
+    expect(screen.getByText("agent-monitor").closest("a")!.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("marks the Cost link current at '#/cost', and nothing else", () => {
+    render(<AppBar state={state} route="#/cost" />);
+    expect(screen.getByText("Cost").closest("a")!.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("Workflows").closest("a")!.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("marks the Workflows link current at '#/workflows'", () => {
+    render(<AppBar state={state} route="#/workflows" />);
+    expect(screen.getByText("Workflows").closest("a")!.getAttribute("aria-current")).toBe("page");
+  });
+});
+
+describe("AppBar §5.2: phone overflow menu", () => {
+  it("keeps the overflow panel closed (and its controls out of the DOM) by default", () => {
+    render(<AppBar state={state} />);
+    expect(screen.queryByTestId("appbar-overflow-panel")).toBeNull();
+    // exactly one "Toggle theme" control exists - no accidental duplicate
+    expect(screen.getAllByLabelText("Toggle theme").length).toBe(1);
+  });
+
+  it("opens a panel with the same controls, reachable independently of the desktop cluster", () => {
+    render(<AppBar state={state} />);
+    fireEvent.click(screen.getByLabelText("More controls"));
+    const panel = screen.getByTestId("appbar-overflow-panel");
+    expect(within(panel).getByLabelText("Toggle theme")).toBeTruthy();
+    expect(within(panel).getByText("Cost")).toBeTruthy();
+    // now two exist in total (desktop cluster + open panel) - real browsers
+    // hide the desktop one via CSS at this width; both are legitimately in the DOM.
+    expect(screen.getAllByLabelText("Toggle theme").length).toBe(2);
+  });
+
+  it("toggles closed again on a second click", () => {
+    render(<AppBar state={state} />);
+    const btn = screen.getByLabelText("More controls");
+    fireEvent.click(btn);
+    expect(screen.getByTestId("appbar-overflow-panel")).toBeTruthy();
+    fireEvent.click(btn);
+    expect(screen.queryByTestId("appbar-overflow-panel")).toBeNull();
   });
 });

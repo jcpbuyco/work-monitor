@@ -277,8 +277,10 @@ export class Store {
   // no new usage (the common case) recomputes nothing on repeat buildState()
   // calls. In-memory only - a restart naturally invalidates everything.
   private usageVersion = 0;
-  private perSessionCostCache: { version: number; value: Record<string, { costUsd: number | null; tokens: number }> } | null =
-    null;
+  private perSessionCostCache: {
+    version: number;
+    value: Record<string, { costUsd: number | null; tokens: number; unpricedTokens: number }>;
+  } | null = null;
   private todayCostCache: {
     version: number;
     midnight: number;
@@ -526,7 +528,13 @@ export class Store {
         // payload failed to parse -- the row still appears (tool from the column); no detail.
       }
       const project = r.session_project ?? "unknown";
-      const sessionLabel = r.session_intent ? `${project} - ${truncate(r.session_intent, 60)}` : project;
+      // §5.2 spec-gap fix: `session_label` feeds Live Activity's "project plus a
+      // SHORT intent" - the spec names no length, but 60 chars (this table's
+      // general-purpose MAX_INTENT_LEN) plus a project name routinely landed
+      // around 80 chars in practice, nowhere close to "short" for a sidebar
+      // row. 24 chars is enough to identify the intent at a glance without
+      // dominating the row.
+      const sessionLabel = r.session_intent ? `${project} - ${truncate(r.session_intent, 24)}` : project;
       out.push({
         id: r.id,
         session_id: r.session_id,
@@ -837,14 +845,21 @@ export class Store {
 
   /** Lifetime cost + tokens per session. Memoized on `usageVersion` (§1.3):
    *  this is a full-table GROUP BY, and `costSummary()` calls it on every
-   *  `buildState()`. */
-  private perSessionCost(): Record<string, { costUsd: number | null; tokens: number }> {
+   *  `buildState()`. Carries `unpricedTokens` alongside `costUsd`/`tokens`,
+   *  same as every other grouped cost aggregate (§2.3, `UNPRICED_TOKEN_SUM`):
+   *  the session row's cost cell (§5.1) needs it to tell "fully priced" from
+   *  "some usage from unpriced models" (`$x.xx+`) instead of collapsing both
+   *  into the same plain dollar figure. */
+  private perSessionCost(): Record<string, { costUsd: number | null; tokens: number; unpricedTokens: number }> {
     if (this.perSessionCostCache?.version === this.usageVersion) return this.perSessionCostCache.value;
     const per = this.db
-      .query(`SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens FROM usage GROUP BY session_id`)
-      .all() as { session_id: string; cost: number | null; tokens: number }[];
-    const value: Record<string, { costUsd: number | null; tokens: number }> = {};
-    for (const r of per) value[r.session_id] = { costUsd: r.cost, tokens: r.tokens };
+      .query(
+        `SELECT session_id, SUM(cost_usd) AS cost, SUM${TOKEN_SUM} AS tokens, ${UNPRICED_TOKEN_SUM} AS unpriced
+         FROM usage GROUP BY session_id`
+      )
+      .all() as { session_id: string; cost: number | null; tokens: number; unpriced: number }[];
+    const value: Record<string, { costUsd: number | null; tokens: number; unpricedTokens: number }> = {};
+    for (const r of per) value[r.session_id] = { costUsd: r.cost, tokens: r.tokens, unpricedTokens: r.unpriced };
     this.perSessionCostCache = { version: this.usageVersion, value };
     return value;
   }
@@ -894,7 +909,7 @@ export class Store {
   }
 
   costSummary(midnightMs: number): {
-    perSession: Record<string, { costUsd: number | null; tokens: number }>;
+    perSession: Record<string, { costUsd: number | null; tokens: number; unpricedTokens: number }>;
     liveTotalUsd: number;
     todayUsd: number | null;
     byModelToday: { model: string; costUsd: number | null }[];
@@ -1278,6 +1293,31 @@ export class Store {
       }
     }
     return n;
+  }
+
+  /** §5.2: the single most-recently-degraded run within `windowMs` (default
+   *  24h), for the board banner's "names the most recent run" requirement --
+   *  `degradedRunCount` above is just the count. Ranked by each run's OWN most
+   *  recent cause timestamp, not insertion order, so a run degraded again
+   *  after another run's more recent (but since-aged) cause still wins. */
+  mostRecentDegradedRun(now: number, windowMs: number = 24 * 60 * 60 * 1000): { run_id: string; name: string | null } | null {
+    const rows = this.db.query(`SELECT run_id, name, degraded FROM workflow_runs WHERE degraded IS NOT NULL`).all() as {
+      run_id: string;
+      name: string | null;
+      degraded: string;
+    }[];
+    const cutoff = now - windowMs;
+    let best: { run_id: string; name: string | null; at: number } | null = null;
+    for (const r of rows) {
+      try {
+        const causes = JSON.parse(r.degraded) as Record<string, number>;
+        const latest = Math.max(...Object.values(causes));
+        if (latest >= cutoff && (!best || latest > best.at)) best = { run_id: r.run_id, name: r.name, at: latest };
+      } catch {
+        // A malformed value can't tell us anything; skip rather than crash (matches degradedRunCount).
+      }
+    }
+    return best ? { run_id: best.run_id, name: best.name } : null;
   }
 
   /** Insert-or-enrich an agent row. `offset` is deliberately absent from this

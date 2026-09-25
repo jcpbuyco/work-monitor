@@ -540,6 +540,13 @@ describe("workflows on the stream", () => {
     expect(state.workflows_degraded).toBe(3);
     expect(state.cost.workflows_degraded).toBeUndefined();
   });
+
+  it("carries workflows_degraded_run: null when nothing is degraded, named when it is (§5.2 banner)", () => {
+    expect((buildState(store) as any).workflows_degraded_run).toBeNull();
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", Date.now());
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d", name: "research" });
+    expect((buildState(store) as any).workflows_degraded_run).toEqual({ run_id: "wf_1", name: "research" });
+  });
 });
 
 describe("todo input validation", () => {

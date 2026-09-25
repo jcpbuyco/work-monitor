@@ -441,6 +441,19 @@ describe("Store events + tool stats", () => {
     recordActivity({ tool: "Bash" });
     expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor");
   });
+
+  it("truncates the intent to 24 chars, not to MAX_INTENT_LEN - a spec gap fix (§5.2 'short intent')", () => {
+    // A project name plus the general-purpose 60-char MAX_INTENT_LEN
+    // routinely landed around 80 chars in practice - nowhere close to
+    // "short" for the Live Activity sidebar row it feeds.
+    store.applyEvent(
+      "s1",
+      { status: "working", project: "agent-monitor", current_intent: "a very long intent that goes well past twenty four characters", last_activity_at: 1 },
+      1
+    );
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor - a very long intent that…");
+  });
 });
 
 describe("Store §5.1: liveSubagents", () => {
@@ -736,6 +749,52 @@ describe("Store §3: persisted per-run degraded causes", () => {
 
   it("degradedRunCount is 0 for a fresh store with no degraded runs", () => {
     expect(store.degradedRunCount(1000)).toBe(0);
+  });
+
+  it("mostRecentDegradedRun names the run whose OWN latest cause is most recent, not insertion order", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d", name: "older-run" });
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 100);
+    store.upsertWorkflowRun({ run_id: "wf_2", session_id: "s1", dir: "/d", name: "newer-run" });
+    store.recordRunDegraded({ run_id: "wf_2", session_id: "s1", dir: "/d" }, "scan", 200);
+    expect(store.mostRecentDegradedRun(1000)).toEqual({ run_id: "wf_2", name: "newer-run" });
+  });
+
+  it("mostRecentDegradedRun excludes a run whose only cause aged out of the window", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    store.recordRunDegraded({ run_id: "wf_old", session_id: "s1", dir: "/d" }, "scan", 0);
+    expect(store.mostRecentDegradedRun(dayMs + 1, dayMs)).toBeNull();
+  });
+
+  it("mostRecentDegradedRun is null for a fresh store", () => {
+    expect(store.mostRecentDegradedRun(1000)).toBeNull();
+  });
+});
+
+describe("Store §5.1/§5.2: per-session unpriced tokens", () => {
+  let store: Store;
+  const tok = (n: number) => ({ input: n, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 });
+  beforeEach(() => {
+    store = freshStore();
+    store.applyEvent("s1", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+  });
+
+  it("costSummary's perSession carries unpricedTokens: 0 when every row for a session is priced", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok(100), at: 1, cost: 1 });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: 1, tokens: 100, unpricedTokens: 0 });
+  });
+
+  it("reports the unpriced share when a session mixes priced and unpriced usage - never silently absorbed into costUsd", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok(100), at: 1, cost: 1 });
+    store.recordUsage({ uuid: "m2", sessionId: "s1", model: "totally-unknown-model", tokens: tok(50), at: 2, cost: null });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: 1, tokens: 150, unpricedTokens: 50 });
+  });
+
+  it("costUsd is null and unpricedTokens covers everything when a session's usage is entirely unpriced", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "totally-unknown-model", tokens: tok(50), at: 1, cost: null });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: null, tokens: 50, unpricedTokens: 50 });
   });
 });
 

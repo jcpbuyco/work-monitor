@@ -199,27 +199,41 @@ Rates in USD per million tokens, per model, all five fields explicit (no global 
 ### 5.1 Sessions (B2)
 
 - Every session row shows a harness mark (Claude Code / Codex / Cursor: a small monochrome glyph plus accessible label, `title` with harness version) and a model pill (`prettyModel`, e.g. "Opus 5.5", "GPT-5.5", "Grok 4.7").
+  The pill only renders while `sessions.model` is non-null; there is no live fallback to the session's latest usage row.
+  Building one would need a per-request join against `usage`, which risks the buildState() < 50 ms budget in §1.3.
+  A session with model null predates B1's `session_start` model capture, or its harness never carries `model`, and §4.3 already backfills it from any later event that does.
 - Sessions list gets a harness filter (`Segmented`: All, Claude, Codex, Cursor with counts; persisted in `localStorage`).
-- Child sessions (with `parent_session_id` pointing at a listed session) render nested under their parent, indented with a connector; orphans render top-level with a "spawned by <parent project>" hint.
+- Child sessions (with `parent_session_id` pointing at a listed session, in the SAME status column) render nested under their parent, indented with a connector; orphans render top-level with a "spawned by <parent project>" hint.
+  The board's kanban layout has no cross-column connector, so a parent that is listed but sits in a different column (or is filtered out by the harness filter) also renders its child as an orphan.
+  "Orphan" therefore means "no connectable parent in this column", not strictly "no parent in the session list".
 - Live subagents: `SessionState` carries `subagents: [{agent_id, kind: "task"|"workflow", label, agent_type, model, last_tool, last_at}]` for agents active in the last 2 minutes; the row shows a compact "3 agents" chip that expands to the list.
+  It expands the row inline (a second line under the identity row), never a floating popover; a popover would sit inside the row's own stacking context and be painted over by the next row.
 - Cost cell: `$x.xx` when priced; `$x.xx+` with tooltip "some usage from unpriced models" when partially unpriced; `n/a` with tooltip "Cursor does not record token usage locally" for cursor.
 - Idle rows show why: "stopped 3m ago" vs "quiet 12m".
 - Needs-you rows show attention text and age.
+  Age is `last_activity_at`, the same timestamp every other row uses, even though a subagent's tool calls keep refreshing it while the session waits on a human.
+  It reads as "how long since anything happened here", not "how long the human has been kept waiting"; a separate `attention_since` timestamp is future work if the distinction matters.
 - The workflow chip on a session row links to `#/workflows?run=<run_id>`.
 - A+ max: branch and cost truncate before the task text.
+  The task keeps a `min-w` floor and grows with any space branch/cost give up; the cost cell's priced/partial/unpriced/n-a word never truncates into a meaningless fragment, only its trailing token count does.
 
 ### 5.2 Board chrome (B2)
 
 - `App` tracks `ready` (first state received) and `connected` (SSE open, last message within 90 s).
-  Before ready: skeleton rows, and the AppBar counts show `…`, never `0`.
-  Disconnected: a thin warning bar "Reconnecting… data may be stale (last update 2m ago)".
+  Before ready: skeleton rows, and the AppBar counts show `…`, never `0`; the same `…` applies to a session column's own header count and the harness filter's counts.
+  Disconnected: a thin warning bar "Reconnecting… data may be stale (last update 2m ago)", shown from the shared AppBar so every route carries it, not the board alone.
+  A steady message cadence is not guaranteed by hook traffic or a live workflow alone, so the server sends a periodic `ping` SSE event (`SseHub.startKeepalive`, every 30 s) purely to keep an idle connection from reading as stale; the client also treats the browser's own `open`/`error` events as an immediate connectivity signal rather than waiting out the 90 s window.
 - The AppBar renders on every route with the active route highlighted; sub-pages no longer drop it.
   The state fetch and SSE subscription happen once at App level for all routes.
 - Sidebar order: Live Activity first, then Session cost, Cost breakdown, Tool usage.
-- Live Activity rows show `<harness mark> <session label> · <agent label>` instead of the bare project; session label = project plus a short intent; filter by session via a select.
+- Live Activity rows show `<harness mark> <session label> · <agent label>` instead of the bare project; session label = project plus a short intent (the intent truncated to 24 chars server-side); filter by session via a select.
+  The agent label renders in its own non-truncating span so it is always visible; only the session label truncates.
+  The select stays visible whenever a filter is actively applied, even once the filtered session has no current rows, and keeps the selected id as an option so it never points at a value the feed no longer lists.
 - Tool usage and cost breakdown headers say "all-time"; SESSION COST relabels "live total" to "open sessions" and "API-equiv" to "≈ API list price"; "today" to "today (local)".
 - Unpriced usage: the cost panel lists unpriced models as "Model · unpriced · 12.3M tok".
 - Degraded banner: shows only when runs degraded in the last 24 h, names the most recent run, and is dismissible (per run id, localStorage).
+  Gated on the named run alone, never on the process-lifetime degraded counter by itself; that counter has no run to name and no 24 h window, so it cannot satisfy "shows only when runs degraded" or "dismissible" on its own.
+  The dismissed-run id list is capped (most recent 20) so it cannot grow unbounded in localStorage.
 - Board shows the last workflow run line when nothing is live ("Last run: name · completed 2h ago · $4.39").
 - Todos empty state: no emoji (no emoji font installed renders tofu); use a StatusGlyph.
 - `ago()` gains days (`3d ago`) and switches to an absolute date after 7 days.

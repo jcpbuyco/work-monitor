@@ -31,6 +31,13 @@ describe("prettyModel", () => {
   it("strips a trailing date snapshot suffix", () => {
     expect(prettyModel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
   });
+  it("keeps GPT's conventional hyphen instead of a space (§5.1 model pill)", () => {
+    expect(prettyModel("gpt-5.5")).toBe("GPT-5.5");
+    expect(prettyModel("gpt-5.3-codex")).toBe("GPT-5.3.codex");
+  });
+  it("space-separates a non-Claude, non-GPT family like Grok", () => {
+    expect(prettyModel("grok-4.7")).toBe("Grok 4.7");
+  });
 });
 
 describe("formatDay", () => {

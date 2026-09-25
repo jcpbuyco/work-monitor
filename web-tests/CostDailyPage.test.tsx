@@ -69,8 +69,16 @@ describe("CostDailyPage", () => {
     render(<CostDailyPage />);
     await screen.findByText("alpha");
     expect(screen.getAllByRole("button", { name: /cost/i }).length).toBe(1);
-    expect(screen.getByText("← Dashboard").tagName).toBe("A");
+    // §5.2: the shared AppBar replaces the old standalone "← Dashboard" link -
+    // its home (logo) link is the way back now.
+    expect(screen.getByText("agent-monitor").closest("a")!.getAttribute("href")).toBe("#/");
     expect(screen.getByText("Cost by day").tagName).toBe("SPAN");
+  });
+
+  it("renders the AppBar, with the Cost nav link marked current (§5.2)", async () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    expect(screen.getByText("Cost").closest("a")!.getAttribute("aria-current")).toBe("page");
   });
 
   it("announces the loading state to assistive tech", () => {
@@ -79,5 +87,14 @@ describe("CostDailyPage", () => {
     const loading = screen.getByText("Loading…");
     expect(loading.getAttribute("role")).toBe("status");
     expect(loading.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("shows the shared reconnecting bar when disconnected, same as the board (§5.2 finding fix)", () => {
+    // The banner used to live on Board alone, so this page - sharing the
+    // exact same App-level SSE subscription - looked falsely healthy while
+    // the stream was actually stale.
+    mockFetch(ROWS);
+    render(<CostDailyPage connected={false} lastMessageAt={Date.now() - 120_000} />);
+    expect(screen.getByTestId("reconnecting-bar").textContent).toContain("Reconnecting");
   });
 });

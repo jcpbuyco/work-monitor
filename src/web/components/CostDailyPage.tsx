@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatUsd, formatTokens, formatDay, costDailyRange, type CostWindow } from "../cost.ts";
-import { PageHeader, Segmented } from "./primitives.tsx";
+import { Segmented } from "./primitives.tsx";
+import { AppBar } from "./AppBar.tsx";
+import type { State, LiveWorkflow } from "../types.ts";
+
+const EMPTY_STATE: State = {
+  sessions: [], todos: [], activity: [], stats: [],
+  cost: { perSession: {}, liveTotalUsd: 0, todayUsd: 0, byModelToday: [], byProject: [], byBranch: [] },
+};
 
 interface Row {
   project: string;
@@ -22,7 +29,24 @@ const COLS: { key: SortKey; label: string; numeric: boolean }[] = [
   { key: "tokens", label: "Tokens", numeric: true },
 ];
 
-export function CostDailyPage() {
+/** §5.2: `state`/`workflows`/`ready`/`connected`/`lastMessageAt` feed the
+ *  shared AppBar (a single App-level fetch/SSE subscription - this page never
+ *  opens its own). All optional with safe defaults so this page stays
+ *  independently renderable (every existing test mounts it bare, with no App
+ *  around it). */
+export function CostDailyPage({
+  state = EMPTY_STATE,
+  workflows = [],
+  ready = true,
+  connected = true,
+  lastMessageAt = null,
+}: {
+  state?: State;
+  workflows?: LiveWorkflow[];
+  ready?: boolean;
+  connected?: boolean;
+  lastMessageAt?: number | null;
+} = {}) {
   const [range, setRange] = useState<CostWindow>(14);
   const [rows, setRows] = useState<Row[]>([]);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
@@ -70,17 +94,28 @@ export function CostDailyPage() {
     );
 
   return (
-    <div className="mx-auto max-w-page px-6 pb-16">
-      <PageHeader
-        title="Cost by day"
-        right={
+    <div className="mx-auto max-w-page px-3 pb-16 sm:px-6">
+      <AppBar
+        state={state}
+        workflows={workflows}
+        ready={ready}
+        route="#/cost"
+        connected={connected}
+        lastMessageAt={lastMessageAt}
+      />
+      {/* §5.2: the page's own slim toolbar, right under the shared AppBar -
+          replaces the old standalone PageHeader (which dropped the AppBar
+          entirely on this route). */}
+      <div className="sticky top-12 z-10 -mx-3 flex h-11 items-center gap-3 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:px-6">
+        <span className="text-sm font-semibold text-ink">Cost by day</span>
+        <div className="ml-auto">
           <Segmented
             value={range}
             onChange={setRange}
             options={WINDOWS.map((w) => ({ value: w, label: w === "all" ? "All" : `${w}d` }))}
           />
-        }
-      />
+        </div>
+      </div>
 
       {status === "error" ? (
         <p className="py-16 text-center text-sm text-ink-3">Couldn't load cost data.</p>
@@ -96,7 +131,7 @@ export function CostDailyPage() {
                 <th
                   key={c.key}
                   aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className={`sticky top-12 z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
+                  className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
                 >
                   <button
                     type="button"

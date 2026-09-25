@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Todo } from "../types.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
 import { SectionHeader } from "./primitives.tsx";
+import { StatusGlyph } from "./StatusGlyph.tsx";
 import { TodoCard } from "./TodoCard.tsx";
 import { TodoModal } from "./TodoModal.tsx";
 import { DoneDialog } from "./DoneDialog.tsx";
@@ -38,7 +39,13 @@ export function TodosSection({ todos }: { todos: Todo[] }) {
       {!collapsed && (
         <div className="am-fade-in">
           {open.length === 0 ? (
-            <div className="py-3 text-xs text-ink-4">Nothing open. 🎉</div>
+            // §5.2, P2-1: no emoji - this machine has no emoji font installed,
+            // so 🎉 rendered as tofu in every screenshot. A StatusGlyph is
+            // always available and matches the app's own icon system.
+            <div className="flex items-center gap-1.5 py-3 text-xs text-ink-4">
+              <StatusGlyph kind="ended" animate={false} />
+              <span>Nothing open.</span>
+            </div>
           ) : (
             // -mx/px compensation gives ROW_BASE's -mx-1.5 hover pills room inside
             // the scroller — without it every row overflows 6px per side and a

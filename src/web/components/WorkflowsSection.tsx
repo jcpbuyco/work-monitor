@@ -1,17 +1,38 @@
-import type { LiveWorkflow } from "../types.ts";
+import type { LastRun, LiveWorkflow } from "../types.ts";
 import { useNow } from "../useNow.ts";
 import { usePersistedToggle } from "../usePersistedToggle.ts";
+import { ago } from "../time.ts";
+import { formatUsd } from "../cost.ts";
 import { SectionHeader } from "./primitives.tsx";
 import { WorkflowRunCard } from "./WorkflowRunCard.tsx";
 
-/** Live workflow strip. Renders NOTHING when no run is live — zero vertical
- *  footprint on non-workflow days, which matters given how hard the board is
- *  already fighting for space. Inner-scrolls like TodosSection. */
-export function WorkflowsSection({ workflows }: { workflows: LiveWorkflow[] }) {
-  // 1Hz re-render so each row's elapsed timer ticks.
+/** Live workflow strip. With no run live it either goes silent (nothing has
+ *  ever run) or shows one line for the most recent settled run (§5.2) - so a
+ *  failure that finished while you looked away still surfaces on the board
+ *  instead of the section just disappearing. Inner-scrolls like TodosSection
+ *  while a run is actually live. */
+export function WorkflowsSection({ workflows, lastRun = null }: { workflows: LiveWorkflow[]; lastRun?: LastRun | null }) {
+  // 1Hz re-render so each row's elapsed timer (and the last-run "ago") ticks.
   useNow();
   const [collapsed, toggleCollapsed] = usePersistedToggle("am-workflows-collapsed");
-  if (workflows.length === 0) return null;
+
+  if (workflows.length === 0) {
+    if (!lastRun) return null;
+    return (
+      <section className="mt-6">
+        <div data-testid="wf-last-run" className="flex h-7 items-center gap-2 font-mono text-2xs text-ink-4">
+          <span aria-hidden="true">⚙</span>
+          <span className="min-w-0 truncate">
+            Last run: {lastRun.name ?? lastRun.run_id} · {lastRun.status ?? "settled"}
+            {lastRun.ended_at != null ? ` ${ago(lastRun.ended_at)}` : ""} · {formatUsd(lastRun.costUsd)}
+          </span>
+          <a href="#/workflows" className="ml-auto shrink-0 text-ink-4 transition-colors duration-quick ease-quad hover:text-ink">
+            history →
+          </a>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="mt-6">

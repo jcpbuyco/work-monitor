@@ -60,7 +60,7 @@ export function CostBreakdown({ cost }: { cost: Cost }) {
   return (
     <section className="mt-6">
       <SectionHeader
-        label="Cost breakdown"
+        label="Cost breakdown · all-time"
         collapsed={collapsed}
         onToggle={toggle}
         leading={<span aria-hidden="true" className="text-ink-4">≣</span>}

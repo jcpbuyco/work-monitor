@@ -119,7 +119,8 @@ export function buildState(store: StoreType) {
   // Session rows stay a pure DB projection (getSession's shape); this is
   // buildState's own wire-payload concern, matching how `cost` is assembled
   // below rather than stored on the row.
-  const subagentsBySession = store.liveSubagents(Date.now());
+  const now = Date.now();
+  const subagentsBySession = store.liveSubagents(now);
   return {
     sessions: store.listSessions().map((s) => ({ ...s, subagents: subagentsBySession.get(s.id) ?? [] })),
     todos: store.listTodos(),
@@ -132,7 +133,10 @@ export function buildState(store: StoreType) {
     // a background sweep that failed) plus the persisted, 24h-windowed count of
     // RUNS with a degraded parsing cause -- the latter survives a restart, the
     // former resets on one (see workflows.ts's `bumpRunDegraded` doc).
-    workflows_degraded: workflowsDegraded() + store.degradedRunCount(Date.now()),
+    workflows_degraded: workflowsDegraded() + store.degradedRunCount(now),
+    // §5.2: the banner's "names the most recent run" -- null on a server with
+    // no degraded runs in the last 24h, same window as degradedRunCount above.
+    workflows_degraded_run: store.mostRecentDegradedRun(now),
     cost: {
       ...store.costSummary(startOfLocalDay(Date.now())),
       // All-time attribution for the historical breakdown panel.

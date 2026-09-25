@@ -18,6 +18,15 @@ export function subscribe(handlers: {
   onState: (s: State) => void;
   onWorkflows?: (w: LiveWorkflow[]) => void;
   onLastRun?: (r: LastRun | null) => void;
+  /** §5.2 fix: fires on the browser's own `open` event AND on the server's
+   *  periodic `ping` keepalive (SseHub.startKeepalive) - either one is proof
+   *  the connection is alive even when no real state/workflows update has
+   *  happened, which a quiet server never sends otherwise. */
+  onOpen?: () => void;
+  /** §5.2 fix: `EventSource`'s `error` fires the instant the connection drops
+   *  (before the browser's automatic retry succeeds), so the caller can flag
+   *  "disconnected" immediately instead of waiting out the staleness window. */
+  onClose?: () => void;
 }): () => void {
   const es = new EventSource("/api/stream");
   es.addEventListener("state", (e) => handlers.onState(JSON.parse((e as MessageEvent).data)));
@@ -26,6 +35,9 @@ export function subscribe(handlers: {
     handlers.onWorkflows?.(Array.isArray(payload) ? payload : payload.runs);
     if (!Array.isArray(payload)) handlers.onLastRun?.(payload.last_run);
   });
+  es.addEventListener("ping", () => handlers.onOpen?.());
+  es.onopen = () => handlers.onOpen?.();
+  es.onerror = () => handlers.onClose?.();
   return () => es.close();
 }
 

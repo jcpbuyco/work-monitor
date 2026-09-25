@@ -89,6 +89,11 @@ export interface SessionCost {
    *  fabricated $0.00 (server: store.ts §2.3). */
   costUsd: number | null;
   tokens: number;
+  // OPTIONAL like `ProjectCost`/`BranchCost`'s own field (restart-skew gotcha):
+  // >0 means SOME of this session's usage came from an unpriced model, which
+  // is what makes the cost cell's "$x.xx+" (partial) state (§5.1) different
+  // from a fully-priced "$x.xx".
+  unpricedTokens?: number;
 }
 
 export interface ModelCost {
@@ -136,6 +141,11 @@ export interface State {
   /** OPTIONAL on purpose: a rebuilt bundle can briefly talk to a server that
    *  predates the field (the restart-skew gotcha). Always read it as `?? 0`. */
   workflows_degraded?: number;
+  /** §5.2: the most recently degraded run (last 24h), for the board banner's
+   *  "names the most recent run" -- null when nothing degraded, and OPTIONAL
+   *  (undefined) on a server that predates it (restart-skew gotcha, same as
+   *  `workflows_degraded` itself). */
+  workflows_degraded_run?: { run_id: string; name: string | null } | null;
 }
 
 export interface WorkflowAgentView {

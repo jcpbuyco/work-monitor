@@ -18,14 +18,40 @@ const cost: Cost = {
 };
 
 describe("CostPanel", () => {
-  it("renders live total, today, and per-model rows", () => {
+  it("renders open sessions, today (local), and per-model rows (§5.2 relabels)", () => {
     render(<CostPanel cost={cost} />);
-    expect(screen.getByText("live total")).toBeTruthy();
+    expect(screen.getByText("open sessions")).toBeTruthy();
     expect(screen.getByText("$3.71")).toBeTruthy();
-    expect(screen.getByText("today")).toBeTruthy();
+    expect(screen.getByText("today (local)")).toBeTruthy();
     expect(screen.getByText("$12.40")).toBeTruthy();
     expect(screen.getByText("Opus 4.8")).toBeTruthy();
     expect(screen.getByText("$10.90")).toBeTruthy();
+  });
+
+  it("relabels API-equiv as ≈ API list price, on screen rather than tooltip-only", () => {
+    render(<CostPanel cost={cost} />);
+    expect(screen.getByText("≈ API list price")).toBeTruthy();
+  });
+
+  it("lists all-time unpriced models with a token count, distinct from today's per-model rows", () => {
+    render(<CostPanel cost={{ ...cost, unpricedModels: [{ model: "gpt-5.5", tokens: 12_300_000 }] }} />);
+    expect(screen.getByText("GPT-5.5 · unpriced · all-time · 12.3M tok")).toBeTruthy();
+  });
+
+  it("does not duplicate a model that is unpriced both today and all-time (finding fix)", () => {
+    render(
+      <CostPanel
+        cost={{
+          ...cost,
+          byModelToday: [...cost.byModelToday, { model: "mystery-model-9", costUsd: null }],
+          unpricedModels: [{ model: "mystery-model-9", tokens: 503_000 }],
+        }}
+      />
+    );
+    // today's row still reads "unpriced" (never a fabricated $0.00) -
+    // the all-time row for the SAME model is dropped, not shown a second time.
+    expect(screen.getAllByText(/unpriced/).length).toBe(1);
+    expect(screen.queryByText(/all-time/)).toBeNull();
   });
 
   it("renders nothing when there is no cost yet", () => {

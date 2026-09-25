@@ -27,11 +27,18 @@ export function Column({
   count,
   dot,
   children,
+  /** §5.2 finding fix: before the first `/api/state` response, this column's
+   *  own count is exactly as UNKNOWN as the AppBar's - "Needs you 0" above a
+   *  skeleton row is the same confident-wrong-zero the AppBar already avoids
+   *  with "…". Defaults true so every existing caller renders the real count
+   *  immediately. */
+  ready = true,
 }: {
   title: string;
   count: number;
   dot: Session["status"];
   children: ReactNode;
+  ready?: boolean;
 }) {
   return (
     <div data-testid={`session-group-${dot}`}>
@@ -42,7 +49,7 @@ export function Column({
         </Rail>
         <div className="flex items-center gap-2">
           <span className="text-2xs font-semibold uppercase tracking-caps text-ink-3">{title}</span>
-          <span className="text-2xs tabular-nums text-ink-4">{count}</span>
+          <span className="text-2xs tabular-nums text-ink-4">{ready ? count : "…"}</span>
         </div>
       </div>
       <div className="pt-1">{children}</div>
@@ -50,12 +57,25 @@ export function Column({
   );
 }
 
-export function Lane({ label, hint, children }: { label: string; hint: string; children: ReactNode }) {
+export function Lane({
+  label,
+  hint,
+  right,
+  children,
+}: {
+  label: string;
+  hint: string;
+  /** §5.1: the Sessions lane's harness filter Segmented lives here - kept
+   *  generic (not a "harness filter" prop) so any lane can use the slot. */
+  right?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="mt-6">
       <div className="mb-2 flex flex-wrap items-baseline gap-2.5">
         <span className="text-2xs font-semibold uppercase tracking-caps text-ink-3">{label}</span>
         <span className="text-2xs text-ink-4">{hint}</span>
+        {right && <div className="ml-auto flex items-center">{right}</div>}
       </div>
       {/* was: grid grid-cols-1 sm:grid-cols-3 gap-3 — todos and sessions are
           list-shaped; a single column is what makes them scannable */}

@@ -27,7 +27,13 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
           {/* colour comes from statusClass, so glyph and label always agree */}
           <StatusGlyph kind={statusGlyphKind(label)} className={statusClass(label)} />
         </Rail>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        {/* §5.2 phone fix: `flex-wrap` plus a `min-w-0 truncate` project/branch
+            span (was `shrink-0`, so it never gave an inch and pushed the row
+            past 390px in real data - "mediva-import · feat/single-repo-nextjs"
+            alone is wider than the viewport). Everything else keeps its full
+            text and simply drops to its own line if the row runs out of
+            room, so nothing is ever clipped mid-word. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -37,7 +43,12 @@ export function WorkflowRunCard({ w }: { w: LiveWorkflow }) {
             <Chevron open={!collapsed} />
             {title}
           </button>
-          <span className="shrink-0 font-mono text-2xs text-ink-4">{w.project} · {w.branch ?? "—"}</span>
+          <span
+            className="min-w-0 max-w-full flex-1 truncate font-mono text-2xs text-ink-4"
+            title={`${w.project} · ${w.branch ?? "—"}`}
+          >
+            {w.project} · {w.branch ?? "—"}
+          </span>
           <span
             data-status-known={String(statusKnown(label))}
             className={`shrink-0 text-2xs font-medium ${statusClass(label)}`}

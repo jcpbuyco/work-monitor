@@ -25,6 +25,7 @@ import {
   RETENTION_SWEEP_INTERVAL_MS,
   WF_TICK_MS,
   WORKFLOWS_ENABLED,
+  SSE_KEEPALIVE_MS,
 } from "./config.ts";
 import { backfillWorkflows, logOnce, bumpDegraded, workflowTick, sessionDirFor } from "./workflows.ts";
 import { backfillEventsColumns } from "./events-migrate.ts";
@@ -40,6 +41,10 @@ const onChange = scheduleState;
 
 const deps: AppDeps = { store, sse, scheduleState, mcp: { store, onChange } };
 const app = createApp(deps);
+
+// §5.2 fix: a periodic no-op SSE event so an open-but-idle connection is
+// never mistaken for a dropped one - see SseHub.startKeepalive's doc comment.
+sse.startKeepalive(SSE_KEEPALIVE_MS);
 
 // Serve built dashboard from dist/web if present (production).
 const here = dirname(fileURLToPath(import.meta.url));
