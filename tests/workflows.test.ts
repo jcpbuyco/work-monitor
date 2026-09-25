@@ -382,7 +382,15 @@ function agentLine(uuid: string) {
  *  root as <sessionDir>/../.., so the whole cross-slug search stays inside `root`
  *  and never touches ~/.claude. `siblingScripts` is C9's split: a SECOND slug
  *  holding the same sessionId, where the run's script sometimes lives. */
-function makeRun(opts: { agents: string[]; journal?: string; manifest?: string; siblingScript?: string }) {
+function makeRun(opts: {
+  agents: string[];
+  journal?: string;
+  manifest?: string;
+  siblingScript?: string;
+  /** File path for the DB instead of ":memory:" -- for tests that need to
+   *  simulate a restart by opening a SECOND Store over the same file. */
+  dbPath?: string;
+}) {
   const root = mkdtempSync(join(tmpdir(), "am-wf-"));           // ≙ ~/.claude/projects
   const sessionDir = join(root, "-slug-a", "parent");
   const transcript = join(root, "-slug-a", "parent.jsonl");
@@ -402,7 +410,7 @@ function makeRun(opts: { agents: string[]; journal?: string; manifest?: string; 
     writeFileSync(join(siblingScripts, "research-wf_t1.js"), opts.siblingScript);
   }
 
-  const store = new Store(openDb(":memory:"));
+  const store = new Store(openDb(opts.dbPath ?? ":memory:"));
   store.applyEvent(
     "parent",
     { status: "working", project: "alpha", branch: "feat/x", transcript_path: transcript, last_activity_at: 1 },
@@ -827,6 +835,49 @@ describe("scanWorkflows", () => {
     const later = NOW + WF_QUIET_MS + 5_000;
     scanWorkflows(store, later);
     expect(store.degradedRunCount(later)).toBe(1);
+  });
+
+  it("a warm restart's forced cross-check pass never re-bumps a cause already recorded before the restart (§3 restart guarantee, over a REAL file-backed DB)", () => {
+    // Every other test in this describe block reuses one in-memory Store
+    // across ticks, which never exercises the actual restart path: a fresh
+    // process opens a NEW Store (a new `crosschecked` WeakMap entry, and
+    // `warnedRuns`/`degraded` reset too) over the SAME file. Only the
+    // PERSISTED `workflow_runs.degraded` column is supposed to survive that.
+    resetDegraded();
+    const dbPath = join(mkdtempSync(join(tmpdir(), "am-wf-restart-")), "am.sqlite");
+    const manifestRaw = JSON.parse(fixture("wf_eb7bf7e8-8a5.manifest.json"));
+    expect(manifestRaw.totalTokens).toBeGreaterThan(0); // sanity: reports real tokens
+    const { runDir } = makeRun({ agents: [], manifest: JSON.stringify(manifestRaw), dbPath }); // no agent files -> no usage ever ingested
+    const recent = NOW - 1000;
+    setMtime(runDir, recent);
+
+    let store = new Store(openDb(dbPath));
+    scanWorkflows(store, NOW); // discovered while ACTIVE
+    expect(store.degradedRunCount(NOW)).toBe(0); // not quiet yet
+
+    const settledAt = NOW + WF_QUIET_MS + 5_000;
+    scanWorkflows(store, settledAt); // settles -> forces the one-shot cross-check -> records "no-tokens"
+    expect(store.degradedRunCount(settledAt)).toBe(1);
+    const causeAt = () =>
+      (
+        JSON.parse(
+          (store.db.query("SELECT degraded FROM workflow_runs WHERE run_id='wf_t1'").get() as { degraded: string })
+            .degraded
+        ) as Record<string, number>
+      )["no-tokens"];
+    const t0 = causeAt();
+    expect(typeof t0).toBe("number");
+
+    // Simulate the restart: a brand-new Store over the SAME file. Nothing on
+    // disk moved, so this Store's very first look already reads "settled" --
+    // exactly the case `needsCrosscheck` exists to force a pass for, and
+    // exactly the case that would re-bump the cause if the persisted map
+    // weren't consulted.
+    store = new Store(openDb(dbPath));
+    const afterRestart = settledAt + WF_QUIET_MS + 5_000;
+    scanWorkflows(store, afterRestart);
+    expect(store.degradedRunCount(afterRestart)).toBe(1); // still ONE run degraded, not re-bumped
+    expect(causeAt()).toBe(t0); // the recorded timestamp itself never moves
   });
 });
 
