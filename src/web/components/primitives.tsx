@@ -1,14 +1,14 @@
 import type { HTMLAttributes, ReactNode } from "react";
 
 /** React's HTMLAttributes has no index signature, and the JSX checker only
- *  special-cases data-* on intrinsic elements — so a component that forwards
+ *  special-cases data-* on intrinsic elements - so a component that forwards
  *  them has to declare them. */
 type DataAttrs = { [k: `data-${string}`]: string | undefined };
 
 /** THE rail. Every list row's leading mark sits in this fixed-width slot, so
  *  line-1 text starts at exactly --rail no matter how wide the mark is (14px
  *  glyph, 16px checkbox, 6px dot). Rows put NO gap at this level and nest their
- *  content in a gapped flex — see the row components. */
+ *  content in a gapped flex - see the row components. */
 export function Rail({ children }: { children?: ReactNode }) {
   return <span className="flex w-rail shrink-0 items-center justify-center">{children}</span>;
 }
@@ -34,7 +34,21 @@ export function ListRow({
   return <div className={`${ROW_BASE} ${ROW_TONE[tone]} ${className}`} {...rest} />;
 }
 
-/** 10px disclosure caret. aria-hidden, so it never enters an accessible name —
+const DOWN_CARET_PATH = "M2.5 4.5 6 8l3.5-3.5";
+
+/** The decorative caret on a plain `<select>` styled with `appearance-none`
+ *  (ActivityFeed's session/limit selects; the Workflows/Cost pages' project
+ *  and harness filters). One shared shape so a native select's affordance
+ *  looks identical everywhere it's re-skinned. */
+export function DownCaret() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 12 12" className="pointer-events-none absolute right-2 h-2.5 w-2.5 text-ink-4">
+      <path d={DOWN_CARET_PATH} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 10px disclosure caret. aria-hidden, so it never enters an accessible name -
  *  which is why `"▸ ★ Todos (5)"` can become `"★ Todos (5)"` with every role
  *  query in the suite still matching. */
 export function Chevron({ open }: { open: boolean }) {
@@ -53,7 +67,7 @@ export function Chevron({ open }: { open: boolean }) {
 }
 
 /** The uppercase micro-label idiom, which occurred 12 times across 9 files.
- *  `label` is ONE string in ONE element — including its parenthesised count —
+ *  `label` is ONE string in ONE element - including its parenthesised count -
  *  because accessible-name computation concatenates element text with
  *  unpredictable spacing and three of these names are regex-pinned by tests. */
 export function SectionHeader({
@@ -69,22 +83,32 @@ export function SectionHeader({
   onToggle?: () => void;
   collapsed?: boolean;
 }) {
-  const labelEl = <span className="text-2xs font-semibold uppercase tracking-caps text-ink-3">{label}</span>;
+  const labelEl = <span className="whitespace-nowrap text-2xs font-semibold uppercase tracking-caps text-ink-3">{label}</span>;
   return (
-    <div className="mb-2 flex items-center gap-2">
+    // §5.2 finding fix: `flex-wrap` + `shrink-0` on the label cluster below -
+    // a fixed 20rem sidebar (ActivityFeed's two selects included in `right`)
+    // used to leave the label less room than its own content needed, and a
+    // flex item's automatic minimum size for TEXT is its longest WORD, not
+    // its full string - so the container shrank the label cluster down far
+    // enough that "Live activity" line-wrapped into "Live" / "activity" as
+    // two lines, clipped by the row's fixed height. `flex-wrap` here lets
+    // `right` drop to its own line instead when the two don't fit side by
+    // side; `shrink-0` (plus `labelEl`'s own `whitespace-nowrap`) means the
+    // label itself is never what gives.
+    <div className="mb-2 flex flex-wrap items-center gap-2">
       {onToggle ? (
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={!collapsed}
-          className="inline-flex items-center gap-2 transition-colors duration-quick ease-quad hover:text-ink"
+          className="inline-flex shrink-0 items-center gap-2 transition-colors duration-quick ease-quad hover:text-ink"
         >
           <Chevron open={!collapsed} />
           {leading}
           {labelEl}
         </button>
       ) : (
-        <span className="inline-flex items-center gap-2">
+        <span className="inline-flex shrink-0 items-center gap-2">
           {leading}
           {labelEl}
         </span>
@@ -102,7 +126,7 @@ const CHIP_TONE = {
 /** A LOOKUP, never `text-${size}`: Tailwind's content scanner is a regex over
  *  source text and cannot see an interpolated class name. Written this way both
  *  classes are literal in this file, so they are guaranteed emitted from Task 2
- *  onward — no safelist, and no window (Tasks 5/8, before the §4.12 group labels
+ *  onward - no safelist, and no window (Tasks 5/8, before the §4.12 group labels
  *  land) where `text-3xs` exists nowhere in the source and chips render at the
  *  inherited size. */
 const CHIP_SIZE = { "3xs": "text-3xs", "2xs": "text-2xs" } as const;
@@ -141,7 +165,13 @@ export function Chip({
 
 /** The unified sidebar row: one grid for ToolStats and CostBreakdown, which is
  *  what makes the two panels read as one system. The bar is neutral (`bg-bar`),
- *  not accent — the sidebar must stop competing with the board for colour. */
+ *  not accent - the sidebar must stop competing with the board for colour.
+ *
+ *  The bar lives INSIDE the label cell, not the row (§5.2, P2-4): a full-width
+ *  bar drawn under the whole `<li>` bled under the numeric columns and visibly
+ *  cut through them at 100% (`$2982.41` sliced by the bar edge). Scoping
+ *  `relative isolate` to the label `<span>` instead means the bar's percentage
+ *  is relative to THAT cell only, so it always ends before the numbers start. */
 export function MeterRow({
   frac,
   leading,
@@ -156,21 +186,31 @@ export function MeterRow({
   b: ReactNode;
 }) {
   return (
-    <li className={`relative isolate flex h-6 items-center font-mono text-2xs ${ROW_BASE}`}>
-      <span
-        aria-hidden="true"
-        data-meter-bar="true"
-        className="absolute inset-y-[0.125rem] left-0 -z-10 rounded bg-bar"
-        style={{ width: `${Math.max(6, Math.round(frac * 100))}%` }}
-      />
+    <li className={`flex h-6 items-center font-mono text-2xs ${ROW_BASE}`}>
       <Rail>{leading}</Rail>
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-medium text-ink-2">{label}</span>
+        <span className="relative isolate min-w-0 flex-1 truncate font-medium text-ink-2" title={label}>
+          <span
+            aria-hidden="true"
+            data-meter-bar="true"
+            className="absolute inset-y-[0.125rem] left-0 -z-10 rounded bg-bar"
+            style={{ width: `${Math.max(6, Math.round(frac * 100))}%` }}
+          />
+          {label}
+        </span>
         <span className="w-14 shrink-0 whitespace-nowrap text-right tabular-nums text-ink-3">{a}</span>
         <span className="w-16 shrink-0 whitespace-nowrap text-right tabular-nums text-ink-4">{b}</span>
       </div>
     </li>
   );
+}
+
+/** A pulsing placeholder bar - the board's pre-`ready` skeleton (§5.2). One
+ *  primitive so every skeleton row in the app pulses in lockstep and the
+ *  Motion toggle governs it for free (`am-pulse` is already gated on
+ *  `html.am-anim`). `w` is a Tailwind width class, e.g. `"w-24"`. */
+export function Skeleton({ w, className = "" }: { w: string; className?: string }) {
+  return <span aria-hidden="true" className={`am-pulse inline-block h-3 rounded bg-surface-3 ${w} ${className}`} />;
 }
 
 /** Joined range control for the two pages. No `data-press`: a 3% scale on a
@@ -203,7 +243,7 @@ export function Segmented<T extends string | number>({
 }
 
 /** Shared chrome for #/cost and #/workflows. HARD CONSTRAINT: this must
- *  introduce no <button> whose accessible name contains "cost" — two tests do
+ *  introduce no <button> whose accessible name contains "cost" - two tests do
  *  getByRole("button", { name: /cost/i }) expecting the Cost COLUMN header.
  *  `← Dashboard` is therefore an <a> and the title a <span>. */
 export function PageHeader({ title, right }: { title: string; right?: ReactNode }) {

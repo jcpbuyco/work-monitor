@@ -13,7 +13,7 @@ beforeEach(() => localStorage.clear());
 describe("ToolStats", () => {
   it("shows per-tool calls with the total in the header", () => {
     render(<ToolStats stats={stats} />);
-    expect(screen.getByText(/Tool usage \(511\)/)).toBeDefined(); // 492 + 19
+    expect(screen.getByText(/Tool usage · all-time \(511\)/)).toBeDefined(); // 492 + 19
     expect(screen.getByText("Bash")).toBeDefined();
     expect(screen.getByText("492")).toBeDefined();
     expect(screen.getByText("navigate_page")).toBeDefined(); // mcp prefix shortened

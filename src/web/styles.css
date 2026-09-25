@@ -1,3 +1,10 @@
+/* §5.2: bundled, not hotlinked - Inter never actually loaded before (no font
+   installed locally, no CDN reference either), so the whole app silently fell
+   back to a system sans in every screenshot. @import rules must precede every
+   other rule (CSS spec), including @tailwind. Weight axis only (no italic, no
+   optical size) - this dashboard never sets font-style: italic. */
+@import "@fontsource-variable/inter";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,7 +12,7 @@
 :root {                          /* LIGHT */
   color-scheme: light;
 
-  /* surfaces — 4 steps, each a few L* apart */
+  /* surfaces - 4 steps, each a few L* apart */
   --surface-0: 0 0% 100%;        /* #ffffff  canvas */
   --surface-1: 220 24% 98.5%;    /* #fbfcfe  panel: dialogs, totals row, expanded rows */
   --surface-2: 220 20% 96%;      /* #f2f4f8  hover / selected */
@@ -16,13 +23,13 @@
   --border-weak:   220 18% 93%;  /* #e9ecf2  dividers inside a panel */
   --border-strong: 220 14% 80%;  /* #c5cad4  control edges */
 
-  /* ink — 4 steps: title / body / meta / disabled */
+  /* ink - 4 steps: title / body / meta / disabled */
   --text-1: 222 32% 11%;         /* #131826 */
   --text-2: 220 18% 26%;         /* #373e4b */
   --text-3: 220 10% 40%;         /* #5c6470 */
   --text-4: 220 10% 50%;         /* #727a86 */
 
-  /* accent — one, restrained */
+  /* accent - one, restrained */
   --accent:       264 72% 54%;   /* #6d3ee0 */
   --accent-hover: 264 72% 46%;
   --accent-tint:  264 70% 96%;   /* reserved for a future selected/flash surface;
@@ -33,13 +40,13 @@
   --attention:  30 92% 36%;      /* #b05e07 */
   --done:      154 62% 30%;      /* #1d7b4f */
   --idle:      220 10% 58%;
-  --danger:    358 68% 48%;      /* #cf2a3a — closes the raw red-400 gap */
+  --danger:    358 68% 48%;      /* #cf2a3a - closes the raw red-400 gap */
 
   --shadow: 222 32% 28%;
   --shadow-a: 0.10;
 }
 
-html.dark {                      /* DARK — the reference design */
+html.dark {                      /* DARK - the reference design */
   color-scheme: dark;
 
   --surface-0: 220 14% 4%;       /* #08090b */
@@ -51,7 +58,7 @@ html.dark {                      /* DARK — the reference design */
   --border-weak:   220 10% 12%;  /* #1b1e22 */
   --border-strong: 220  9% 25%;  /* #3a3f47 */
 
-  --text-1: 210 20% 97%;         /* #f5f7f9 — never pure white */
+  --text-1: 210 20% 97%;         /* #f5f7f9 - never pure white */
   --text-2: 214 15% 84%;         /* #ced4dc */
   --text-3: 218 10% 60%;         /* #8e949e */
   --text-4: 220  9% 42%;         /* #626873 */
@@ -70,11 +77,11 @@ html.dark {                      /* DARK — the reference design */
   --shadow-a: 0.55;
 }
 
-/* Alias layer — PERMANENT, not a migration scaffold. `toolDot()` returns
+/* Alias layer - PERMANENT, not a migration scaffold. `toolDot()` returns
    `bg-primary` (K17) and `body { @apply bg-background text-foreground }` stays,
    so these names have live consumers forever. Both `:root` and `html.dark`
    select <html>; the aliases never set the same property as a theme block, so
-   cascade order is irrelevant — this sits after both for readability. */
+   cascade order is irrelevant - this sits after both for readability. */
 :root, html.dark {
   --background:       var(--surface-0);
   --card:             var(--surface-1);
@@ -93,16 +100,17 @@ html.dark {                      /* DARK — the reference design */
 :root {
   --font-sans: "Inter Variable","Inter",ui-sans-serif,system-ui,-apple-system,
                "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --font-mono: "Berkeley Mono",ui-monospace,"SF Mono","JetBrains Mono",
-               "Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+  /* §5.2: dropped "Berkeley Mono" (never installed, never bundled - pure dead
+     weight in the stack) for the spec's exact replacement list. */
+  --font-mono: ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,monospace;
 
-  --rail: 1.25rem;        /* THE glyph rail — every list's leading slot */
-  --glyph: 0.875rem;      /* 14px status glyph — documents the value behind
+  --rail: 1.25rem;        /* THE glyph rail - every list's leading slot */
+  --glyph: 0.875rem;      /* 14px status glyph - documents the value behind
                              StatusGlyph's `h-3.5 w-3.5` and its 14×14 fallback
                              width/height attributes */
   --hairline: 1px;
 
-  --ease:      cubic-bezier(.25,.46,.45,.94);  /* ease-out-quad — the workhorse */
+  --ease:      cubic-bezier(.25,.46,.45,.94);  /* ease-out-quad - the workhorse */
   --ease-move: cubic-bezier(.16,1,.3,1);       /* view transitions only */
   --t-quick: 100ms;  /* hover: bg/border/color */
   --t-base:  160ms;  /* controls, press, entrances */
@@ -178,7 +186,7 @@ dialog::backdrop { background: hsl(var(--surface-0) / .6); backdrop-filter: blur
 
 /* NB: no `position: relative` here. The shimmer element is itself `absolute`
    (so it is already a containing block for ::after), and this file's plain
-   rules are emitted *after* `@tailwind utilities` — at equal specificity a bare
+   rules are emitted *after* `@tailwind utilities` - at equal specificity a bare
    `.am-shimmer { position: relative }` would beat Tailwind's `.absolute` and
    pull the underline out of the row's bottom edge. */
 .am-shimmer { overflow: hidden; }

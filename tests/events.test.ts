@@ -83,9 +83,16 @@ describe("reduceEvent", () => {
     expect(patch.attention_reason).toBe("Run the migration?");
   });
 
-  it("stop -> idle", () => {
+  it("stop -> idle with idle_reason 'stopped'", () => {
     const { patch } = reduceEvent(base({ wm_event_type: "stop" }), NOW);
     expect(patch.status).toBe("idle");
+    expect(patch.idle_reason).toBe("stopped");
+  });
+
+  it("every non-stop event clears idle_reason", () => {
+    for (const type of ["session_start", "prompt", "tool_start", "todo_update", "activity", "notification", "session_end"] as const) {
+      expect(reduceEvent(base({ wm_event_type: type }), NOW).patch.idle_reason).toBeNull();
+    }
   });
 
   it("tool_start -> working and sets active_tool to the running tool", () => {

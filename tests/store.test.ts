@@ -47,35 +47,51 @@ describe("Store sessions", () => {
 
   const STALE = 10 * 60 * 1000;
   const DEAD = 30 * 60 * 1000;
+  const NEEDS_YOU_DEAD = 24 * 60 * 60 * 1000;
 
-  it("sweepStale moves quiet working sessions (stale < silence < dead) to idle", () => {
+  it("sweepStale moves quiet working sessions (stale < silence < dead) to idle, tagged 'quiet'", () => {
     store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
-    const affected = store.sweepStale(1000 + 11 * 60 * 1000, STALE, DEAD);
+    const affected = store.sweepStale(1000 + 11 * 60 * 1000, STALE, DEAD, NEEDS_YOU_DEAD);
     expect(affected).toContain("s1");
     expect(store.getSession("s1")!.status).toBe("idle");
+    expect(store.getSession("s1")!.idle_reason).toBe("quiet");
   });
 
-  it("sweepStale retires long-silent sessions of ANY status to ended (hidden from the board)", () => {
-    // working, idle, and needs_you all past the dead threshold → ended.
+  it("sweepStale retires long-silent working/idle sessions to ended (hidden from the board)", () => {
     store.applyEvent("w", reduceEvent({ wm_event_type: "session_start", session_id: "w", cwd: "/x/b" }, 1000).patch, 1000);
     store.applyEvent("i", reduceEvent({ wm_event_type: "session_start", session_id: "i", cwd: "/x/b" }, 1000).patch, 1000);
     store.applyEvent("i", reduceEvent({ wm_event_type: "stop", session_id: "i" }, 1000).patch, 1000);
-    store.applyEvent("n", reduceEvent({ wm_event_type: "session_start", session_id: "n", cwd: "/x/b" }, 1000).patch, 1000);
-    store.applyEvent("n", reduceEvent({ wm_event_type: "notification", session_id: "n", message: "needs you" }, 1000).patch, 1000);
 
     const now = 1000 + 31 * 60 * 1000;
-    const affected = store.sweepStale(now, STALE, DEAD);
-    expect(affected).toEqual(expect.arrayContaining(["w", "i", "n"]));
-    for (const id of ["w", "i", "n"]) {
+    const affected = store.sweepStale(now, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affected).toEqual(expect.arrayContaining(["w", "i"]));
+    for (const id of ["w", "i"]) {
       expect(store.getSession(id)!.status).toBe("ended");
       expect(store.getSession(id)!.ended_at).toBe(now);
     }
     expect(store.listSessions().length).toBe(0);
   });
 
+  it("sweepStale exempts needs_you sessions from the ordinary dead sweep (§1.6)", () => {
+    store.applyEvent("n", reduceEvent({ wm_event_type: "session_start", session_id: "n", cwd: "/x/b" }, 1000).patch, 1000);
+    store.applyEvent("n", reduceEvent({ wm_event_type: "notification", session_id: "n", message: "needs you" }, 1000).patch, 1000);
+
+    // Well past the ordinary 30-minute dead threshold, but nowhere near 24h.
+    const now = 1000 + 31 * 60 * 1000;
+    const affected = store.sweepStale(now, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affected).not.toContain("n");
+    expect(store.getSession("n")!.status).toBe("needs_you");
+
+    // Only the much longer needs_you grace period retires it.
+    const muchLater = 1000 + 25 * 60 * 60 * 1000;
+    const affectedLater = store.sweepStale(muchLater, STALE, DEAD, NEEDS_YOU_DEAD);
+    expect(affectedLater).toContain("n");
+    expect(store.getSession("n")!.status).toBe("ended");
+  });
+
   it("sweepStale leaves recently-active sessions untouched", () => {
     store.applyEvent("s1", reduceEvent({ wm_event_type: "session_start", session_id: "s1", cwd: "/x/b" }, 1000).patch, 1000);
-    const affected = store.sweepStale(1000 + 5 * 60 * 1000, STALE, DEAD);
+    const affected = store.sweepStale(1000 + 5 * 60 * 1000, STALE, DEAD, NEEDS_YOU_DEAD);
     expect(affected).toEqual([]);
     expect(store.getSession("s1")!.status).toBe("working");
   });
@@ -142,8 +158,13 @@ describe("Store sessions", () => {
 
   it("idempotently adds usage.project and usage.branch to a pre-existing usage table", () => {
     const db = new Database(":memory:");
-    // A usage table predating the project/branch columns.
-    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    // A usage table predating the project/branch columns (token columns have
+    // existed since the very first schema and are part of the rebuild's
+    // baseline column set -- see the cost_usd-nullable rebuild below).
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
     migrate(db);
     const has = (col: string) =>
       (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
@@ -154,12 +175,61 @@ describe("Store sessions", () => {
     expect(has("branch")).toBe(1);
   });
 
+  it("rebuilds usage.cost_usd as nullable (§2.3), preserving rows, columns and indexes", () => {
+    const db = new Database(":memory:");
+    // A usage table from before cost_usd could be NULL (and before message_key/harness).
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, project TEXT, branch TEXT,
+      at INTEGER NOT NULL, run_id TEXT, agent_id TEXT);
+      CREATE INDEX idx_usage_session ON usage(session_id);`);
+    db.query(
+      `INSERT INTO usage (message_uuid, session_id, model, input_tokens, output_tokens, cache_read_tokens,
+        cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at, run_id, agent_id)
+       VALUES ('u1','s1','claude-opus-5',100,20,0,0,0,1.23,'alpha','main',1000,NULL,NULL)`
+    ).run();
+    migrate(db);
+    const col = (db.query("PRAGMA table_info(usage)").all() as { name: string; notnull: number }[]).find(
+      (c) => c.name === "cost_usd"
+    )!;
+    expect(col.notnull).toBe(0);
+    expect(db.query("SELECT * FROM usage WHERE message_uuid = 'u1'").get()).toEqual({
+      message_uuid: "u1", message_key: null, session_id: "s1", model: "claude-opus-5",
+      input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_create_5m_tokens: 0,
+      cache_create_1h_tokens: 0, cost_usd: 1.23, project: "alpha", branch: "main", at: 1000,
+      run_id: null, agent_id: null, harness: null,
+    });
+    // A fresh row with a NULL cost must now be writable at all (the point of this rebuild).
+    db.query(
+      `INSERT INTO usage (message_uuid, session_id, model, at, cost_usd) VALUES ('u2','s1','gpt-9',1000,NULL)`
+    ).run();
+    expect((db.query("SELECT cost_usd FROM usage WHERE message_uuid = 'u2'").get() as { cost_usd: null }).cost_usd).toBeNull();
+    // Indexes survive the rebuild (idx_usage_session existed before; the rest are always recreated).
+    const indexNames = (db.query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='usage'`).all() as { name: string }[]).map((r) => r.name);
+    expect(indexNames).toContain("idx_usage_session");
+    expect(indexNames).toContain("idx_usage_at");
+    expect(indexNames).toContain("idx_usage_message_key");
+    migrate(db); // idempotent: no crash, no data loss, no second rebuild attempt
+    expect(db.query("SELECT COUNT(*) AS c FROM usage").get()).toEqual({ c: 2 });
+  });
+
   it("round-trips app_meta values and overwrites on repeat set", () => {
     expect(store.getMeta("nope")).toBeNull();
     store.setMeta("marker", "123");
     expect(store.getMeta("marker")).toBe("123");
     store.setMeta("marker", "456");
     expect(store.getMeta("marker")).toBe("456");
+  });
+
+  it("idempotently creates the subagents table (§2.4)", () => {
+    const db = new Database(":memory:");
+    migrate(db);
+    const hasTable = () =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='subagents'").all() as unknown[]).length;
+    expect(hasTable()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable()).toBe(1);
   });
 
   it("idempotently creates app_meta on a pre-existing DB", () => {
@@ -185,15 +255,26 @@ describe("Store sessions", () => {
     // the run dir's mtime never moves for it, so nothing else would notice.
     const runCols = (db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[]).map((c) => c.name);
     expect(runCols).toContain("manifest_mtime");
+    // §3 minor finding: the hook hot-path UPDATE (recordEvent's live-activity
+    // write) and recentActivity's JOIN both look up workflow_agents by
+    // agent_id alone, which needs its own index (the table's PK is
+    // (run_id, agent_id), so agent_id alone isn't covered by it).
+    const hasIndex = (n: string) =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='index' AND name=$n").all({ $n: n }) as unknown[]).length;
+    expect(hasIndex("idx_workflow_agents_agent")).toBe(1);
     migrate(db); // second run must not throw or duplicate
     expect(hasTable("workflow_runs")).toBe(1);
     expect(hasTable("workflow_agents")).toBe(1);
+    expect(hasIndex("idx_workflow_agents_agent")).toBe(1);
   });
 
   it("idempotently adds usage.run_id and usage.agent_id to a pre-existing usage table", () => {
     const db = new Database(":memory:");
     // A usage table predating the workflow columns.
-    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
+    db.exec(`CREATE TABLE usage (message_uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_create_5m_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_create_1h_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL, at INTEGER NOT NULL);`);
     migrate(db);
     const has = (col: string) =>
       (db.query("PRAGMA table_info(usage)").all() as { name: string }[]).filter((c) => c.name === col).length;
@@ -204,6 +285,41 @@ describe("Store sessions", () => {
     expect(has("agent_id")).toBe(1);
   });
 
+  it("idempotently adds sessions.idle_reason to a pre-existing table", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const has = () => (db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).filter((c) => c.name === "idle_reason").length;
+    expect(has()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(has()).toBe(1);
+  });
+
+  it("idempotently adds the events columns (tool_name, duration_ms, agent_id, harness) and the type/id index", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, at INTEGER NOT NULL);`);
+    migrate(db);
+    const cols = (db.query("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+    for (const col of ["tool_name", "duration_ms", "agent_id", "harness"]) expect(cols).toContain(col);
+    const hasIndex = (name: string) =>
+      (db.query("SELECT name FROM sqlite_master WHERE type='index' AND name=$n").all({ $n: name }) as unknown[]).length;
+    expect(hasIndex("idx_events_type_id")).toBe(1);
+    expect(hasIndex("idx_events_at")).toBe(1); // the hourly retention prune's WHERE at < cutoff
+    migrate(db); // second run must not throw or duplicate
+    const cols2 = (db.query("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+    expect(cols2.filter((c) => c === "tool_name").length).toBe(1);
+  });
+
+  it("idempotently creates the tool_stats table", () => {
+    const db = new Database(":memory:");
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, started_at INTEGER NOT NULL DEFAULT 0, last_activity_at INTEGER NOT NULL DEFAULT 0);`);
+    migrate(db);
+    const hasTable = () => (db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='tool_stats'").all() as unknown[]).length;
+    expect(hasTable()).toBe(1);
+    migrate(db); // second run must not throw or duplicate
+    expect(hasTable()).toBe(1);
+  });
+
   it("stores an unknown workflow status verbatim (no enum, no CHECK)", () => {
     store.db
       .query(
@@ -212,6 +328,205 @@ describe("Store sessions", () => {
       .run();
     const row = store.db.query("SELECT status FROM workflow_runs WHERE run_id = 'wf_x'").get() as { status: string };
     expect(row.status).toBe("brand-new-status");
+  });
+});
+
+describe("Store events + tool stats", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  function recordActivity(opts: { tool: string; dur?: number | null; agent?: string | null; harness?: string }) {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: JSON.stringify({ tool_name: opts.tool, tool_input: {} }),
+      at: 1000,
+      toolName: opts.tool,
+      durationMs: opts.dur ?? null,
+      agentId: opts.agent ?? null,
+      harness: opts.harness ?? "claude",
+    });
+  }
+
+  it("recordEvent inserts the row AND upserts tool_stats atomically for activity rows", () => {
+    recordActivity({ tool: "Bash", dur: 100 });
+    recordActivity({ tool: "Bash", dur: 300 });
+    const row = store.db.query("SELECT calls, timed, total_ms FROM tool_stats WHERE harness='claude' AND tool='Bash'").get() as any;
+    expect(row).toEqual({ calls: 2, timed: 2, total_ms: 400 });
+    expect((store.db.query("SELECT COUNT(*) AS n FROM events").get() as any).n).toBe(2);
+  });
+
+  it("recordEvent does not touch tool_stats for a non-activity type or a missing tool name", () => {
+    store.recordEvent({ sessionId: "s1", type: "tool_start", payload: "{}", at: 1, toolName: "Bash", durationMs: null, agentId: null, harness: "claude" });
+    store.recordEvent({ sessionId: "s1", type: "activity", payload: "{}", at: 1, toolName: null, durationMs: null, agentId: null, harness: "claude" });
+    expect((store.db.query("SELECT COUNT(*) AS n FROM tool_stats").get() as any).n).toBe(0);
+  });
+
+  it("toolStats sums across harnesses per tool and reports a per-harness breakdown, busiest first", () => {
+    recordActivity({ tool: "Bash", dur: 100, harness: "claude" });
+    recordActivity({ tool: "Bash", dur: 200, harness: "claude" });
+    recordActivity({ tool: "Bash", dur: 900, harness: "cursor" });
+    recordActivity({ tool: "Read", dur: 6, harness: "claude" });
+    const stats = store.toolStats();
+    expect(stats[0].tool).toBe("Bash"); // 3 calls beats Read's 1
+    expect(stats[0].calls).toBe(3);
+    expect(stats[0].totalMs).toBe(1200);
+    expect(stats[0].avgMs).toBe(400);
+    const byHarness = stats[0].byHarness.sort((a, b) => a.harness.localeCompare(b.harness));
+    expect(byHarness).toEqual([
+      { harness: "claude", calls: 2, totalMs: 300, avgMs: 150 },
+      { harness: "cursor", calls: 1, totalMs: 900, avgMs: 900 },
+    ]);
+  });
+
+  it("pruneOldEvents deletes rows at/after the cutoff boundary correctly (before cutoff only)", () => {
+    store.db.query(`INSERT INTO events (session_id, type, payload, at) VALUES ('s', 'activity', '{}', 100)`).run();
+    store.db.query(`INSERT INTO events (session_id, type, payload, at) VALUES ('s', 'activity', '{}', 200)`).run();
+    const deleted = store.pruneOldEvents(200);
+    expect(deleted).toBe(1); // only the row strictly before the cutoff
+    expect((store.db.query("SELECT at FROM events").get() as any).at).toBe(200);
+  });
+
+  it("pruneOldEvents' DELETE ... WHERE at < $cutoff uses idx_events_at rather than a full table scan", () => {
+    const plan = store.db.query("EXPLAIN QUERY PLAN DELETE FROM events WHERE at < $cutoff").all({ $cutoff: 1 }) as {
+      detail: string;
+    }[];
+    expect(plan.some((p) => p.detail.includes("idx_events_at"))).toBe(true);
+    expect(plan.some((p) => p.detail.startsWith("SCAN events"))).toBe(false);
+  });
+
+  it("recentActivity reads tool/duration/agent_id/harness from columns and still shows a row whose payload fails to parse", () => {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: "{not json",
+      at: 1000,
+      toolName: "Bash",
+      durationMs: 42,
+      agentId: "agent-1",
+      harness: "cursor",
+    });
+    const rows = store.recentActivity(10);
+    expect(rows.length).toBe(1);
+    expect(rows[0].tool).toBe("Bash");
+    expect(rows[0].dur).toBe(42);
+    expect(rows[0].agent_id).toBe("agent-1");
+    expect(rows[0].harness).toBe("cursor");
+    expect(rows[0].detail).toBeNull(); // payload didn't parse -- no detail, but the row still appears
+  });
+
+  it("recentActivity attaches a known workflow agent's label", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" });
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", label: "map:packages" });
+    recordActivity({ tool: "Bash", agent: "a1" });
+    const rows = store.recentActivity(10);
+    expect(rows[0].label).toBe("map:packages");
+  });
+
+  it("recentActivity leaves label null for an activity with no matching workflow agent", () => {
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].label).toBeNull();
+  });
+
+  it("recentActivity carries a session_label (project plus a short intent) from the owning session (§4.1)", () => {
+    store.applyEvent("s1", { status: "working", project: "agent-monitor", current_intent: "fix the login bug", last_activity_at: 1 }, 1);
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor - fix the login bug");
+  });
+
+  it("recentActivity's session_label falls back to just the project with no intent set", () => {
+    store.applyEvent("s1", { status: "working", project: "agent-monitor", last_activity_at: 1 }, 1);
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor");
+  });
+
+  it("truncates the intent to 24 chars, not to MAX_INTENT_LEN - a spec gap fix (§5.2 'short intent')", () => {
+    // A project name plus the general-purpose 60-char MAX_INTENT_LEN
+    // routinely landed around 80 chars in practice - nowhere close to
+    // "short" for the Live Activity sidebar row it feeds.
+    store.applyEvent(
+      "s1",
+      { status: "working", project: "agent-monitor", current_intent: "a very long intent that goes well past twenty four characters", last_activity_at: 1 },
+      1
+    );
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor - a very long intent that…");
+  });
+});
+
+describe("Store §5.1: liveSubagents", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  function recordAgentEvent(opts: { agent: string; at: number; tool?: string | null; agentType?: string | null }) {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: JSON.stringify({ agent_id: opts.agent, agent_type: opts.agentType ?? undefined }),
+      at: opts.at,
+      toolName: opts.tool ?? "Bash",
+      durationMs: null,
+      agentId: opts.agent,
+      harness: "claude",
+    });
+  }
+
+  it("liveSubagents' query uses the agent_id partial index for a range SEARCH, never a full SCAN", () => {
+    // Matches the reviewer's own reproduction: on a large, mostly-non-agent
+    // events table, this query must not fall back to scanning every row.
+    const plan = store.db
+      .query(
+        `EXPLAIN QUERY PLAN SELECT session_id, agent_id, tool_name AS last_tool, payload AS last_payload, MAX(at) AS last_at
+         FROM events WHERE agent_id IS NOT NULL AND at >= $cutoff
+         GROUP BY session_id, agent_id`
+      )
+      .all({ $cutoff: 1 }) as { detail: string }[];
+    expect(plan.some((p) => p.detail.includes("idx_events_agent_at"))).toBe(true);
+    expect(plan.some((p) => p.detail.startsWith("SCAN events"))).toBe(false);
+  });
+
+  it("returns an empty map with no agent-tagged events in the window", () => {
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    expect(store.liveSubagents(1000 + 3 * 60 * 1000).size).toBe(0); // 3 min later, past the 2 min window
+  });
+
+  it("groups by session+agent, taking the latest tool/timestamp for the group", () => {
+    recordAgentEvent({ agent: "a1", at: 1000, tool: "Read" });
+    recordAgentEvent({ agent: "a1", at: 2000, tool: "Bash" });
+    const byId = store.liveSubagents(2000).get("s1")!;
+    expect(byId).toHaveLength(1);
+    expect(byId[0].last_tool).toBe("Bash");
+    expect(byId[0].last_at).toBe(2000);
+  });
+
+  it("labels an agent from the subagents table when it has been discovered there", () => {
+    store.db
+      .query(
+        `INSERT INTO subagents (agent_id, session_id, agent_type, description, model, path) VALUES ('a1','s1','Explore','map the auth module',NULL,'/p')`
+      )
+      .run();
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBe("Explore");
+    expect(view.label).toBe("map the auth module");
+  });
+
+  it("falls back to the latest hook event's own agent_type when the agent is in neither subagents nor workflow_agents yet", () => {
+    recordAgentEvent({ agent: "a1", at: 1000, agentType: "Explore" });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBe("Explore");
+    expect(view.label).toBe("Explore"); // no description/workflow label either -- falls back the same way
+  });
+
+  it("still returns a labelless view (never throws) when neither a table row nor a payload agent_type exists", () => {
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBeNull();
+    expect(view.label).toBeNull();
   });
 });
 
@@ -361,5 +676,181 @@ describe("Store workflows", () => {
 
   it("getWorkflowRun returns null for an unknown run", () => {
     expect(store.getWorkflowRun("nope")).toBeNull();
+  });
+
+  it("workflowAgentModels reads the stored model per agent for a run", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", model: "sonnet" });
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a2", model: null });
+    expect(store.workflowAgentModels("wf_1").sort((a, b) => a.agent_id.localeCompare(b.agent_id))).toEqual([
+      { agent_id: "a1", model: "sonnet" },
+      { agent_id: "a2", model: null },
+    ]);
+  });
+});
+
+describe("Store §3: persisted per-run degraded causes", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  it("recordRunDegraded upserts a run row that doesn't exist yet, from run_id/session_id/dir alone", () => {
+    const first = store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "manifest-parse", 100);
+    expect(first).toBe(true);
+    const row = store.db.query("SELECT session_id, dir, degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row.session_id).toBe("s1");
+    expect(row.dir).toBe("/d/wf_1");
+    expect(JSON.parse(row.degraded)).toEqual({ "manifest-parse": 100 });
+  });
+
+  it("stamps project/branch from the owning session when its own insert is what creates the row (never left NULL forever)", () => {
+    store.applyEvent("s1", { status: "working", project: "alpha", branch: "feat/x", last_activity_at: 1 }, 1);
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "scan", 100);
+    // The run's FIRST-EVER write was a degraded bump, not the main upsert --
+    // upsertWorkflowRun's own ON CONFLICT branch never sets project/branch
+    // (by design, C3/§1.5's "stamped at first sight only"), so this insert
+    // must have stamped them itself, or a later full upsert (which only ever
+    // hits ON CONFLICT once the row exists) could never fix it.
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", name: "research", last_seen_at: 200 });
+    const row = store.db.query("SELECT project, branch, name FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row).toEqual({ project: "alpha", branch: "feat/x", name: "research" });
+  });
+
+  it("returns false and does not move the timestamp on a repeat of the SAME cause", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 100);
+    const second = store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 999);
+    expect(second).toBe(false);
+    const row = store.db.query("SELECT degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(JSON.parse(row.degraded)).toEqual({ scan: 100 }); // unmoved -- a restart must not re-bump
+  });
+
+  it("a later upsertWorkflowRun call never clobbers the degraded column (the main upsert doesn't mention it)", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1" }, "manifest-parse", 100);
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d/wf_1", name: "research", last_seen_at: 200 });
+    const row = store.db.query("SELECT name, degraded FROM workflow_runs WHERE run_id='wf_1'").get() as any;
+    expect(row.name).toBe("research");
+    expect(JSON.parse(row.degraded)).toEqual({ "manifest-parse": 100 });
+  });
+
+  it("degradedRunCount counts distinct RUNS with a cause first seen inside the window, not causes", () => {
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "manifest-parse", 100);
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 150); // 2nd cause, same run
+    store.recordRunDegraded({ run_id: "wf_2", session_id: "s1", dir: "/d" }, "no-tokens", 200);
+    expect(store.degradedRunCount(1000, 24 * 60 * 60 * 1000)).toBe(2); // 2 runs, not 3 causes
+  });
+
+  it("degradedRunCount excludes a run whose only causes are older than the window", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    store.recordRunDegraded({ run_id: "wf_old", session_id: "s1", dir: "/d" }, "scan", 0);
+    expect(store.degradedRunCount(dayMs + 1, dayMs)).toBe(0); // aged out
+    store.recordRunDegraded({ run_id: "wf_new", session_id: "s1", dir: "/d" }, "scan", dayMs + 1);
+    expect(store.degradedRunCount(dayMs + 1, dayMs)).toBe(1); // wf_new only
+  });
+
+  it("degradedRunCount is 0 for a fresh store with no degraded runs", () => {
+    expect(store.degradedRunCount(1000)).toBe(0);
+  });
+
+  it("mostRecentDegradedRun names the run whose OWN latest cause is most recent, not insertion order", () => {
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/d", name: "older-run" });
+    store.recordRunDegraded({ run_id: "wf_1", session_id: "s1", dir: "/d" }, "scan", 100);
+    store.upsertWorkflowRun({ run_id: "wf_2", session_id: "s1", dir: "/d", name: "newer-run" });
+    store.recordRunDegraded({ run_id: "wf_2", session_id: "s1", dir: "/d" }, "scan", 200);
+    expect(store.mostRecentDegradedRun(1000)).toEqual({ run_id: "wf_2", name: "newer-run" });
+  });
+
+  it("mostRecentDegradedRun excludes a run whose only cause aged out of the window", () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    store.recordRunDegraded({ run_id: "wf_old", session_id: "s1", dir: "/d" }, "scan", 0);
+    expect(store.mostRecentDegradedRun(dayMs + 1, dayMs)).toBeNull();
+  });
+
+  it("mostRecentDegradedRun is null for a fresh store", () => {
+    expect(store.mostRecentDegradedRun(1000)).toBeNull();
+  });
+});
+
+describe("Store §5.1/§5.2: per-session unpriced tokens", () => {
+  let store: Store;
+  const tok = (n: number) => ({ input: n, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 });
+  beforeEach(() => {
+    store = freshStore();
+    store.applyEvent("s1", { status: "working", project: "alpha", last_activity_at: 1 }, 1);
+  });
+
+  it("costSummary's perSession carries unpricedTokens: 0 when every row for a session is priced", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok(100), at: 1, cost: 1 });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: 1, tokens: 100, unpricedTokens: 0 });
+  });
+
+  it("reports the unpriced share when a session mixes priced and unpriced usage - never silently absorbed into costUsd", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok(100), at: 1, cost: 1 });
+    store.recordUsage({ uuid: "m2", sessionId: "s1", model: "totally-unknown-model", tokens: tok(50), at: 2, cost: null });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: 1, tokens: 150, unpricedTokens: 50 });
+  });
+
+  it("costUsd is null and unpricedTokens covers everything when a session's usage is entirely unpriced", () => {
+    store.recordUsage({ uuid: "m1", sessionId: "s1", model: "totally-unknown-model", tokens: tok(50), at: 1, cost: null });
+    const { perSession } = store.costSummary(0);
+    expect(perSession.s1).toEqual({ costUsd: null, tokens: 50, unpricedTokens: 50 });
+  });
+});
+
+describe("Store §3: live workflow-agent activity from hook events", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  it("an activity event carrying a known workflow agent's agent_id updates last_tool/last_tool_summary/tool_calls/started_at", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running" });
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: 50, agentId: "a1", harness: "claude", toolSummary: "bun test",
+    });
+    const row = store.db
+      .query("SELECT last_tool, last_tool_summary, tool_calls, started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'")
+      .get() as any;
+    expect(row).toEqual({ last_tool: "Bash", last_tool_summary: "bun test", tool_calls: 1, started_at: 1000 });
+
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 2000,
+      toolName: "Read", durationMs: 5, agentId: "a1", harness: "claude", toolSummary: "cost.ts",
+    });
+    const after = store.db
+      .query("SELECT last_tool, last_tool_summary, tool_calls, started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'")
+      .get() as any;
+    // started_at is first-seen only; last_tool/summary/calls reflect the latest.
+    expect(after).toEqual({ last_tool: "Read", last_tool_summary: "cost.ts", tool_calls: 2, started_at: 1000 });
+  });
+
+  it("never overwrites started_at once set, even from an earlier manifest-derived value", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running", started_at: 500 });
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "a1", harness: "claude", toolSummary: null,
+    });
+    const row = store.db.query("SELECT started_at FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'").get() as any;
+    expect(row.started_at).toBe(500);
+  });
+
+  it("is a no-op for an agent_id that isn't a known workflow agent (a Task subagent, or one not yet scanned)", () => {
+    store.recordEvent({
+      sessionId: "parent", type: "activity", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "not-a-workflow-agent", harness: "claude", toolSummary: "x",
+    });
+    expect((store.db.query("SELECT COUNT(*) AS c FROM workflow_agents").get() as any).c).toBe(0); // never created a row
+  });
+
+  it("does not touch workflow_agents for a non-activity event type, even with an agent_id", () => {
+    store.upsertWorkflowAgent({ run_id: "wf_1", agent_id: "a1", state: "running" });
+    store.recordEvent({
+      sessionId: "parent", type: "tool_start", payload: "{}", at: 1000,
+      toolName: "Bash", durationMs: null, agentId: "a1", harness: "claude", toolSummary: "x",
+    });
+    const row = store.db.query("SELECT tool_calls, last_tool FROM workflow_agents WHERE run_id='wf_1' AND agent_id='a1'").get() as any;
+    expect(row).toEqual({ tool_calls: null, last_tool: null });
   });
 });

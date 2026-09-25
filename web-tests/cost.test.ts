@@ -9,6 +9,9 @@ describe("formatUsd", () => {
   it("shows a floor for tiny non-zero amounts", () => {
     expect(formatUsd(0.004)).toBe("<$0.01");
   });
+  it("renders null (unpriced) as a word, never a crash or a fabricated $0.00", () => {
+    expect(formatUsd(null)).toBe("unpriced");
+  });
 });
 
 describe("formatTokens", () => {
@@ -27,6 +30,17 @@ describe("prettyModel", () => {
   });
   it("strips a trailing date snapshot suffix", () => {
     expect(prettyModel("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
+  });
+  it("keeps GPT's conventional hyphen instead of a space (§5.1 model pill)", () => {
+    expect(prettyModel("gpt-5.5")).toBe("GPT-5.5");
+    expect(prettyModel("gpt-5.3-codex")).toBe("GPT-5.3.codex");
+  });
+  it("space-separates a non-Claude, non-GPT family like Grok", () => {
+    expect(prettyModel("grok-4.7")).toBe("Grok 4.7");
+  });
+  it("renders a bracket-suffixed context-window id as 'Name Ver · SUFFIX' (§5.3)", () => {
+    expect(prettyModel("claude-opus-5-5[1m]")).toBe("Opus 5.5 · 1M");
+    expect(prettyModel("claude-opus-5[1m]")).toBe("Opus 5 · 1M");
   });
 });
 

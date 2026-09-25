@@ -71,7 +71,7 @@ export function DoneDialog({
             <div className="mt-4 text-sm text-ink-3">No completed todos yet.</div>
           ) : (
             <>
-              {/* rows separate by rhythm — the divide-y is gone */}
+              {/* rows separate by rhythm - the divide-y is gone */}
               <ul className="mt-4" style={listStyle}>
                 {rows.map((t) => (
                   <li key={t.id} className={`flex items-start py-1.5 ${ROW_BASE} ${ROW_TONE.default}`}>

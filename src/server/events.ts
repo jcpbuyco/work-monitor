@@ -7,7 +7,9 @@ export function reduceEvent(
 ): { sessionId: string; patch: SessionPatch } {
   // Default: no tool is mid-run. Only a tool_start (PreToolUse) sets one; every
   // other event means the previous tool has finished or we're between turns.
-  const patch: SessionPatch = { last_activity_at: now, active_tool: null };
+  // idle_reason is likewise cleared by default -- it's only meaningful while
+  // status is "idle", and only the `stop` case below sets it (§1.6).
+  const patch: SessionPatch = { last_activity_at: now, active_tool: null, idle_reason: null };
 
   if (event.cwd) {
     patch.cwd = event.cwd;
@@ -54,6 +56,7 @@ export function reduceEvent(
       break;
     case "stop":
       patch.status = "idle";
+      patch.idle_reason = "stopped";
       break;
     case "session_end":
       patch.status = "ended";

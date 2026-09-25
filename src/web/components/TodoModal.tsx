@@ -21,7 +21,7 @@ export function TodoModal({ todo, onClose }: { todo: Todo | null; onClose: () =>
         if (e.target === ref.current) onClose();
       }}
       aria-labelledby="todo-modal-title"
-      /* the backdrop is theme-aware in styles.css now — no backdrop: utility */
+      /* the backdrop is theme-aware in styles.css now - no backdrop: utility */
       className="m-auto w-[min(35rem,100vw-2rem)] rounded-xl border-hairline border-border bg-surface-1 p-0 text-ink shadow-pop"
     >
       {todo && (

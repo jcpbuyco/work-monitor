@@ -41,7 +41,7 @@ export function TodoCard({ t, onOpen }: { t: Todo; onOpen?: (t: Todo) => void })
           {t.branch && <span className="text-ink-4">⎇ {t.branch}</span>}
           {t.origin_project && <span className="text-ink-4">{t.origin_project}</span>}
         </div>
-        {/* stays in the DOM — opacity does not affect getByLabelText */}
+        {/* stays in the DOM - opacity does not affect getByLabelText */}
         <button
           type="button"
           className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border-hairline border-transparent text-2xs leading-none text-ink-4 opacity-0 transition-opacity duration-quick ease-quad group-focus-within:opacity-100 group-hover:opacity-100 hover:border-danger/40 hover:bg-danger/[0.12] hover:text-danger"

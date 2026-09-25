@@ -82,7 +82,7 @@ describe("WorkflowRunCard", () => {
     rerender(<WorkflowRunCard w={live({ phase: { index: 2, total: 4, title: "Judge" } })} />);
     const bar = container.querySelector("[data-phase-bar]") as HTMLElement;
     expect(bar.style.width).toBe("50%");
-    // fed by the 5s workflows channel — width must never animate layout
+    // fed by the 5s workflows channel - width must never animate layout
     expect(bar.className).not.toContain("transition");
   });
 });

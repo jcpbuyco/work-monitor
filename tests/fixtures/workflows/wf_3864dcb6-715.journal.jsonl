@@ -1,0 +1,13 @@
+{"type":"launched"}
+{"type":"started","key":"v2:e40f1d991996e62b325b47c858afb0a7d3f6dca78f978be4e755266fd422cfef","agentId":"a1fb4d5c1c1409cd9","label":"scout:tokens","phase":"Scout"}
+{"type":"started","key":"v2:15304a2fc40d505dbf2df37ab9751caed26a070369ddda5e2ae06b51b8fe269a","agentId":"a9a1411a7db61c172","label":"scout:apps","phase":"Scout"}
+{"type":"started","key":"v2:5893e2fae308b41297e418abdfc8f81c5812c41990b1cda51562c0809a1f596a","agentId":"a8875e510521e18c1","label":"scout:rosepine","phase":"Scout"}
+{"type":"started","key":"v2:4aa62caea8dce1712c590e47b6877c4969c79dce1c89f93fa3bced394e1f70ca","agentId":"a740651951d3180ca","label":"scout:upstream","phase":"Scout"}
+{"type":"started","key":"v2:168e9f9f551099d2abf7b450152cc7e7125a2eab0bcb5ae526b39e06cd6c3368","agentId":"ad038b782409433ca","label":"scout:picker","phase":"Scout"}
+{"type":"result","key":"v2:5893e2fae308b41297e418abdfc8f81c5812c41990b1cda51562c0809a1f596a","agentId":"a8875e510521e18c1","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"result","key":"v2:4aa62caea8dce1712c590e47b6877c4969c79dce1c89f93fa3bced394e1f70ca","agentId":"a740651951d3180ca","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"result","key":"v2:e40f1d991996e62b325b47c858afb0a7d3f6dca78f978be4e755266fd422cfef","agentId":"a1fb4d5c1c1409cd9","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"result","key":"v2:168e9f9f551099d2abf7b450152cc7e7125a2eab0bcb5ae526b39e06cd6c3368","agentId":"ad038b782409433ca","result":{"summary":"Redacted summary text for fixture purposes."}}
+{"type":"failed","key":"v2:15304a2fc40d505dbf2df37ab9751caed26a070369ddda5e2ae06b51b8fe269a","agentId":"a9a1411a7db61c172"}
+{"type":"started","key":"v2:699ad567d52efa36b5f3c67fd8eab4056ed23cd5eea0c2dd062930e9f4c0a309","agentId":"a7a31c489327b80d6","label":"critic","phase":"Critic"}
+{"type":"result","key":"v2:699ad567d52efa36b5f3c67fd8eab4056ed23cd5eea0c2dd062930e9f4c0a309","agentId":"a7a31c489327b80d6","result":{"summary":"Redacted summary text for fixture purposes."}}

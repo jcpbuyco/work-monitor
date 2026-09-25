@@ -57,7 +57,7 @@ describe("SectionHeader", () => {
 });
 
 describe("Chip", () => {
-  it("passes title and data-* through — both are test contracts elsewhere", () => {
+  it("passes title and data-* through - both are test contracts elsewhere", () => {
     render(<Chip data-testid="wf-badge" tone="working" title="owns a live workflow run">wf</Chip>);
     expect(screen.getByTitle("owns a live workflow run")).toBeTruthy();
     expect(screen.getByTestId("wf-badge").textContent).toBe("wf");

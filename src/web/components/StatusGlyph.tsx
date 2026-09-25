@@ -1,7 +1,7 @@
 export type GlyphKind = "working" | "needs_you" | "idle" | "ended" | "todo" | "danger";
 
 /** Knockout paint for the filled glyphs. A hovered row is --surface-2 rather
- *  than --surface-0, but the delta is ~4% L in both themes on a ≤1.7px stroke —
+ *  than --surface-0, but the delta is ~4% L in both themes on a ≤1.7px stroke -
  *  verified imperceptible, and using the literal surface token keeps this
  *  primitive to one file and zero new tokens. */
 const KO = "hsl(var(--surface-0))";
@@ -12,13 +12,13 @@ const CHECK = "M5 8.2l2.1 2.1L11.2 6";
  *  Replaces the border/dot/label/shimmer redundancy that announced a session's
  *  status up to four times per card.
  *
- *  Colourless by design — every stroke and fill is `currentColor`, so colour
+ *  Colourless by design - every stroke and fill is `currentColor`, so colour
  *  comes from the wrapper class (`text-working`, `text-attention`, …).
  *  `aria-hidden` throughout: the glyph is NEVER the accessible name. Textual
  *  status lives in the group header, the workflow status label, or an sr-only
  *  span on the row.
  *
- *  `needs_you` deliberately breaks the circle family — a filled rounded square
+ *  `needs_you` deliberately breaks the circle family - a filled rounded square
  *  with a `!`, Linear's Urgent-priority move. That break is what lets the row
  *  tint stay as faint as 5%. */
 export function StatusGlyph({
@@ -27,7 +27,7 @@ export function StatusGlyph({
   className = "",
 }: {
   kind: GlyphKind;
-  /** AppBar passes false — a spinning glyph in the chrome is too much. */
+  /** AppBar passes false - a spinning glyph in the chrome is too much. */
   animate?: boolean;
   className?: string;
 }) {
@@ -53,7 +53,7 @@ export function StatusGlyph({
         <>
           <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".35" />
           {/* a 90° arc, 12 → 3 o'clock. With motion off it sits still at 1–2
-              o'clock and still reads "in progress" — a designed fallback. */}
+              o'clock and still reads "in progress" - a designed fallback. */}
           <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="1.5" />
         </>
       )}
@@ -76,7 +76,7 @@ export function StatusGlyph({
       {kind === "todo" && (
         <>
           <rect x="2" y="2" width="12" height="12" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-          {/* revealed by `.am-check:hover` in styles.css — no per-component plumbing */}
+          {/* revealed by `.am-check:hover` in styles.css - no per-component plumbing */}
           <path data-glyph-check="true" d={CHECK} fill="none" stroke="currentColor" strokeWidth="1.6" opacity="0" />
         </>
       )}

@@ -16,7 +16,7 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
   return (
     <section className="mt-6">
       <SectionHeader
-        label={`Tool usage (${total})`}
+        label={`Tool usage · all-time (${total})`}
         collapsed={collapsed}
         onToggle={toggle}
         leading={<span aria-hidden="true" className="text-ink-4">Σ</span>}
@@ -27,7 +27,7 @@ export function ToolStats({ stats }: { stats: ToolStat[] }) {
             <MeterRow
               key={s.tool}
               frac={s.calls / max}
-              /* tool dots encode a CATEGORY, not a state — they stay 6px dots
+              /* tool dots encode a CATEGORY, not a state - they stay 6px dots
                  and must not read as status (K17) */
               leading={<span className={`h-1.5 w-1.5 rounded-full ${toolDot(s.tool)}`} />}
               label={prettyTool(s.tool)}

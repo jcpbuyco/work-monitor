@@ -11,5 +11,5 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/server", "src/hooks", "src/cli", "tests"]
+  "include": ["src/server", "src/hooks", "src/cli", "src/shared", "tests"]
 }

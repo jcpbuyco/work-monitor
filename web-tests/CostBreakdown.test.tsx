@@ -30,7 +30,7 @@ describe("CostBreakdown", () => {
   it("labels branch rows as 'project · branch', with a dash for no branch", () => {
     render(<CostBreakdown cost={cost} />);
     expect(screen.getByText("alpha · main")).toBeTruthy();
-    expect(screen.getByText("beta · —")).toBeTruthy();
+    expect(screen.getByText("beta · -")).toBeTruthy();
   });
 
   it("renders nothing when there is no usage yet", () => {

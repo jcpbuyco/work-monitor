@@ -1,0 +1,1 @@
+{"agentType":"workflow-subagent","description":"impl:A3","workflowPhase":"A3 workflows","spawnDepth":1,"requestShape":"foreground","requestNonInteractive":false,"model":"sonnet"}

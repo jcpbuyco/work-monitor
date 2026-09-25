@@ -56,10 +56,11 @@ describe("TodosSection header", () => {
     expect(screen.getByText("gone")).toBeDefined();
   });
 
-  it("shows the bare empty state with no bordered shell", () => {
+  it("shows the bare empty state with no bordered shell, and no emoji (§5.2, P2-1: tofu risk)", () => {
     render(<TodosSection todos={[]} />);
-    const empty = screen.getByText("Nothing open. 🎉");
+    const empty = screen.getByText("Nothing open.");
     expect(empty.className).not.toContain("border");
+    expect(empty.closest("div")!.textContent).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
     expect(screen.queryByTestId("todos-scroller")).toBeNull();
   });
 });
