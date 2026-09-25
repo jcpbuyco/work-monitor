@@ -5,7 +5,7 @@ import { normalizeCodexPayload } from "./codex.ts";
 import { normalizeClaudePayload } from "./claude.ts";
 
 export { detectHarness, resolveParentSessionId, parentFromScratchpadCwd } from "./detect.ts";
-export { cursorIntentFromTranscript, normalizeCursorPayload, findCursorTranscript } from "./cursor.ts";
+export { cursorIntentFromTranscript, normalizeCursorPayload, findCursorTranscript, keepSpecificModel } from "./cursor.ts";
 export { normalizeCodexPayload } from "./codex.ts";
 export { normalizeClaudePayload } from "./claude.ts";
 

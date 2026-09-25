@@ -143,12 +143,16 @@ describe("SessionCard §5.1: cost cell priced/partial/unpriced/n-a semantics", (
     ).toBeTruthy();
   });
 
-  it("shows tokens and 'unpriced' once am-cursor has captured a cursor session's usage", () => {
+  it("prices a cursor session once am-cursor has captured its usage, like any other harness", () => {
+    render(<SessionCard s={{ ...base, harness: "cursor" }} cost={{ costUsd: 0.0305, tokens: 22941, unpricedTokens: 0 }} />);
+    expect(screen.getByTestId("cost-cell").textContent).toBe("$0.03 · 23K tok");
+  });
+
+  it("shows 'unpriced' for captured cursor usage on a model without a rate (e.g. Auto)", () => {
     render(
       <SessionCard s={{ ...base, harness: "cursor" }} cost={{ costUsd: null, tokens: 22941, unpricedTokens: 22941 }} />
     );
     expect(screen.getByTestId("cost-cell").textContent).toBe("unpriced · 23K tok");
-    expect(screen.getByTitle("Cursor models have no per-token list price")).toBeTruthy();
   });
 });
 

@@ -776,7 +776,7 @@ describe("POST /api/usage/cursor (am-cursor)", () => {
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
 
-  it("records one unpriced cursor usage row, preferring the session's hook model, idempotently", async () => {
+  it("records one priced cursor usage row, preferring the session's hook model, idempotently", async () => {
     await fetch(`${base}/events?type=session_start`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -795,11 +795,13 @@ describe("POST /api/usage/cursor (am-cursor)", () => {
       output_tokens: 109,
       cache_read_tokens: 10752,
       cache_create_5m_tokens: 0,
-      cost_usd: null,
     });
+    // Grok 4.7 at Cursor's rates: $2 input, $6 output, $0.50 cache read per MTok.
+    const expected = (12080 * 2 + 109 * 6 + 10752 * 0.5) / 1e6;
+    expect(rows[0].cost_usd).toBeCloseTo(expected, 9);
     const state = (await (await fetch(`${base}/api/state`)).json()) as any;
     expect(state.cost.perSession.c1.tokens).toBe(12080 + 109 + 10752);
-    expect(state.cost.perSession.c1.costUsd).toBeNull();
+    expect(state.cost.perSession.c1.costUsd).toBeCloseTo(expected, 9);
   });
 
   it("falls back to the payload model when the session is unknown", async () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeCursorPayload, cursorIntentFromTranscript, findCursorTranscript } from "../src/server/harness/cursor.ts";
+import { normalizeCursorPayload, cursorIntentFromTranscript, findCursorTranscript, keepSpecificModel } from "../src/server/harness/cursor.ts";
 
 // Real captured payloads (redacted), cursor.md §1b.
 const SESSION_START = {
@@ -207,5 +207,19 @@ describe("findCursorTranscript (early events carry transcript_path: null)", () =
     root = mkdtempSync(join(tmpdir(), "am-cursor-projects-"));
     expect(findCursorTranscript("../x", root)).toBeNull();
     expect(findCursorTranscript("", root)).toBeNull();
+  });
+});
+
+describe("keepSpecificModel (tool events report the family, start/end the full id)", () => {
+  it("never replaces a stored full id with its own family prefix", () => {
+    expect(keepSpecificModel("grok-4.7-high-fast", "grok-4.7")).toBe("grok-4.7-high-fast");
+    expect(keepSpecificModel("cursor-grok-4.6-high-fast", "grok-4.6")).toBe("cursor-grok-4.6-high-fast");
+  });
+
+  it("takes the incoming model when it is new, more specific, or a different model", () => {
+    expect(keepSpecificModel(null, "grok-4.7")).toBe("grok-4.7");
+    expect(keepSpecificModel("grok-4.7", "grok-4.7-high-fast")).toBe("grok-4.7-high-fast");
+    expect(keepSpecificModel("grok-4.7-high-fast", "gpt-5.6-sol-medium")).toBe("gpt-5.6-sol-medium");
+    expect(keepSpecificModel("grok-4.7-high-fast", "grok-4.6")).toBe("grok-4.6");
   });
 });

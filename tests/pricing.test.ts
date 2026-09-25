@@ -134,3 +134,58 @@ describe("RATES_VERSION", () => {
     expect(withFable51).not.toBe(withFable5);
   });
 });
+
+describe("Cursor model ids (cursor.com/docs/models, fetched 2026-09-25)", () => {
+  const t = (input: number, output: number, cache_read = 0, cache_create_5m = 0) => ({
+    input,
+    output,
+    cache_read,
+    cache_create_5m,
+    cache_create_1h: 0,
+  });
+  const M = 1_000_000;
+
+  it("maps effort/thinking/cursor- variants to one rate key and keeps Fast separate", () => {
+    expect(canonicalModel("grok-4.7-low")).toBe("grok-4.7");
+    expect(canonicalModel("grok-4.7-xhigh")).toBe("grok-4.7");
+    expect(canonicalModel("grok-4.7-high-fast")).toBe("grok-4.7-fast");
+    expect(canonicalModel("cursor-grok-4.6-high-fast")).toBe("grok-4.6-fast");
+    expect(canonicalModel("cursor-grok-4.6-high")).toBe("grok-4.6");
+    expect(canonicalModel("composer-2.5-fast")).toBe("composer-2.5-fast");
+    expect(canonicalModel("gpt-5.6-sol-medium")).toBe("gpt-5.6-sol");
+    expect(canonicalModel("gpt-5.3-codex-high")).toBe("gpt-5.3-codex");
+    expect(canonicalModel("claude-sonnet-5-thinking-high")).toBe("claude-sonnet-5");
+    expect(canonicalModel("claude-opus-5-5-max")).toBe("claude-opus-5-5");
+  });
+
+  it("prices Cursor-pool models at Cursor's rates (effort does not change price; Fast does)", () => {
+    expect(costOf("grok-4.7-low", t(M, M, M))).toBeCloseTo(2 + 6 + 0.5, 6);
+    expect(costOf("grok-4.7-high-fast", t(M, M, M))).toBeCloseTo(4 + 12 + 1, 6);
+    expect(costOf("cursor-grok-4.6-high-fast", t(M, M, M))).toBeCloseTo(4 + 12 + 1, 6);
+    expect(costOf("grok-4.6", t(M, M, M))).toBeCloseTo(2 + 6 + 0.5, 6);
+    expect(costOf("cursor-grok-4.5-high-fast", t(M, M, M))).toBeCloseTo(4 + 18 + 1, 6);
+    expect(costOf("composer-2.5", t(M, M, M))).toBeCloseTo(0.5 + 2.5 + 0.2, 6);
+    expect(costOf("composer-2.5-fast", t(M, M, M))).toBeCloseTo(3 + 15 + 0.5, 6);
+  });
+
+  it("prices listed third-party models at their API rates, cache writes included", () => {
+    expect(costOf("gpt-5.6-sol-high", t(M, M, M, M))).toBeCloseTo(4 + 20 + 0.4 + 5, 6);
+    expect(costOf("gpt-5.6-terra", t(M, M, M, M))).toBeCloseTo(2 + 12 + 0.2 + 2.5, 6);
+    expect(costOf("gpt-5.6-luna-high", t(M, M, M, M))).toBeCloseTo(0.2 + 1.2 + 0.02 + 0.25, 6);
+    expect(costOf("claude-opus-5-5-high", t(M, M))).toBeCloseTo(4 + 20, 6);
+  });
+
+  it("leaves Auto and unlisted Fast variants of third-party models unpriced", () => {
+    expect(costOf("auto", t(M, M))).toBeNull(); // bills at whichever model each request was routed to
+    expect(costOf("auto-smart", t(M, M))).toBeNull();
+    expect(costOf("claude-opus-5-5-high-fast", t(M, M))).toBeNull();
+    expect(costOf("gpt-5.6-sol-high-fast", t(M, M))).toBeNull();
+  });
+
+  it("leaves Claude Code and Codex ids untouched", () => {
+    expect(canonicalModel("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5");
+    expect(canonicalModel("claude-opus-5-5[1m]")).toBe("claude-opus-5-5");
+    expect(canonicalModel("gpt-5.5")).toBe("gpt-5.5");
+    expect(canonicalModel("gpt-5.3-codex")).toBe("gpt-5.3-codex");
+  });
+});

@@ -18,6 +18,7 @@ import {
   resolveParentSessionId,
   cursorIntentFromTranscript,
   findCursorTranscript,
+  keepSpecificModel,
 } from "./harness/index.ts";
 
 export interface AppDeps {
@@ -241,7 +242,10 @@ export function createApp(deps: AppDeps) {
 
         if (!isSubagentEvent) {
           patch.harness = normalized.harness;
-          if (normalized.model) patch.model = normalized.model;
+          if (normalized.model) {
+            patch.model =
+              normalized.harness === "cursor" ? keepSpecificModel(existing?.model, normalized.model) : normalized.model;
+          }
           if (normalized.title) patch.title = normalized.title;
           if (normalized.harnessVersion) patch.harness_version = normalized.harnessVersion;
 

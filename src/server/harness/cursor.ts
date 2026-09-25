@@ -110,3 +110,13 @@ export function cursorIntentFromTranscript(path: string): string | null {
   }
   return null;
 }
+
+/** Cursor's sessionStart/sessionEnd carry the full model id
+ *  (`grok-4.7-high-fast`) while its tool events carry just the family
+ *  (`grok-4.7`). The full id is what decides the price (Fast costs double), so
+ *  an incoming family prefix of the stored id never replaces it. */
+export function keepSpecificModel(stored: string | null | undefined, incoming: string): string {
+  const family = (id: string) => id.replace(/^cursor-/, "");
+  if (stored && family(stored).startsWith(family(incoming) + "-")) return stored;
+  return incoming;
+}

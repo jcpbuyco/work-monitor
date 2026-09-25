@@ -33,6 +33,27 @@ const RATES: Record<string, Rate> = {
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite5m: 1.25, cacheWrite1h: 2 },
   "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5, cacheWrite5m: 0, cacheWrite1h: 0 },
   "gpt-5.3-codex": { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite5m: 0, cacheWrite1h: 0 },
+
+  // Cursor (cursor.com/docs/models, fetched 2026-09-25). Cursor's own pool has
+  // no cache-write charge; effort levels share a price and only Fast / 500k
+  // variants differ. Third-party models bill at their API rates (the Claude
+  // ones above match Cursor's table exactly); the $0.25/MTok Cursor Token Rate
+  // applies only on Teams/Enterprise plans and is not included.
+  "grok-4.7": { input: 2, output: 6, cacheRead: 0.5, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.7-fast": { input: 4, output: 12, cacheRead: 1, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.7-500k": { input: 4, output: 12, cacheRead: 1, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.7-500k-fast": { input: 6, output: 18, cacheRead: 1.5, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.6": { input: 2, output: 6, cacheRead: 0.5, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.6-fast": { input: 4, output: 12, cacheRead: 1, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.5": { input: 2, output: 6, cacheRead: 0.5, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "grok-4.5-fast": { input: 4, output: 18, cacheRead: 1, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "composer-2.5": { input: 0.5, output: 2.5, cacheRead: 0.2, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "composer-2.5-fast": { input: 3, output: 15, cacheRead: 0.5, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "gpt-5.6-sol": { input: 4, output: 20, cacheRead: 0.4, cacheWrite5m: 5, cacheWrite1h: 5 },
+  "gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 2.5 },
+  "gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite5m: 0.25, cacheWrite1h: 0.25 },
+  "gemini-3.1-pro": { input: 2, output: 12, cacheRead: 0.2, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "gemini-3.8-flash": { input: 0.75, output: 3.5, cacheRead: 0.075, cacheWrite5m: 0, cacheWrite1h: 0 },
 };
 
 // Bare family aliases that transcripts sometimes emit (e.g. from subagents),
@@ -59,7 +80,19 @@ const FAMILY_ALIAS: Record<string, string> = {
  *  order would miss the date on a (hypothetical) combination of both. */
 export function canonicalModel(model: string): string {
   const stripped = model.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
-  return FAMILY_ALIAS[stripped] ?? stripped;
+  return FAMILY_ALIAS[stripped] ?? cursorRateKey(stripped);
+}
+
+/** Cursor ids are `[cursor-]<model>[-thinking][-<effort>][-fast]`
+ *  (`cursor-grok-4.6-high-fast`, `claude-sonnet-5-thinking-high`). Effort never
+ *  changes the price and Fast does, so the key is `<model>` or `<model>-fast`.
+ *  Claude Code and Codex ids carry none of these suffixes and pass through. */
+function cursorRateKey(id: string): string {
+  let base = id.replace(/^cursor-/, "");
+  const fast = base.endsWith("-fast");
+  if (fast) base = base.slice(0, -"-fast".length);
+  base = base.replace(/-(?:low|medium|high|xhigh|max)$/, "").replace(/-thinking$/, "");
+  return fast ? `${base}-fast` : base;
 }
 
 const warned = new Set<string>();

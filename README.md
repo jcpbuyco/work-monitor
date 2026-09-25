@@ -94,7 +94,9 @@ am-cursor -p --output-format json "summarize this"  # any output format works
 
 For headless runs (`-p`/`--print`) it runs `cursor-agent` with `stream-json`, prints exactly what `cursor-agent` would have printed in the format you asked for, keeps its exit code, and posts the run's token usage to `POST /api/usage/cursor`.
 Interactive runs pass straight through, uncaptured.
-Captured sessions show their token count as **unpriced**: Cursor models have no per-token list price, and Cursor bills by subscription.
+Captured runs are priced at Cursor's published per-model rates ([cursor.com/docs/models](https://cursor.com/docs/models)): Grok and Composer at Cursor's own rates (effort levels share a price, Fast variants cost more), third-party models at their API rates.
+That is what the same usage costs at list price; your plan's included usage may already cover it.
+Auto runs stay **unpriced**, since Auto bills at whichever model each request was routed to and the hooks don't say which.
 Sessions not run through `am-cursor` show cost as **n/a**.
 Everything else (status, tool activity, project/branch, nesting under a parent session) works the same as Claude Code and Codex.
 
