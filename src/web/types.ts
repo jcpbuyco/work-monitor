@@ -1,5 +1,21 @@
+import type { Harness } from "../shared/harness.ts";
+
 export type SessionStatus = "working" | "needs_you" | "idle" | "ended";
 export type TodoStatus = "todo" | "done";
+
+/** §5.1: one live subagent (a Task subagent or a workflow agent) active in
+ *  the last 2 minutes, for a session row's "N agents" chip. Optional on
+ *  `Session` like `workflows_degraded` on `State` (restart-skew gotcha): a
+ *  dashboard can briefly talk to a server built before this field shipped. */
+export interface SubagentView {
+  agent_id: string;
+  kind: "task" | "workflow";
+  label: string | null;
+  agent_type: string | null;
+  model: string | null;
+  last_tool: string | null;
+  last_at: number;
+}
 
 export interface Session {
   id: string;
@@ -10,6 +26,21 @@ export interface Session {
   attention_reason: string | null;
   active_tool: string | null;
   branch: string | null;
+  /** Why an `idle` session went idle: "stopped" (a Stop hook) or "quiet"
+   *  (swept for silence). Meaningless once the session leaves `idle`. */
+  idle_reason: string | null;
+  /** §4.1: which coding-agent CLI produced this session. */
+  harness?: Harness;
+  /** The model reported by the harness's own hook payload - display only. */
+  model?: string | null;
+  /** Claude Code's own `session_title` (session_start only). */
+  title?: string | null;
+  /** The session that spawned this one, resolved once and never overwritten. */
+  parent_session_id?: string | null;
+  /** The harness's own CLI/build version, for the harness mark's tooltip. */
+  harness_version?: string | null;
+  /** §5.1: agents active in the last 2 minutes. */
+  subagents?: SubagentView[];
   started_at: number;
   last_activity_at: number;
 }
@@ -34,6 +65,16 @@ export interface Activity {
   detail: string | null;
   dur: number | null;
   at: number;
+  /** §4.1, optional (restart-skew gotcha): a dashboard can briefly talk to a
+   *  server built before these fields shipped. */
+  agent_id?: string | null;
+  harness?: Harness;
+  /** The workflow-agent/Task-subagent label, when `agent_id` matches one. */
+  label?: string | null;
+  /** The owning session's project plus a short intent, e.g. "agent-monitor -
+   *  fix the login bug", for the Live Activity row's `<harness> <session
+   *  label> · <agent label>` layout (§5.2). */
+  session_label?: string;
 }
 
 export interface ToolStat {

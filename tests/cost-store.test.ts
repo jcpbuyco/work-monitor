@@ -22,7 +22,12 @@ describe("Store usage rows", () => {
 
   it("tracks and updates the per-session usage offset", () => {
     store.applyEvent("s1", { status: "working", transcript_path: "/tmp/x.jsonl", last_activity_at: 1 }, 1);
-    expect(store.getTailInfo("s1")).toEqual({ transcript_path: "/tmp/x.jsonl", usage_offset: 0 });
+    expect(store.getTailInfo("s1")).toEqual({
+      transcript_path: "/tmp/x.jsonl",
+      usage_offset: 0,
+      harness: "claude",
+      model: null,
+    });
     store.setUsageOffset("s1", 42);
     expect(store.getTailInfo("s1")!.usage_offset).toBe(42);
     expect(store.getTailInfo("nope")).toBeNull();

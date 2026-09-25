@@ -12,6 +12,7 @@ import type { Store as StoreType } from "./store.ts";
 import { createThrottle, type Throttled } from "./throttle.ts";
 import { STATE_THROTTLE_MS } from "./config.ts";
 import { compactPayload, extractEventColumns } from "./payload.ts";
+import { normalizeIncomingEvent, resolveParentSessionId, cursorIntentFromTranscript } from "./harness/index.ts";
 
 export interface AppDeps {
   store: Store;
@@ -113,8 +114,14 @@ function startOfLocalDay(nowMs: number): number {
 }
 
 export function buildState(store: StoreType) {
+  // §5.1: live subagents active in the last 2 minutes, attached per session so
+  // the UI stage can render them without a second round trip. Store-level
+  // Session rows stay a pure DB projection (getSession's shape); this is
+  // buildState's own wire-payload concern, matching how `cost` is assembled
+  // below rather than stored on the row.
+  const subagentsBySession = store.liveSubagents(Date.now());
   return {
-    sessions: store.listSessions(),
+    sessions: store.listSessions().map((s) => ({ ...s, subagents: subagentsBySession.get(s.id) ?? [] })),
     todos: store.listTodos(),
     activity: store.recentActivity(ACTIVITY_LIMIT),
     stats: store.toolStats(),
@@ -154,13 +161,21 @@ export function createApp(deps: AppDeps) {
           res.writeHead(204).end();
           return;
         }
-        let payload: Record<string, unknown> = {};
+        let rawPayload: Record<string, unknown> = {};
         try {
-          payload = raw ? JSON.parse(raw) : {};
+          rawPayload = raw ? JSON.parse(raw) : {};
         } catch {
           res.writeHead(204).end();
           return;
         }
+        // §4.2/§4.3: detect the harness and fold its own field names (Cursor's
+        // conversation_id/workspace_roots/duration, ...) onto the generic ones
+        // the rest of the pipeline already reads, BEFORE anything below reads
+        // session_id/cwd/duration_ms - reduceEvent and extractEventColumns must
+        // never know a single harness-specific field name.
+        const queryHarness = url.searchParams.get("harness");
+        const normalized = normalizeIncomingEvent(type, rawPayload, queryHarness);
+        const payload = normalized.payload;
         const event: HookEvent = { ...(payload as object), wm_event_type: type } as HookEvent;
         if (!event.session_id) {
           res.writeHead(204).end();
@@ -168,7 +183,7 @@ export function createApp(deps: AppDeps) {
         }
         const t = now();
         const { sessionId, patch: fullPatch } = reduceEvent(event, t);
-        const cols = extractEventColumns(payload);
+        const cols = extractEventColumns(payload, normalized.harness);
 
         // §1.5: only main-agent events (no `agent_id` in the payload) may steer
         // a session's identity/status. A Task/workflow subagent's own tool
@@ -177,27 +192,62 @@ export function createApp(deps: AppDeps) {
         // main agent's displayed project/branch/cwd/status/attention_reason/
         // active_tool/current_task/current_intent/transcript_path - a fresh
         // object (not `fullPatch`) so none of reduceEvent's other fields leak.
+        // The same rule extends to harness/model/title/parent_session_id/
+        // harness_version (§4.1/§4.2): a subagent's own payload describes the
+        // SAME session, so it must never steer this session's identity either.
         const isSubagentEvent = cols.agentId != null;
         const patch: SessionPatch = isSubagentEvent ? { last_activity_at: fullPatch.last_activity_at } : fullPatch;
 
-        if (!isSubagentEvent && event.cwd) {
-          // Refine project + branch from git so a worktree reports its repo, not
-          // the branch directory the cwd basename gives (reduceEvent stays pure).
-          const info = await resolveRepoInfo(event.cwd);
-          const existing = store.getSession(sessionId);
-          // A session created by a subagent-first event (or a main event with
-          // no cwd) is stamped project "unknown" and has never actually been
-          // resolved from git -- treat it like a brand-new session for the
-          // no-downgrade rule so it isn't stuck on "unknown" forever.
-          const sessionResolved = existing != null && existing.project !== "unknown";
-          if (shouldApplyGitInfo(info.fromGit, sessionResolved)) {
-            patch.project = info.project;
-            patch.branch = info.branch;
-          } else {
-            // git failed/timed out on an EXISTING session: never downgrade it
-            // to the cwd basename reduceEvent set by default -- keep what it
-            // already has (§1.5).
-            delete patch.project;
+        const existing = store.getSession(sessionId);
+
+        if (!isSubagentEvent) {
+          patch.harness = normalized.harness;
+          if (normalized.model) patch.model = normalized.model;
+          if (normalized.title) patch.title = normalized.title;
+          if (normalized.harnessVersion) patch.harness_version = normalized.harnessVersion;
+
+          // §4.2: parent resolution - pcc/pcx (am-hook.sh's own query params)
+          // first, then the scratchpad-cwd fallback. The store applies this
+          // only while the session has no parent recorded yet (set once).
+          const parent = resolveParentSessionId({
+            pcc: url.searchParams.get("pcc"),
+            pcx: url.searchParams.get("pcx"),
+            cwd: event.cwd,
+            sessionId,
+          });
+          if (parent) patch.parent_session_id = parent;
+
+          // §4.3: Cursor's headless mode fires no prompt event, so its
+          // current_intent can only come from its own transcript - try once
+          // a transcript_path is known, and only while the session genuinely
+          // has no intent yet (never overwrite a real one, and this stops
+          // re-reading the transcript on every later event once it succeeds).
+          if (normalized.harness === "cursor" && !patch.current_intent && !existing?.current_intent) {
+            const transcriptPath = event.transcript_path ?? existing?.transcript_path ?? null;
+            if (transcriptPath) {
+              const intent = cursorIntentFromTranscript(transcriptPath);
+              if (intent) patch.current_intent = intent;
+            }
+          }
+
+          if (event.cwd) {
+            // Refine project + branch from git so a worktree reports its repo, not
+            // the branch directory the cwd basename gives (reduceEvent stays pure).
+            const info = await resolveRepoInfo(event.cwd);
+            // A session created by a subagent-first event (or a main event with
+            // no cwd) is stamped project "unknown" and has never actually been
+            // resolved from git -- treat it like a brand-new session for the
+            // no-downgrade rule so it isn't stuck on "unknown" forever.
+            const sessionResolved = existing != null && existing.project !== "unknown";
+            if (shouldApplyGitInfo(info.fromGit, sessionResolved)) {
+              patch.project = info.project;
+              patch.branch = info.branch;
+            } else {
+              // git failed/timed out on an EXISTING session: never downgrade it
+              // to the cwd basename reduceEvent set by default -- keep what it
+              // already has (§1.5).
+              delete patch.project;
+            }
           }
         }
         store.applyEvent(sessionId, patch, t);
@@ -215,7 +265,13 @@ export function createApp(deps: AppDeps) {
         if (type === "stop" || type === "session_end") {
           const info = store.getTailInfo(sessionId);
           if (info) {
-            tailUsage(store, { id: sessionId, transcript_path: info.transcript_path, usage_offset: info.usage_offset });
+            tailUsage(store, {
+              id: sessionId,
+              transcript_path: info.transcript_path,
+              usage_offset: info.usage_offset,
+              harness: info.harness,
+              model: info.model,
+            });
             // §2.4, finding: `sessionsToTail()` (the 60s sweep) excludes ended
             // sessions, so a Task subagent's usage written since the last sweep
             // would otherwise sit unrecorded until the next server restart's

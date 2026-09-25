@@ -593,3 +593,144 @@ describe("todo input validation", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("§4 multi-harness ingestion, wired end-to-end through POST /events", () => {
+  const post = (type: string, body: object, qs: string = "") =>
+    fetch(`${base}/events?type=${type}${qs}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("Cursor: detected from cursor_version, cwd falls back to workspace_roots[0], model persists", async () => {
+    await post("session_start", {
+      conversation_id: "c1",
+      session_id: "c1",
+      model: "grok-4.7-low",
+      cursor_version: "2026.09.23-86fc751",
+      workspace_roots: ["/x/cursor-project"],
+      cwd: null,
+    });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    const s = state.sessions.find((x: any) => x.id === "c1");
+    expect(s.harness).toBe("cursor");
+    expect(s.project).toBe("cursor-project"); // resolved from workspace_roots[0], not a null cwd
+    expect(s.model).toBe("grok-4.7-low");
+    expect(s.harness_version).toBe("2026.09.23-86fc751");
+  });
+
+  it("Codex: detected from a ~/.codex/ transcript_path, model persists, PermissionRequest synthesizes a message", async () => {
+    await post("session_start", {
+      session_id: "x1",
+      cwd: "/x/codex-project",
+      transcript_path: "/home/user/.codex/sessions/2026/09/25/rollout-x.jsonl",
+      model: "gpt-5.5",
+    });
+    await post("notification", {
+      session_id: "x1",
+      cwd: "/x/codex-project",
+      transcript_path: "/home/user/.codex/sessions/2026/09/25/rollout-x.jsonl",
+      model: "gpt-5.5",
+    });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    const s = state.sessions.find((x: any) => x.id === "x1");
+    expect(s.harness).toBe("codex");
+    expect(s.model).toBe("gpt-5.5");
+    expect(s.status).toBe("needs_you");
+    expect(s.attention_reason).toBe("Codex is waiting for approval");
+  });
+
+  it("Codex: detected via the harness=codex query param before any transcript_path is known", async () => {
+    await post("session_start", { session_id: "x2", cwd: "/x/codex-project2" }, "&harness=codex");
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "x2").harness).toBe("codex");
+  });
+
+  it("Claude: session_start's model/session_title persist onto the session", async () => {
+    await post("session_start", {
+      session_id: "cc1",
+      cwd: "/x/claude-project",
+      model: "claude-opus-5-5[1m]",
+      session_title: "Fix the login bug",
+    });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    const s = state.sessions.find((x: any) => x.id === "cc1");
+    expect(s.harness).toBe("claude");
+    expect(s.model).toBe("claude-opus-5-5[1m]");
+    expect(s.title).toBe("Fix the login bug");
+  });
+
+  it("parent resolution: pcc query param sets parent_session_id once and it is never overwritten", async () => {
+    await post("session_start", { session_id: "child1", cwd: "/x/repo" }, "&pcc=parent-abc");
+    await post("activity", { session_id: "child1", cwd: "/x/repo", tool_name: "Bash" }); // no pcc this time
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "child1").parent_session_id).toBe("parent-abc");
+  });
+
+  it("parent resolution: falls back to the scratchpad cwd pattern when no pcc/pcx is given", async () => {
+    const cwd = "/tmp/claude-1000/-slug/fe6382e2-c797-47f4-badb-da617338ebdf/scratchpad";
+    await post("session_start", { session_id: "child2", cwd });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "child2").parent_session_id).toBe(
+      "fe6382e2-c797-47f4-badb-da617338ebdf"
+    );
+  });
+
+  it("a subagent event (carrying agent_id) never sets harness/model/title/parent on the session", async () => {
+    await post("session_start", { session_id: "main1", cwd: "/x/repo" }); // claude, no model
+    await post("activity", {
+      session_id: "main1",
+      cwd: "/x/repo",
+      agent_id: "a1",
+      tool_name: "Bash",
+      cursor_version: "9.9.9", // even a (contrived) cursor-shaped subagent payload must not steer the session
+      model: "grok-4.7",
+    });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    const s = state.sessions.find((x: any) => x.id === "main1");
+    expect(s.harness).toBe("claude");
+    expect(s.model).toBeNull();
+  });
+
+  it("Cursor: backfills current_intent from the session's own transcript once a transcript_path is known", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "am-http-cursor-transcript-"));
+    const transcriptPath = join(dir, "t.jsonl");
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({
+        role: "user",
+        message: { content: [{ type: "text", text: "<user_query>fix the flaky test</user_query>" }] },
+      }) + "\n"
+    );
+    try {
+      await post("session_start", { session_id: "cur1", conversation_id: "cur1", cursor_version: "1.0.0" });
+      await post("activity", {
+        session_id: "cur1",
+        conversation_id: "cur1",
+        cursor_version: "1.0.0",
+        tool_name: "Shell",
+        transcript_path: transcriptPath,
+      });
+      const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+      expect(state.sessions.find((x: any) => x.id === "cur1").current_intent).toBe("fix the flaky test");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("session rows carry a live subagents array (empty with none active)", async () => {
+    await post("session_start", { session_id: "s-plain", cwd: "/x/repo" });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    expect(state.sessions.find((x: any) => x.id === "s-plain").subagents).toEqual([]);
+  });
+
+  it("recentActivity rows carry harness and a session label", async () => {
+    await post("session_start", { session_id: "sl1", cwd: "/x/labelled-project" });
+    await post("prompt", { session_id: "sl1", cwd: "/x/labelled-project", prompt: "fix the thing" });
+    await post("activity", { session_id: "sl1", cwd: "/x/labelled-project", tool_name: "Bash" });
+    const state = (await (await fetch(`${base}/api/state`)).json()) as any;
+    const row = state.activity.find((a: any) => a.session_id === "sl1");
+    expect(row.harness).toBe("claude");
+    expect(row.session_label).toBe("labelled-project - fix the thing");
+  });
+});

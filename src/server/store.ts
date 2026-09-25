@@ -4,9 +4,10 @@ import type { Session, SessionPatch, Todo, TodoStatus, CreateTodoInput, UpdateTo
 import type { Tokens } from "./pricing.ts";
 import { deriveRunState } from "./workflows.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
+import { truncate } from "./derive.ts";
 
 const SESSION_COLS =
-  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, started_at, last_activity_at, ended_at";
+  "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, harness, model, title, parent_session_id, harness_version, started_at, last_activity_at, ended_at";
 
 const TODO_COLS =
   "id, title, note, for_who, status, origin_session_id, origin_project, branch, links, position, created_at, updated_at";
@@ -50,6 +51,21 @@ function rowToTodo(row: Record<string, unknown>): Todo {
 function baseName(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || p;
+}
+
+/** `liveSubagents`' fallback for an agent_id not yet in `subagents` or
+ *  `workflow_agents`: every Task/workflow-agent hook event carries its own
+ *  `agent_type` in the raw payload, so this is read straight from it instead
+ *  of leaving the row labelless until the next discovery sweep. Never throws
+ *  on a null/unparseable payload. */
+function agentTypeFromPayload(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as { agent_type?: unknown };
+    return typeof p.agent_type === "string" ? p.agent_type : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A short, human-friendly one-liner for a tool call, derived from its input.
@@ -229,6 +245,19 @@ export interface LiveWorkflow {
   agents: WorkflowAgentView[];
 }
 
+/** §5.1: one live subagent (a Task subagent or a workflow agent) active in
+ *  the last 2 minutes, for a session row's "N agents" chip. */
+export interface SubagentView {
+  agent_id: string;
+  session_id: string;
+  kind: "task" | "workflow";
+  label: string | null;
+  agent_type: string | null;
+  model: string | null;
+  last_tool: string | null;
+  last_at: number;
+}
+
 /** §3: the board's "last run" line for when nothing is live. */
 export interface LastSettledRun {
   run_id: string;
@@ -273,8 +302,8 @@ export class Store {
     if (!existing) {
       this.db
         .query(
-          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, started_at, last_activity_at, ended_at)
-           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $active_tool, $branch, $idle_reason, $started_at, $last_activity_at, $ended_at)`
+          `INSERT INTO sessions (id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, harness, model, title, parent_session_id, harness_version, started_at, last_activity_at, ended_at)
+           VALUES ($id, $project, $cwd, $transcript_path, $status, $current_task, $current_intent, $attention_reason, $active_tool, $branch, $idle_reason, $harness, $model, $title, $parent_session_id, $harness_version, $started_at, $last_activity_at, $ended_at)`
         )
         .run({
           $id: sessionId,
@@ -288,6 +317,11 @@ export class Store {
           $active_tool: patch.active_tool ?? null,
           $branch: patch.branch ?? null,
           $idle_reason: patch.idle_reason ?? null,
+          $harness: patch.harness ?? "claude",
+          $model: patch.model ?? null,
+          $title: patch.title ?? null,
+          $parent_session_id: patch.parent_session_id ?? null,
+          $harness_version: patch.harness_version ?? null,
           $started_at: now,
           $last_activity_at: patch.last_activity_at ?? now,
           $ended_at: patch.ended_at ?? null,
@@ -308,6 +342,10 @@ export class Store {
       "active_tool",
       "branch",
       "idle_reason",
+      "harness",
+      "model",
+      "title",
+      "harness_version",
       "last_activity_at",
       "ended_at",
     ] as const) {
@@ -315,6 +353,13 @@ export class Store {
         fields.push(`${key} = $${key}`);
         params[`$${key}`] = (patch as Record<string, unknown>)[key] ?? null;
       }
+    }
+    // §4.2: parent is set once and never overwritten - a plain overwrite (like
+    // every other field above) would let a later event with a different or
+    // absent parent guess clobber the first one this session ever recorded.
+    if ("parent_session_id" in patch) {
+      fields.push("parent_session_id = COALESCE(parent_session_id, $parent_session_id)");
+      params.$parent_session_id = patch.parent_session_id ?? null;
     }
     if (fields.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -418,7 +463,10 @@ export class Store {
    *  and a row whose payload fails to parse still appears (detail stays
    *  null; the tool itself came from the column, not the payload). When
    *  `agent_id` matches a known workflow agent, its label is attached too;
-   *  Task-subagent labels land with the `subagents` table (§2.4). */
+   *  Task-subagent labels land with the `subagents` table (§2.4). §4.1: also
+   *  carries `session_label` (the owning session's project plus a short
+   *  intent) so the Live Activity feed can read `<harness> <session label> ·
+   *  <agent label>` (§5.2) without a second round trip per row. */
   recentActivity(limit: number): {
     id: number;
     session_id: string;
@@ -429,13 +477,15 @@ export class Store {
     agent_id: string | null;
     harness: string;
     label: string | null;
+    session_label: string;
   }[] {
     const rows = this.db
       .query(
         `SELECT e.id, e.session_id, e.payload, e.at, e.tool_name, e.duration_ms, e.agent_id, e.harness,
-                wa.label AS agent_label
+                wa.label AS agent_label, s.project AS session_project, s.current_intent AS session_intent
          FROM events e
          LEFT JOIN workflow_agents wa ON wa.agent_id = e.agent_id
+         LEFT JOIN sessions s ON s.id = e.session_id
          WHERE e.type = 'activity'
          ORDER BY e.id DESC LIMIT $limit`
       )
@@ -449,6 +499,8 @@ export class Store {
       agent_id: string | null;
       harness: string | null;
       agent_label: string | null;
+      session_project: string | null;
+      session_intent: string | null;
     }[];
     const out: {
       id: number;
@@ -460,6 +512,7 @@ export class Store {
       agent_id: string | null;
       harness: string;
       label: string | null;
+      session_label: string;
     }[] = [];
     for (const r of rows) {
       if (!r.tool_name) continue; // matches historic behaviour: an untagged row is excluded
@@ -472,6 +525,8 @@ export class Store {
       } catch {
         // payload failed to parse -- the row still appears (tool from the column); no detail.
       }
+      const project = r.session_project ?? "unknown";
+      const sessionLabel = r.session_intent ? `${project} - ${truncate(r.session_intent, 60)}` : project;
       out.push({
         id: r.id,
         session_id: r.session_id,
@@ -482,7 +537,80 @@ export class Store {
         agent_id: r.agent_id,
         harness: r.harness ?? "claude",
         label: r.agent_label,
+        session_label: sessionLabel,
       });
+    }
+    return out;
+  }
+
+  /** §5.1: agents (Task subagents or workflow agents) with a hook event in the
+   *  last `windowMs` (default 2 minutes), grouped by session, for a session
+   *  row's "N agents" chip. `tool_name`/`MAX(at)` come from the SAME row for
+   *  each group via SQLite's documented "bare column follows the min/max"
+   *  behaviour (exactly one MAX() in this query) - no second query needed for
+   *  the group's own latest tool. `payload` rides along the same bare-column
+   *  trick, so an agent seen by neither `subagents` nor `workflow_agents` yet
+   *  (freshly spawned since the last discovery sweep, or any Codex sub-agent,
+   *  which is never discovered into either table) still gets its own
+   *  `agent_type` from its latest hook event instead of showing up labelless.
+   *  Reads `idx_events_agent_at` (a partial index over just the agent-tagged
+   *  rows) so this stays a cheap range scan over the last `windowMs`
+   *  regardless of total event-table size, rather than the full-table SCAN a
+   *  plain `agent_id IS NOT NULL` predicate would otherwise fall back to. */
+  liveSubagents(now: number, windowMs: number = 2 * 60 * 1000): Map<string, SubagentView[]> {
+    const cutoff = now - windowMs;
+    const rows = this.db
+      .query(
+        `SELECT session_id, agent_id, tool_name AS last_tool, payload AS last_payload, MAX(at) AS last_at
+         FROM events WHERE agent_id IS NOT NULL AND at >= $cutoff
+         GROUP BY session_id, agent_id`
+      )
+      .all({ $cutoff: cutoff }) as {
+      session_id: string;
+      agent_id: string;
+      last_tool: string | null;
+      last_payload: string | null;
+      last_at: number;
+    }[];
+    const out = new Map<string, SubagentView[]>();
+    if (rows.length === 0) return out;
+
+    const ids = [...new Set(rows.map((r) => r.agent_id))];
+    const ph = ids.map((_, i) => `$a${i}`).join(", ");
+    const params: Record<string, string> = {};
+    ids.forEach((id, i) => (params[`$a${i}`] = id));
+
+    const subagentRows = this.db
+      .query(`SELECT agent_id, agent_type, description, model FROM subagents WHERE agent_id IN (${ph})`)
+      .all(params) as { agent_id: string; agent_type: string | null; description: string | null; model: string | null }[];
+    const subagentById = new Map(subagentRows.map((r) => [r.agent_id, r]));
+
+    const wfRows = this.db
+      .query(`SELECT agent_id, label, model FROM workflow_agents WHERE agent_id IN (${ph})`)
+      .all(params) as { agent_id: string; label: string | null; model: string | null }[];
+    const wfById = new Map(wfRows.map((r) => [r.agent_id, r]));
+
+    for (const r of rows) {
+      const wf = wfById.get(r.agent_id);
+      const sub = subagentById.get(r.agent_id);
+      const kind: "task" | "workflow" = wf ? "workflow" : "task";
+      // Neither table has this agent_id yet -- read `agent_type` straight off
+      // its own latest hook payload (every Task/workflow-agent event carries
+      // it) rather than showing up labelless until the next discovery sweep.
+      const agentType = sub ? sub.agent_type : agentTypeFromPayload(r.last_payload);
+      const view: SubagentView = {
+        agent_id: r.agent_id,
+        session_id: r.session_id,
+        kind,
+        label: wf?.label ?? sub?.description ?? agentType ?? null,
+        agent_type: agentType,
+        model: wf?.model ?? sub?.model ?? null,
+        last_tool: r.last_tool,
+        last_at: r.last_at,
+      };
+      const list = out.get(r.session_id) ?? [];
+      list.push(view);
+      out.set(r.session_id, list);
     }
     return out;
   }
@@ -611,6 +739,11 @@ export class Store {
     runId?: string;
     agentId?: string;
     messageKey?: string | null;
+    /** §4.1: which harness produced this usage row. Omitted (undefined) keeps
+     *  the column NULL, the same "NULL means claude" convention pre-existing
+     *  rows already use - callers that know their harness (every §4.4/§4.3
+     *  caller added in this workstream) should always pass it explicitly. */
+    harness?: string;
   }): boolean {
     // Stamp the session's then-current project/branch so historical cost can be
     // attributed without a join (and survives the session row being mutated later).
@@ -620,11 +753,11 @@ export class Store {
         `INSERT INTO usage
            (message_uuid, message_key, session_id, model, input_tokens, output_tokens,
             cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens, cost_usd, project, branch, at,
-            run_id, agent_id)
+            run_id, agent_id, harness)
          VALUES ($u, $key, $s, $m, $in, $out, $cr, $c5, $c1, $cost,
                  (SELECT project FROM sessions WHERE id = $s),
                  (SELECT branch FROM sessions WHERE id = $s), $at,
-                 $run, $agent)
+                 $run, $agent, $harness)
          ON CONFLICT(message_uuid) DO NOTHING
          ON CONFLICT(message_key) WHERE message_key IS NOT NULL DO UPDATE SET
            output_tokens = excluded.output_tokens,
@@ -645,6 +778,7 @@ export class Store {
         $at: u.at,
         $run: u.runId ?? null,
         $agent: u.agentId ?? null,
+        $harness: u.harness ?? null,
       });
     const inserted = res.changes > 0;
     // A no-op (DO NOTHING on a dupe uuid, or a merge that changed nothing new)
@@ -670,11 +804,11 @@ export class Store {
     this.db.query(`UPDATE sessions SET usage_offset = $o WHERE id = $id`).run({ $o: offset, $id: id });
   }
 
-  getTailInfo(id: string): { transcript_path: string | null; usage_offset: number } | null {
+  getTailInfo(id: string): { transcript_path: string | null; usage_offset: number; harness: string; model: string | null } | null {
     const row = this.db
-      .query(`SELECT transcript_path, usage_offset FROM sessions WHERE id = $id`)
+      .query(`SELECT transcript_path, usage_offset, harness, model FROM sessions WHERE id = $id`)
       .get({ $id: id });
-    return (row as { transcript_path: string | null; usage_offset: number }) ?? null;
+    return (row as { transcript_path: string | null; usage_offset: number; harness: string; model: string | null }) ?? null;
   }
 
   /** Process-independent key/value marker store. Used by one-shot maintenance
@@ -692,13 +826,13 @@ export class Store {
       .run({ $k: key, $v: value });
   }
 
-  sessionsToTail(): { id: string; transcript_path: string | null; usage_offset: number }[] {
+  sessionsToTail(): { id: string; transcript_path: string | null; usage_offset: number; harness: string; model: string | null }[] {
     return this.db
       .query(
-        `SELECT id, transcript_path, usage_offset FROM sessions
+        `SELECT id, transcript_path, usage_offset, harness, model FROM sessions
          WHERE status != 'ended' AND transcript_path IS NOT NULL`
       )
-      .all() as { id: string; transcript_path: string | null; usage_offset: number }[];
+      .all() as { id: string; transcript_path: string | null; usage_offset: number; harness: string; model: string | null }[];
   }
 
   /** Lifetime cost + tokens per session. Memoized on `usageVersion` (§1.3):
@@ -1668,5 +1802,30 @@ export class Store {
       cost: number | null;
     };
     return { run_id: row.run_id, name: row.name, status: row.status, ended_at: row.ended_at, costUsd: cost.cost };
+  }
+
+  // --- Codex rollout backfill (§4.4) --------------------------------------
+
+  /** The stored tail state for one Codex rollout file, or null if it has
+   *  never been seen before - lets the startup backfill tell "brand new file"
+   *  from "grown since last boot" without re-reading from byte 0 every time.
+   *  `offset` is the byte just past the last COMPLETE line consumed (never
+   *  the raw file size - a trailing partial line at read time must stay
+   *  unconsumed so it is re-read once it is finished); `size` is the file's
+   *  own size as of that same pass, used only to detect "unchanged since last
+   *  time" (offset alone can't: it legitimately stays short of size whenever
+   *  the file ends mid-line). */
+  getHarnessFileOffset(path: string): { session_id: string; offset: number; mtime: number | null; size: number | null } | null {
+    const row = this.db.query(`SELECT session_id, offset, mtime, size FROM harness_files WHERE path = $p`).get({ $p: path });
+    return (row as { session_id: string; offset: number; mtime: number | null; size: number | null }) ?? null;
+  }
+
+  setHarnessFileOffset(path: string, sessionId: string, offset: number, mtime: number | null, size: number | null): void {
+    this.db
+      .query(
+        `INSERT INTO harness_files (path, session_id, offset, mtime, size) VALUES ($p, $s, $o, $m, $sz)
+         ON CONFLICT(path) DO UPDATE SET session_id = excluded.session_id, offset = excluded.offset, mtime = excluded.mtime, size = excluded.size`
+      )
+      .run({ $p: path, $s: sessionId, $o: offset, $m: mtime, $sz: size });
   }
 }

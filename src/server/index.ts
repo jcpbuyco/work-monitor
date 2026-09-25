@@ -11,6 +11,8 @@ import { repriceIfNeeded } from "./reprice.ts";
 import { dedupeHistoricUsage } from "./usage-dedupe.ts";
 import { mergeOrphanMessageKeys } from "./usage-orphan-merge.ts";
 import { sweepSubagents, backfillSubagents } from "./subagents.ts";
+import { backfillCodexSessions } from "./harness/codex-usage.ts";
+import { backfillLegacyHarness } from "./harness/legacy-backfill.ts";
 import {
   PORT,
   HOST,
@@ -174,6 +176,40 @@ try {
   console.log(`[subagents-backfill] discovered=${discovered} recorded=${recorded} in ${Date.now() - t0}ms`);
 } catch (err) {
   if (logOnce("subagents-backfill", err)) bumpDegraded();
+}
+
+// One-time startup pass (§4.4): scan ~/.codex/sessions for rollouts this
+// server has never (fully) ingested, upsert an ended session row per file,
+// and price their usage. Awaited (top-level await, Bun/ESM) so it - like
+// every other startup backfill above - completes before server.listen()
+// opens the socket, the same ordering that already makes those backfills
+// race-free against live hook traffic.
+try {
+  const t0 = Date.now();
+  const { scanned, sessionsUpserted, recorded, skippedSubagentRollouts } = await backfillCodexSessions(store, t0);
+  console.log(
+    `[codex-backfill] scanned=${scanned} sessions=${sessionsUpserted} usage_rows=${recorded} ` +
+      `skipped_subagent_rollouts=${skippedSubagentRollouts} in ${Date.now() - t0}ms`
+  );
+} catch (err) {
+  if (logOnce("codex-backfill", err)) bumpDegraded();
+}
+
+// One-time (§4.5): fix up sessions/usage recorded before multi-harness
+// ingestion existed (Cursor sessions misclassified as claude, usage still
+// bucketed under the legacy 'main' placeholder project). Runs after the
+// Codex backfill above (both stamp `harness`) and, like it, before
+// server.listen() so it never races live hook traffic.
+try {
+  const t0 = Date.now();
+  const { cursorSessions, usageReattributed } = await backfillLegacyHarness(store, t0);
+  if (cursorSessions > 0 || usageReattributed > 0) {
+    console.log(
+      `[harness-backfill] cursor_sessions=${cursorSessions} usage_reattributed=${usageReattributed} in ${Date.now() - t0}ms`
+    );
+  }
+} catch (err) {
+  if (logOnce("harness-backfill", err)) bumpDegraded();
 }
 
 // One-shot: populate the new `events` columns for historic rows and rebuild

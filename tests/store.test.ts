@@ -429,6 +429,92 @@ describe("Store events + tool stats", () => {
     recordActivity({ tool: "Bash" });
     expect(store.recentActivity(10)[0].label).toBeNull();
   });
+
+  it("recentActivity carries a session_label (project plus a short intent) from the owning session (§4.1)", () => {
+    store.applyEvent("s1", { status: "working", project: "agent-monitor", current_intent: "fix the login bug", last_activity_at: 1 }, 1);
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor - fix the login bug");
+  });
+
+  it("recentActivity's session_label falls back to just the project with no intent set", () => {
+    store.applyEvent("s1", { status: "working", project: "agent-monitor", last_activity_at: 1 }, 1);
+    recordActivity({ tool: "Bash" });
+    expect(store.recentActivity(10)[0].session_label).toBe("agent-monitor");
+  });
+});
+
+describe("Store §5.1: liveSubagents", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  function recordAgentEvent(opts: { agent: string; at: number; tool?: string | null; agentType?: string | null }) {
+    store.recordEvent({
+      sessionId: "s1",
+      type: "activity",
+      payload: JSON.stringify({ agent_id: opts.agent, agent_type: opts.agentType ?? undefined }),
+      at: opts.at,
+      toolName: opts.tool ?? "Bash",
+      durationMs: null,
+      agentId: opts.agent,
+      harness: "claude",
+    });
+  }
+
+  it("liveSubagents' query uses the agent_id partial index for a range SEARCH, never a full SCAN", () => {
+    // Matches the reviewer's own reproduction: on a large, mostly-non-agent
+    // events table, this query must not fall back to scanning every row.
+    const plan = store.db
+      .query(
+        `EXPLAIN QUERY PLAN SELECT session_id, agent_id, tool_name AS last_tool, payload AS last_payload, MAX(at) AS last_at
+         FROM events WHERE agent_id IS NOT NULL AND at >= $cutoff
+         GROUP BY session_id, agent_id`
+      )
+      .all({ $cutoff: 1 }) as { detail: string }[];
+    expect(plan.some((p) => p.detail.includes("idx_events_agent_at"))).toBe(true);
+    expect(plan.some((p) => p.detail.startsWith("SCAN events"))).toBe(false);
+  });
+
+  it("returns an empty map with no agent-tagged events in the window", () => {
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    expect(store.liveSubagents(1000 + 3 * 60 * 1000).size).toBe(0); // 3 min later, past the 2 min window
+  });
+
+  it("groups by session+agent, taking the latest tool/timestamp for the group", () => {
+    recordAgentEvent({ agent: "a1", at: 1000, tool: "Read" });
+    recordAgentEvent({ agent: "a1", at: 2000, tool: "Bash" });
+    const byId = store.liveSubagents(2000).get("s1")!;
+    expect(byId).toHaveLength(1);
+    expect(byId[0].last_tool).toBe("Bash");
+    expect(byId[0].last_at).toBe(2000);
+  });
+
+  it("labels an agent from the subagents table when it has been discovered there", () => {
+    store.db
+      .query(
+        `INSERT INTO subagents (agent_id, session_id, agent_type, description, model, path) VALUES ('a1','s1','Explore','map the auth module',NULL,'/p')`
+      )
+      .run();
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBe("Explore");
+    expect(view.label).toBe("map the auth module");
+  });
+
+  it("falls back to the latest hook event's own agent_type when the agent is in neither subagents nor workflow_agents yet", () => {
+    recordAgentEvent({ agent: "a1", at: 1000, agentType: "Explore" });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBe("Explore");
+    expect(view.label).toBe("Explore"); // no description/workflow label either -- falls back the same way
+  });
+
+  it("still returns a labelless view (never throws) when neither a table row nor a payload agent_type exists", () => {
+    recordAgentEvent({ agent: "a1", at: 1000 });
+    const view = store.liveSubagents(1000).get("s1")![0];
+    expect(view.agent_type).toBeNull();
+    expect(view.label).toBeNull();
+  });
 });
 
 describe("Store todos", () => {

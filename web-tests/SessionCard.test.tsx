@@ -5,7 +5,7 @@ import type { Session } from "../src/web/types.ts";
 
 const base: Session = {
   id: "s1", project: "myrepo", status: "working", current_task: null,
-  current_intent: null, attention_reason: null, active_tool: null, branch: null,
+  current_intent: null, attention_reason: null, active_tool: null, branch: null, idle_reason: null,
   started_at: 0, last_activity_at: Date.now(),
 };
 

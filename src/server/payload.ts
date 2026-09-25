@@ -89,14 +89,22 @@ export interface EventColumns {
 }
 
 /** Pull the typed `events` columns straight out of the parsed (pre-compaction)
- *  hook payload, so ingestion never has to re-parse the stored JSON later. */
-export function extractEventColumns(payload: Record<string, unknown>): EventColumns {
+ *  hook payload, so ingestion never has to re-parse the stored JSON later.
+ *
+ *  `harness`, when given, is the ALREADY-detected value from §4.2's full
+ *  detection (`src/server/harness/detect.ts` - transcript-path roots, the
+ *  `harness=` query param) - the caller (http.ts) always has it by the time
+ *  it calls this, since it needs it for `sessions.harness`/`usage.harness`
+ *  too. Omitting it (every existing test, and any future internal caller that
+ *  genuinely has no query string to look at) falls back to this module's own
+ *  minimal, payload-only classification, kept for exactly that reason. */
+export function extractEventColumns(payload: Record<string, unknown>, harness?: string): EventColumns {
   const toolName = typeof payload.tool_name === "string" ? payload.tool_name : null;
   const durationMs =
     typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms) ? payload.duration_ms : null;
   const agentId = typeof payload.agent_id === "string" ? payload.agent_id : null;
   const toolSummary = summarizeTool(toolName, payload.tool_input);
-  return { toolName, durationMs, agentId, harness: detectHarness(payload), toolSummary };
+  return { toolName, durationMs, agentId, harness: harness ?? detectHarness(payload), toolSummary };
 }
 
 /** Minimal harness classification for §1.2's own needs (typed `harness`

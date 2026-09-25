@@ -24,6 +24,11 @@ export function migrate(db: Database): void {
       attention_reason TEXT,
       active_tool TEXT,
       branch TEXT,
+      harness TEXT NOT NULL DEFAULT 'claude',
+      model TEXT,
+      title TEXT,
+      parent_session_id TEXT,
+      harness_version TEXT,
       started_at INTEGER NOT NULL,
       last_activity_at INTEGER NOT NULL,
       ended_at INTEGER
@@ -143,6 +148,13 @@ export function migrate(db: Database): void {
       fallback_model    TEXT,
       PRIMARY KEY (run_id, agent_id)
     );
+    CREATE TABLE IF NOT EXISTS harness_files (
+      path       TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      offset     INTEGER NOT NULL DEFAULT 0,
+      mtime      INTEGER,
+      size       INTEGER
+    );
   `);
   // §3: workflow fidelity columns added after the initial schema.
   const workflowRunCols = db.query("PRAGMA table_info(workflow_runs)").all() as { name: string }[];
@@ -184,6 +196,25 @@ export function migrate(db: Database): void {
   }
   if (!sessionCols.some((c) => c.name === "idle_reason")) {
     db.exec("ALTER TABLE sessions ADD COLUMN idle_reason TEXT;");
+  }
+  // §4.1: multi-harness columns. `harness` defaults to 'claude' so every
+  // pre-existing row (all Claude Code before this migration, per §4.5's own
+  // backfill for the Cursor exceptions) reads correctly with no backfill of
+  // its own needed for the common case.
+  if (!sessionCols.some((c) => c.name === "harness")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude';");
+  }
+  if (!sessionCols.some((c) => c.name === "model")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN model TEXT;");
+  }
+  if (!sessionCols.some((c) => c.name === "title")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN title TEXT;");
+  }
+  if (!sessionCols.some((c) => c.name === "parent_session_id")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;");
+  }
+  if (!sessionCols.some((c) => c.name === "harness_version")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN harness_version TEXT;");
   }
   // Idempotent: stamp project/branch onto usage rows for historical attribution.
   const usageCols = db.query("PRAGMA table_info(usage)").all() as { name: string }[];
@@ -289,6 +320,14 @@ export function migrate(db: Database): void {
   // Matches recentActivity's `WHERE type = 'activity' ORDER BY id DESC LIMIT n`:
   // id is monotonic (AUTOINCREMENT) and cheaper to sort on than `at`.
   db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_id ON events(type, id);");
+  // §5.1: liveSubagents' "agent rows active in the last N minutes" query
+  // filters on `agent_id IS NOT NULL AND at >= cutoff`. Only a small fraction
+  // of events ever carry an agent_id, so a partial index on just those rows
+  // (ordered by at) lets that query do a cheap range SEARCH instead of a full
+  // SCAN of the whole (unbounded, retention-only-pruned) events table. Must
+  // come after the `agent_id` column itself exists (the ADD COLUMN above, for
+  // an upgraded pre-existing DB; the base CREATE TABLE has no such column).
+  db.exec("CREATE INDEX IF NOT EXISTS idx_events_agent_at ON events(at) WHERE agent_id IS NOT NULL;");
   // Idempotent: remap legacy hand-off statuses to the generic todo lifecycle.
   db.exec(`UPDATE todos SET status = 'todo' WHERE status IN ('to_hand_off', 'handed_off');`);
 }

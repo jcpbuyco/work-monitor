@@ -61,6 +61,38 @@ bun run setup     # installs systemd user service, merges hooks, registers MCP
 
 Then open **http://127.0.0.1:4317** and pin the tab. **Restart any open Claude Code sessions** so they pick up the new hooks + MCP.
 
+## Multi-harness setup
+
+agent-monitor ingests three coding-agent CLIs: **Claude Code**, **Codex**, and **Cursor** (`cursor-agent`).
+`bun run setup` configures whichever of these are installed on this machine automatically - it detects each one by its home directory (`~/.codex`, `~/.cursor`) and skips the ones that are absent.
+
+### Codex
+
+When `~/.codex` exists, `bun run setup` additionally:
+- merges hook entries into `~/.codex/hooks.json` (backs it up to `hooks.json.am-backup` first, and preserves any other tool's entries - it is idempotent, safe to re-run).
+- checks `~/.codex/config.toml` for `hooks = true` under `[features]`, and prints the exact lines to add if it is missing.
+  Setup never rewrites `config.toml` itself.
+- prints a reminder that Codex requires **hook trust**: the next interactive `codex` run will ask to trust the new hooks, and `codex exec` only runs hooks that have already been trusted (or pass `--dangerously-bypass-hook-trust`).
+- registers the `agent-monitor` MCP server with `codex mcp add` when the `codex` binary is on `PATH` (best effort - it prints the manual command on failure).
+
+Once hooks are trusted, a `codex exec` (or interactive `codex`) session reports to the dashboard the same way a Claude Code session does, including nested under whichever session spawned it.
+Token usage and cost are read from Codex's own rollout files (`~/.codex/sessions/**/rollout-*.jsonl`), including a one-time startup scan that backfills any session the server missed while it was down.
+
+### Cursor
+
+When `~/.cursor` exists, `bun run setup` merges `{"mcpServers": {"agent-monitor": {...}}}` into `~/.cursor/mcp.json` (backed up first, other servers preserved).
+**No `~/.cursor/hooks.json` is written.**
+`cursor-agent` already parses `~/.claude/settings.json`/`.claude/settings.local.json` through its own Claude-compat layer and runs the exact same `am-hook.sh` commands that `bun run setup` installs for Claude Code - a second, native hooks file would just double-deliver every event.
+
+Cursor never writes token/cost data to disk anywhere, and its own hooks don't carry it either, so cost for Cursor sessions always shows as **n/a** on the dashboard - this is a known, permanent gap, not a bug.
+Everything else (status, tool activity, project/branch, nesting under a parent session) works the same as Claude Code and Codex.
+
+### How harness detection works
+
+Every hook event reaches the same `POST /events` endpoint.
+The server tells harnesses apart, in order: a payload carrying `cursor_version` (or a `transcript_path` under `~/.cursor/`) is Cursor; a `transcript_path` under `~/.codex/` (or the query string's `harness=codex`, set by Codex's own hooks.json entries) is Codex; anything else is Claude Code.
+A session spawned by another one (a Bash `codex exec`/`cursor-agent` call, or a nested `claude` session) is linked to its parent via `am-hook.sh`'s own `pcc`/`pcx` query parameters (`$CLAUDE_CODE_SESSION_ID`/`$CODEX_THREAD_ID`, when set), falling back to the scratchpad-cwd naming convention when neither is available.
+
 ## Dev
 
 - `bun run server` — run the server in the foreground.
