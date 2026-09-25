@@ -20,11 +20,26 @@ describe("HarnessMark", () => {
     expect(new Set(paths).size).toBe(3);
   });
 
+  it("fills Claude Code in its brand orange and the monochrome marks with currentColor", () => {
+    const fill = (h: "claude" | "codex" | "cursor") =>
+      render(<HarnessMark harness={h} />).container.querySelector("path")!.getAttribute("fill");
+    expect(fill("claude")).toBe("#D97757");
+    expect(fill("codex")).toBe("currentColor");
+    expect(fill("cursor")).toBe("currentColor");
+  });
+
   it("carries the harness label for screen readers, never as the visible glyph text", () => {
     render(<HarnessMark harness="codex" />);
     const svg = document.querySelector("svg")!;
     expect(svg.textContent).toBe("");
     expect(screen.getByText("Codex").className).toContain("sr-only");
+  });
+
+  it("decorative marks carry no label or title (the surrounding control names them)", () => {
+    const { container } = render(<HarnessMark harness="cursor" decorative />);
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("[title]")).toBeNull();
+    expect(container.querySelector("svg")!.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("shows the harness label as a hover title, with its version appended when known", () => {

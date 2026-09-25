@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ListRow, Rail, SectionHeader, Chip, MeterRow, Segmented, PageHeader, ROW_TONE } from "../src/web/components/primitives.tsx";
+import { HarnessMark } from "../src/web/components/HarnessMark.tsx";
 
 describe("Rail", () => {
   it("is a fixed --rail-wide slot so every row's text starts at the same x", () => {
@@ -102,6 +103,21 @@ describe("Segmented", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /^all$/i }));
     expect(onChange).toHaveBeenCalledWith("all");
+  });
+
+  it("renders an option's icon without changing its accessible name", () => {
+    render(
+      <Segmented<string>
+        value="all"
+        onChange={() => {}}
+        options={[
+          { value: "all", label: "All (3)" },
+          { value: "codex", label: "Codex (1)", icon: <HarnessMark harness="codex" decorative /> },
+        ]}
+      />
+    );
+    const btn = screen.getByRole("button", { name: "Codex (1)" });
+    expect(btn.querySelector('svg[data-harness="codex"]')).toBeTruthy();
   });
 });
 

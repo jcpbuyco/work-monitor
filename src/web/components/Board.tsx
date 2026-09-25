@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { State, Session, Activity, LiveWorkflow, LastRun } from "../types.ts";
 import { HARNESSES, isHarness, type Harness } from "../../shared/harness.ts";
+import { HarnessMark } from "./HarnessMark.tsx";
 import { useNow } from "../useNow.ts";
 import { usePersistedValue } from "../usePersistedValue.ts";
 import { buildSessionTree, type SessionNode } from "../sessionTree.ts";
@@ -173,6 +174,7 @@ export function Board({
                   ...HARNESSES.map((h) => ({
                     value: h as HarnessFilter,
                     label: `${FILTER_LABEL[h]} (${ready ? harnessCounts[h] : "…"})`,
+                    icon: <HarnessMark harness={h} decorative />,
                   })),
                 ]}
               />
