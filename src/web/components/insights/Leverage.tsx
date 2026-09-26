@@ -1,13 +1,15 @@
 import type { InsightsResponse } from "../../../shared/insights.ts";
 import { formatUsd } from "../../cost.ts";
-import { compactUsd, formatMonth } from "../charts/format.ts";
+import { compactUsd, formatMonth, orDash } from "../charts/format.ts";
 import { band, linear, niceTicks } from "../charts/scales.ts";
-import { YAxis } from "../charts/Axis.tsx";
+import { YAxis, yAxisGutter, thinBandLabels } from "../charts/Axis.tsx";
 import { useTooltip } from "../charts/useTooltip.ts";
 import { Tooltip, TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
 import { useChartWidth } from "../charts/useChartWidth.ts";
+import { useRootPx } from "../../useRootPx.ts";
+import { VALUE_CLASS, TICK_PX_AT_16, LABEL_HALO, scaleOf } from "../charts/typography.ts";
 
 const MIN_ACTIVE_HOURS = 10;
 const PANEL_H = 96;
@@ -37,28 +39,40 @@ function Panel({
   tooltipFor: (i: number) => React.ReactNode;
 }) {
   const tooltip = useTooltip();
+  const rootPx = useRootPx();
+  const scale = scaleOf(rootPx);
+  const panelH = PANEL_H * scale;
   const max = Math.max(1, ...values.filter((v): v is number => v != null));
   const ticks = niceTicks(max, 3);
-  const scaleY = linear([0, ticks[ticks.length - 1]], [PANEL_H, 0]);
-  const { at, bandwidth } = band(months, [0, width], 0.4);
-  const barW = Math.min(24, bandwidth);
+  const niceMax = ticks[ticks.length - 1];
+  // 18% headroom above the tallest tick -- not just the axis's own top-tick
+  // padding, real room for a cap label to sit ABOVE even the tallest bar,
+  // every time. A near-max bar used to leave its label with nowhere to go
+  // but INSIDE the bar's own fill (white-on-blue) as the one exception to
+  // "labels sit above their mark" (reviewer finding, B16).
+  const scaleY = linear([0, niceMax * 1.18], [panelH, 0]);
+  const gutter = yAxisGutter(ticks, formatAxis ?? formatValue, rootPx);
+  const { at, step, bandwidth } = band(months, [gutter, width], 0.4);
+  const barW = Math.min(24 * scale, bandwidth);
+  const currentIndex = months.indexOf(currentMonth);
+  // Same collision-thinning `StackedColumns` uses for its own x-axis month
+  // labels (§R4): this panel draws an identical band x axis but, being a
+  // separate component, had none of that handling -- "Aug"/"Sep MTD" (and
+  // other adjacent short/long pairs) garbled together once text scaled up on
+  // a narrow card (reviewer finding, R4, "Active hours" panels).
+  const xLabels = thinBandLabels(months.map((m) => formatMonth(m, { current: currentMonth })), currentIndex, step, TICK_PX_AT_16 * scale, scale);
   return (
     <div className="relative">
-      {/* mb-2, not mb-0.5: a near-axis-max bar's cap label sits right at the
-          plot's own y=0 (clamped, see below), so the title needs real
-          breathing room above it or the two visually crowd together. */}
       <p className="mb-2 text-3xs uppercase tracking-caps text-ink-4">{title}</p>
-      <svg width={width} height={PANEL_H + 20} className="overflow-visible">
-        <YAxis ticks={ticks} y={scaleY} width={width} format={formatAxis ?? formatValue} />
+      <svg width={width} height={panelH + 20 * scale} className="overflow-visible">
+        <YAxis ticks={ticks} y={scaleY} width={width} format={formatAxis ?? formatValue} x0={gutter} />
+        {/* A month with too little data draws NO bar at all -- the in-chart
+            "-" placeholder this used to draw duplicated what the Table view
+            already shows for the same month, and read as a fifth, unlabelled
+            mark among the real bars (reviewer finding, B16). */}
         {months.map((m, i) => {
           const v = values[i];
-          if (v == null) {
-            return (
-              <text key={m} x={at(m) + bandwidth / 2} y={PANEL_H - 4} textAnchor="middle" className="fill-ink-4 text-[10px]">
-                -
-              </text>
-            );
-          }
+          if (v == null) return null;
           const x = at(m) + (bandwidth - barW) / 2;
           const h = scaleY(0) - scaleY(v);
           return (
@@ -73,39 +87,28 @@ function Panel({
               onFocus={(e) => tooltip.showFromElement(e.currentTarget, tooltipFor(i))}
               onBlur={tooltip.hide}
             >
-              <path d={roundedTopRect(x, PANEL_H - h, barW, h, 4)} fill="var(--viz-s1)" />
-              {/* A bar within 14px of the panel's own top has no room for a
-                  cap label above it at all -- clamping the y alone (still
-                  needed so the label never floats above the SVG into the
-                  OTHER panel's row, per the reviewer's original finding) just
-                  moved the collision from "the row above" to "the bar's own
-                  fill", with dark-on-blue text sitting half inside the bar's
-                  rounded top. Past that point the label moves INSIDE the bar
-                  instead, in white, like every other bar chart on this page
-                  does for a segment too short to label above. */}
-              {PANEL_H - h < 14 ? (
-                <text x={x + barW / 2} y={PANEL_H - h + 12} textAnchor="middle" className="fill-white text-[10px] tabular-nums font-medium">
-                  {formatValue(v)}
-                </text>
-              ) : (
-                <text x={x + barW / 2} y={PANEL_H - h - 6} textAnchor="middle" className="fill-ink-2 text-[10px] tabular-nums font-medium">
-                  {formatValue(v)}
-                </text>
-              )}
+              <path d={roundedTopRect(x, panelH - h, barW, h, 4)} fill="var(--viz-s1)" />
+              <text x={x + barW / 2} y={panelH - h - 6 * scale} textAnchor="middle" className={VALUE_CLASS} style={LABEL_HALO}>
+                {formatValue(v)}
+              </text>
             </g>
           );
         })}
-        {months.map((m, i) => (
-          <text
-            key={`x-${m}`}
-            x={at(m) + bandwidth / 2}
-            y={PANEL_H + 14}
-            textAnchor="middle"
-            className={`text-[10px] ${m === currentMonth ? "fill-ink-2 font-medium" : "fill-ink-4"}`}
-          >
-            {formatMonth(m, { current: currentMonth })}
-          </text>
-        ))}
+        {months.map(
+          (m, i) =>
+            xLabels[i] != null && (
+              <text
+                key={`x-${m}`}
+                x={at(m) + bandwidth / 2}
+                y={panelH + 14 * scale}
+                textAnchor="middle"
+                className={`text-3xs ${m === currentMonth ? "fill-ink-2 font-medium" : "fill-ink-4"}`}
+                style={LABEL_HALO}
+              >
+                {xLabels[i]}
+              </text>
+            )
+        )}
       </svg>
       <Tooltip state={tooltip.state} />
     </div>
@@ -120,10 +123,18 @@ export function Leverage({ data, loading, refetching }: { data: InsightsResponse
 
   const activityByMonth = new Map(data.activity.map((a) => [a.month, a.activeMs]));
   const spendByMonth = new Map<string, number | null>();
+  // `hasRows`, tracked separately from the summed value: a month with real
+  // usage rows that are all unpriced still HAD activity, so its Spend cell
+  // reads "unpriced" (`formatUsd(null)`), while a month with no rows at all
+  // reads "-" like every other empty cell in the same row (reviewer finding,
+  // B18: "C11 hours '-' but spend '$0.00'" -- the old `rows.length === 0 ? 0`
+  // branch gave an inactive month the same "$0.00" as a real zero-cost one).
+  const monthHasRows = new Map<string, boolean>();
   for (const month of data.months) {
     const rows = data.byMonthModel.filter((r) => r.month === month);
     const priced = rows.filter((r) => r.costUsd != null);
-    spendByMonth.set(month, rows.length === 0 ? 0 : priced.length ? priced.reduce((s, r) => s + r.costUsd!, 0) : null);
+    monthHasRows.set(month, rows.length > 0);
+    spendByMonth.set(month, priced.length ? priced.reduce((s, r) => s + r.costUsd!, 0) : null);
   }
 
   const monthsWithEnough = data.months.filter((m) => (activityByMonth.get(m) ?? 0) / 3_600_000 >= MIN_ACTIVE_HOURS);
@@ -145,7 +156,7 @@ export function Leverage({ data, loading, refetching }: { data: InsightsResponse
       columns={[
         { key: "month", label: "Month", render: (m) => formatMonth(m, { current: data.currentMonth, withYear: true }) },
         { key: "hours", label: "Active hours", numeric: true, render: (m) => (activeHours[data.months.indexOf(m)] != null ? activeHours[data.months.indexOf(m)]!.toFixed(0) : "-") },
-        { key: "spend", label: "Spend", numeric: true, render: (m) => formatUsd(spendByMonth.get(m) ?? 0) },
+        { key: "spend", label: "Spend", numeric: true, render: (m) => orDash(monthHasRows.get(m) ?? false, formatUsd(spendByMonth.get(m) ?? null)) },
         {
           key: "perHour",
           label: "$/active hour",

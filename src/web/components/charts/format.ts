@@ -36,6 +36,19 @@ export function costCellText(costUsd: number | null, unpricedTokens: number): { 
   return { text: formatUsdExact(costUsd) };
 }
 
+/** "-" for a month with no usage rows at all; the caller's own already-
+ *  formatted text otherwise. Every per-month table on the Insights page used
+ *  to reach for its own `?? 0` fallback when a month had no matching row,
+ *  which reads as a real, priced "$0.00" -- indistinguishable from a month
+ *  that DID have activity summing to exactly zero (reviewer finding, B18:
+ *  "Total '-' but family cells '$0.00' in the same row", four different
+ *  empty-month spellings across C3/C5/C6/C11's tables). Takes the rendered
+ *  text rather than a raw number so it works for a currency cell, a percent
+ *  cell, or a plain count alike. */
+export function orDash(hasMonthRow: boolean, text: string): string {
+  return hasMonthRow ? text : "-";
+}
+
 export function formatPercent(frac: number, digits = 0): string {
   return `${(frac * 100).toFixed(digits)}%`;
 }
@@ -52,12 +65,14 @@ export function formatMonth(month: string, opts: { current?: string; withYear?: 
   return month === opts.current ? `${label} MTD` : `${label}${withYear}`;
 }
 
-/** Neutral month-over-month delta, e.g. "+66%" / "-12%" / "flat". Spend growth
- *  is not a status (§5), so this never carries a color -- callers pair it with
- *  a plain up/down arrow glyph in text-3, never text-danger/text-done. */
+/** Neutral month-over-month delta, e.g. "↑66%" / "↓12%" / "flat". Spend growth
+ *  is not a status (§5), so this never carries a color, and the arrow itself
+ *  is the one neutral delta glyph the spec asks for (§5) -- a plain sign
+ *  ("+97%") was a second, inconsistent spelling of the same "up" the KPI
+ *  tiles already drew as "↑127%" (reviewer finding, B17). */
 export function formatDeltaPct(current: number | null, previous: number | null): string | null {
   const pct = pctDelta(current, previous);
   if (pct == null) return null;
   if (Math.abs(pct) < 0.5) return "flat";
-  return `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`;
+  return `${pct > 0 ? "↑" : "↓"}${Math.abs(pct).toFixed(0)}%`;
 }

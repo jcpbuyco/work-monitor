@@ -91,4 +91,58 @@ describe("StackedColumns", () => {
     const dimmedPath = dimmed?.querySelector("path");
     expect(dimmedPath?.getAttribute("fill")).toBe("red"); // color itself never repainted
   });
+
+  // B20 (reviewer finding): adjacent narrow columns' second lines used to run
+  // into each other with no fitting logic at all ("46 runs163 runs").
+  describe("secondLine fitting (B20)", () => {
+    it("drops trailing words until the label fits the column's own bandwidth", () => {
+      const { container } = render(
+        <StackedColumns
+          months={["2026-01", "2026-02"]}
+          series={series}
+          values={{ "2026-01": { a: 5, b: 2 }, "2026-02": { a: 5, b: 2 } }}
+          width={140} // forces a narrow bandwidth per column (~39px, fits "163" but not "163 runs")
+          plotHeight={100}
+          formatValue={(v) => String(v)}
+          secondLine={() => "163 runs"}
+        />
+      );
+      const texts = [...container.querySelectorAll("text")].map((t) => t.textContent);
+      // Never the untruncated "163 runs" at this width, and never empty --
+      // the numeric prefix alone still fits and still carries information.
+      expect(texts).not.toContain("163 runs");
+      expect(texts.some((t) => t === "163")).toBe(true);
+    });
+
+    it("keeps the full label when the column is wide enough for it", () => {
+      const { container } = render(
+        <StackedColumns
+          months={["2026-01"]}
+          series={series}
+          values={{ "2026-01": { a: 5, b: 2 } }}
+          width={800}
+          plotHeight={100}
+          formatValue={(v) => String(v)}
+          secondLine={() => "163 runs"}
+        />
+      );
+      const texts = [...container.querySelectorAll("text")].map((t) => t.textContent);
+      expect(texts).toContain("163 runs");
+    });
+
+    it("drops the label entirely rather than crashing when even the shortest word can't fit", () => {
+      const { container } = render(
+        <StackedColumns
+          months={["2026-01"]}
+          series={series}
+          values={{ "2026-01": { a: 5, b: 2 } }}
+          width={1} // pathological: no bandwidth at all
+          plotHeight={100}
+          formatValue={(v) => String(v)}
+          secondLine={() => "163 runs"}
+        />
+      );
+      expect(container.querySelector("svg")).toBeTruthy();
+    });
+  });
 });

@@ -1,11 +1,23 @@
 import { linear, niceTicks } from "./scales.ts";
-import { YAxis } from "./Axis.tsx";
+import { YAxis, yAxisGutter } from "./Axis.tsx";
+import { measureText } from "./measureText.ts";
 import { useTooltip } from "./useTooltip.ts";
-import { Tooltip } from "./Tooltip.tsx";
+import { Tooltip, TooltipRow } from "./Tooltip.tsx";
+import { useRootPx } from "../../useRootPx.ts";
+import { TICK_CLASS, VALUE_PX_AT_16, LABEL_HALO, scaleOf } from "./typography.ts";
 
 export interface StepSeries {
   month: string;
+  /** Direct end-of-line label, drawn AT the line's own endpoint -- includes
+   *  the value ("Sep MTD $5.2k"), per §6's "direct labels instead of a legend
+   *  box". */
   label: string;
+  /** The same series, named WITHOUT the value ("Sep MTD") -- the tooltip
+   *  builds its own value column instead of re-parsing `label` (reviewer
+   *  finding, B8/B14: this card's tooltip used to be a raw string with no
+   *  swatch or shared row layout, unlike every other chart's). Falls back to
+   *  `label` if omitted. */
+  shortLabel?: string;
   /** cumulative value per day-of-month, index 0 = day 1; `null` beyond the
    *  month's own length or beyond "today" for the current month. */
   values: (number | null)[];
@@ -51,12 +63,24 @@ export function StepLines({
   onHoverDay,
 }: StepLinesProps) {
   const tooltip = useTooltip();
+  const rootPx = useRootPx();
+  const scale = scaleOf(rootPx);
   const allValues = series.flatMap((s) => s.values.filter((v): v is number => v != null));
   const max = Math.max(1, ...allValues, projectionTo ?? 0);
   const ticks = niceTicks(max, 4);
   const niceMax = ticks[ticks.length - 1];
-  const scaleY = linear([0, niceMax], [plotHeight, 0]);
-  const scaleX = linear([1, DAYS], [0, width]);
+  // TOP_PAD: a few px of headroom above the plot's own y=0, so the top tick's
+  // now-centred label (Axis.tsx's YAxis, §B2) never pokes above the SVG into
+  // the card's subtitle sitting right above it (reviewer finding, B7). 14px,
+  // not 8: the top tick was still crowding the subtitle at a larger text size
+  // (reviewer finding, O2).
+  const TOP_PAD = 14 * scale;
+  const scaleY = linear([0, niceMax], [plotHeight, TOP_PAD]);
+  // A left gutter for the y-axis's own tick labels (§6/B7): without it, a
+  // tick at x=0 sat directly on top of the emphasis line's own day-1 point
+  // and the day-1 x tick underneath it (reviewer finding).
+  const gutter = yAxisGutter(ticks, formatValue, rootPx);
+  const scaleX = linear([1, DAYS], [gutter, width]);
 
   function pathFor(values: (number | null)[]): string {
     let d = "";
@@ -94,8 +118,12 @@ export function StepLines({
     for (const s of [...series].reverse()) {
       const p = lastPoint(s);
       if (!p) continue;
-      const y = scaleY(p.value) + (s.emphasis ? -8 : 4);
-      if (placed.some((py) => Math.abs(py - y) < LABEL_COLLISION_PX)) droppedLabels.add(s.month);
+      // Always ABOVE the line's own endpoint (never below, where the old
+      // context-line offset put it -- straight on top of that same line's
+      // flat trailing segment, striking the label through, reviewer finding
+      // B8/A13).
+      const y = scaleY(p.value) - 8 * scale;
+      if (placed.some((py) => Math.abs(py - y) < LABEL_COLLISION_PX * scale)) droppedLabels.add(s.month);
       else placed.push(y);
     }
   }
@@ -116,33 +144,53 @@ export function StepLines({
           const dayFloat = 1 + ((e.clientX - rect.left) / width) * (DAYS - 1);
           const day = Math.min(DAYS, Math.max(1, Math.round(dayFloat)));
           onHoverDay?.(day - 1);
-          const rows = series
-            .filter((s) => s.values[day - 1] != null)
-            .map((s) => `${s.label}: ${formatValue(s.values[day - 1]!)}`)
-            .join("\n");
-          // "Sep vs Aug +$X (+Y%)" (§6, C4) -- current month against the
-          // immediately preceding one, at this same day, was missing
-          // entirely (reviewer finding).
-          let deltaLine = "";
+          const withValue = series.filter((s) => s.values[day - 1] != null);
+          // TooltipRow, a line swatch and an exact grouped value, same shape
+          // as every other chart's tooltip on the page (reviewer finding,
+          // B8/B14): this was the one plain-string tooltip, with no swatch
+          // and a value baked into the row's own label ("Jun $960: $439",
+          // two dollar figures with nothing to tell them apart).
           const curV = emphasisSeries?.values[day - 1];
           const prevV = prevSeries?.values[day - 1];
+          let deltaRow: React.ReactNode = null;
           if (emphasisSeries && prevSeries && curV != null && prevV != null && prevV !== 0) {
             const diff = curV - prevV;
             const pct = (diff / prevV) * 100;
-            const curName = emphasisSeries.label.split(" ")[0];
-            const prevName = prevSeries.label.split(" ")[0];
-            deltaLine = `\n${curName} vs ${prevName} ${diff >= 0 ? "+" : ""}${formatValue(diff)} (${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%)`;
+            const curName = emphasisSeries.shortLabel ?? emphasisSeries.label;
+            const prevName = prevSeries.shortLabel ?? prevSeries.label;
+            deltaRow = (
+              <TooltipRow
+                label={`${curName} vs ${prevName}`}
+                value={`${diff >= 0 ? "+" : ""}${formatValue(diff)} (${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%)`}
+              />
+            );
           }
-          if (rows) tooltip.showFromEvent(e, <div className="whitespace-pre-line">{`Day ${day}\n${rows}${deltaLine}`}</div>);
+          if (withValue.length > 0) {
+            tooltip.showFromEvent(
+              e,
+              <div className="space-y-1">
+                <div className="font-medium text-ink">Day {day}</div>
+                {withValue.map((s) => (
+                  <TooltipRow
+                    key={s.month}
+                    swatch={s.emphasis ? "var(--viz-s1)" : "var(--viz-context)"}
+                    label={s.shortLabel ?? s.label}
+                    value={formatValue(s.values[day - 1]!)}
+                  />
+                ))}
+                {deltaRow}
+              </div>
+            );
+          }
         }}
         onMouseLeave={() => {
           onHoverDay?.(null);
           tooltip.hide();
         }}
       >
-        <YAxis ticks={ticks} y={scaleY} width={width} format={formatValue} />
+        <YAxis ticks={ticks} y={scaleY} width={width} format={formatValue} x0={gutter} />
         {ticksX.map((d) => (
-          <text key={d} x={scaleX(d)} y={plotHeight + 14} textAnchor="middle" className="fill-ink-4 text-[10px]">
+          <text key={d} x={scaleX(d)} y={plotHeight + 14 * scale} textAnchor="middle" className={TICK_CLASS} style={LABEL_HALO}>
             {d}
           </text>
         ))}
@@ -187,22 +235,58 @@ export function StepLines({
                   />
                   <circle cx={scaleX(monthLength)} cy={scaleY(projectionTo)} r={4} fill="hsl(var(--surface-1))" stroke="var(--viz-s1)" strokeWidth={1.5} />
                   {projectionLabel && (
-                    <text x={scaleX(monthLength) - 4} y={scaleY(projectionTo) - 8} textAnchor="end" className="fill-ink-3 text-[10px]">
+                    <text
+                      x={scaleX(monthLength) - 4 * scale}
+                      y={scaleY(projectionTo) - 8 * scale}
+                      textAnchor="end"
+                      className="fill-ink-3 text-3xs tabular-nums"
+                      style={LABEL_HALO}
+                    >
                       {projectionLabel}
                     </text>
                   )}
                 </>
               )}
-              {!droppedLabels.has(s.month) && (
-                <text
-                  x={scaleX(lastIdx + 1) - 4}
-                  y={scaleY(lastValue) + (s.emphasis ? -8 : 4)}
-                  textAnchor="end"
-                  className={`text-[10px] ${s.emphasis ? "fill-ink-2 font-medium" : "fill-ink-3"}`}
-                >
-                  {s.label}
-                </text>
-              )}
+              {!droppedLabels.has(s.month) &&
+                (() => {
+                  // Above the line's own endpoint: the old context-line
+                  // offset (+4, BELOW the point) sat right on top of that
+                  // line's own flat trailing segment, striking the label's
+                  // text through it (reviewer finding, B8/A13). A solid
+                  // background rect behind the glyphs, not just the
+                  // glyph-stroke halo -- the halo alone only occludes
+                  // whatever a line crosses THROUGH an actual letterform; a
+                  // line passing between glyphs (or under a wide gap like the
+                  // "$" or a thousands separator) still showed through and
+                  // struck the label, worst when a LATER series' own line
+                  // (not just this one's) happened to cross this label's
+                  // general area (reviewer finding, O2). Same convention as
+                  // `DotStrip`'s outlier labels.
+                  const labelX = scaleX(lastIdx + 1) - 4 * scale;
+                  const labelY = scaleY(lastValue) - 8 * scale;
+                  const w = measureText(s.label, VALUE_PX_AT_16 * scale, s.emphasis ? 500 : 400);
+                  return (
+                    <g>
+                      <rect
+                        x={labelX - w - 3 * scale}
+                        y={labelY - 9 * scale}
+                        width={w + 6 * scale}
+                        height={12 * scale}
+                        rx={3}
+                        className="fill-surface-1"
+                        fillOpacity={0.9}
+                      />
+                      <text
+                        x={labelX}
+                        y={labelY}
+                        textAnchor="end"
+                        className={`text-2xs tabular-nums ${s.emphasis ? "fill-ink-2 font-medium" : "fill-ink-3"}`}
+                      >
+                        {s.label}
+                      </text>
+                    </g>
+                  );
+                })()}
             </g>
           );
         })}

@@ -1,6 +1,7 @@
 import type { InsightsResponse } from "../../../shared/insights.ts";
 import { formatUsd, formatTokens, prettyModel } from "../../cost.ts";
 import { HBars } from "../charts/HBars.tsx";
+import { Legend } from "../charts/Legend.tsx";
 import { TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
@@ -10,7 +11,7 @@ import { useChartWidth } from "../charts/useChartWidth.ts";
  *  output price, for every model with meaningful lifetime output. */
 export function PriceOfOutput({ data, loading, refetching }: { data: InsightsResponse; loading?: boolean; refetching?: boolean }) {
   const [view, setView] = useChartView();
-  const [ref, width] = useChartWidth<HTMLDivElement>();
+  const [ref, width, height] = useChartWidth<HTMLDivElement>();
 
   const rows = [...data.models]
     .map((m) => {
@@ -41,17 +42,18 @@ export function PriceOfOutput({ data, loading, refetching }: { data: InsightsRes
     <ChartCard
       title="Price of output by model"
       subtitle="All-in cost per 1M output tokens, context included, against list price"
+      // The shared `Legend` (with `kind: "line"` for the reference tick), not
+      // a hand-rolled `<div>` -- this was the one legend on the page built
+      // from scratch instead of the primitive every other multi-mark chart
+      // already uses, so it alone lacked `whitespace-nowrap` and wrapped
+      // mid-label at phone width + a large text size (reviewer finding, B10).
       legend={
-        <div className="flex items-center gap-4 text-2xs text-ink-3">
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden="true" className="inline-block h-2 w-2 rounded-sm" style={{ background: "var(--viz-s1)" }} />
-            all-in $ per 1M output
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden="true" className="inline-block h-0 w-2.5 border-t-2" style={{ borderColor: "var(--viz-context)" }} />
-            list output price
-          </span>
-        </div>
+        <Legend
+          entries={[
+            { id: "allin", label: "all-in $ per 1M output", color: "var(--viz-s1)" },
+            { id: "list", label: "list output price", color: "var(--viz-context)", kind: "line" },
+          ]}
+        />
       }
       height={rows.length * 28 + 24}
       loading={loading}
@@ -64,6 +66,7 @@ export function PriceOfOutput({ data, loading, refetching }: { data: InsightsRes
       <div ref={ref} className="h-full">
         <HBars
           width={width}
+          height={height}
           formatAxis={(v) => `$${v}`}
           rows={rows.map((r) => ({
             id: r.model,

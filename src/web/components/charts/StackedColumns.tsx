@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { band, linear, niceTicks } from "./scales.ts";
-import { YAxis } from "./Axis.tsx";
+import { YAxis, yAxisGutter, thinBandLabels } from "./Axis.tsx";
 import { measureText } from "./measureText.ts";
 import { useTooltip } from "./useTooltip.ts";
 import { Tooltip } from "./Tooltip.tsx";
+import { useRootPx } from "../../useRootPx.ts";
+import { TICK_CLASS, VALUE_CLASS, VALUE_PX_AT_16, TICK_PX_AT_16, LABEL_HALO, scaleOf, xAxisBandPx } from "./typography.ts";
 
 export interface StackedSeries {
   id: string;
@@ -45,6 +47,27 @@ const MAX_BAR = 24;
 const GAP = 2;
 const RADIUS = 4;
 
+/** One fitted form for EVERY column's second line, not each column fitted
+ *  independently -- dropping trailing words per-column in isolation let one
+ *  narrow column read "163" while its neighbour, a few px wider, still fit
+ *  the full "46 runs": two spellings of the same unit in one row (reviewer
+ *  finding, R4). Finds the fewest trailing words to drop so the WIDEST
+ *  raw label across the whole row fits every column's shared bandwidth, then
+ *  applies that same drop count to all of them; a `null` entry (no second
+ *  line that month) stays `null`. */
+function uniformSecondLines(raw: (string | null)[], maxWidth: number, px: number): (string | null)[] {
+  const present = raw.filter((r): r is string => r != null);
+  if (present.length === 0) return raw;
+  const maxWords = Math.max(...present.map((r) => r.split(" ").length));
+  for (let drop = 0; drop < maxWords; drop++) {
+    const widest = Math.max(...present.map((r) => measureText(r.split(" ").slice(0, Math.max(1, r.split(" ").length - drop)).join(" "), px)));
+    if (widest <= maxWidth || drop === maxWords - 1) {
+      return raw.map((r) => (r == null ? null : r.split(" ").slice(0, Math.max(1, r.split(" ").length - drop)).join(" ")));
+    }
+  }
+  return raw;
+}
+
 /** Stacked columns: fixed segment order (never re-sorted), a max 24px column
  *  width, a 2px surface-color gap between segments, a 4px rounded top ONLY on
  *  the topmost visible (>0) segment, square at the baseline, and a total
@@ -71,19 +94,49 @@ export function StackedColumns({
 }: StackedColumnsProps) {
   const [focused, setFocused] = useState<string | null>(null);
   const tooltip = useTooltip();
+  const rootPx = useRootPx();
+  const scale = scaleOf(rootPx);
   const totals = months.map((m) => series.reduce((s, sr) => s + (values[m]?.[sr.id] ?? 0), 0));
   const max = Math.max(1, ...totals, projection?.to ?? 0);
   const ticks = niceTicks(max, 4);
   const niceMax = ticks[ticks.length - 1];
-  const scaleY = linear([0, niceMax], [plotHeight, 0]);
-  const { at, bandwidth } = band(months, [0, width], 0.35);
+  // TOP_PAD (§B7): a few px of headroom above y=0 so a near-max column's cap
+  // total, drawn just above its bar, never crowds the card's own subtitle
+  // sitting right above the SVG. A column that draws BOTH a cap total AND an
+  // `aboveLabel` (C6's workflow-share %, stacked a second row higher still)
+  // needs noticeably more of it: for a near-max column, the share label's own
+  // target position sits above y=0 and gets floored back down onto the SAME
+  // row as the total it's supposed to sit above -- this used to be a fixed
+  // 8px regardless of whether a second label was even stacked up there
+  // (reviewer finding, O7/R5-adjacent: "'$5.3k' x '48%'" collided at every
+  // width, not just a narrow one, because the floor -- not a width-driven
+  // wrap -- was the actual cause).
+  const TOP_PAD = (showTotal && aboveLabel ? 40 : 8) * scale;
+  const scaleY = linear([0, niceMax], [plotHeight, TOP_PAD]);
+  // A left gutter for the y-axis's own tick labels (§6/B7): without it, a
+  // tick drawn at x=0 sat directly on top of the first column's cap total or
+  // ran into the plot's own baseline, worst at phone width (reviewer
+  // finding, "$0$11").
+  const gutter = yAxisGutter(ticks, formatAxis, rootPx);
+  const { at, step, bandwidth } = band(months, [gutter, width], 0.35);
   const barWidth = Math.min(MAX_BAR, bandwidth);
+  const currentIndex = currentMonth != null ? months.indexOf(currentMonth) : undefined;
+  const tickPx = TICK_PX_AT_16 * scale;
+  const bandLabels = thinBandLabels(months.map(formatMonth), currentIndex, step, tickPx, scale);
+  const secondLineRaw = secondLine ? months.map((m) => secondLine(m)) : null;
+  const uniformSecondLine = secondLineRaw ? uniformSecondLines(secondLineRaw, bandwidth, tickPx) : null;
+  // The axis band (§R5) has to fit whichever is taller: the caller's own
+  // budget, or two lines of the CURRENT (scaled) tick size -- a flat 32px
+  // default fit the old fixed 9/10px labels, but a second line at a larger
+  // text size painted 5-8px past a fixed band into the card's own bottom
+  // padding below the SVG (reviewer finding, R5).
+  const effectiveAxisBand = Math.max(axisBand, xAxisBandPx(rootPx, uniformSecondLine ? 2 : 1));
 
   return (
     <div className="relative">
-    <svg width={width} height={plotHeight + axisBand} className="overflow-visible">
-      <YAxis ticks={ticks} y={scaleY} width={width} format={formatAxis} />
-      {months.map((month) => {
+    <svg width={width} height={plotHeight + effectiveAxisBand} className="overflow-visible">
+      <YAxis ticks={ticks} y={scaleY} width={width} format={formatAxis} x0={gutter} />
+      {months.map((month, mi) => {
         const x = at(month) + (bandwidth - barWidth) / 2;
         let cursor = plotHeight;
         const segs = series.map((s) => {
@@ -132,8 +185,8 @@ export function StackedColumns({
               const dimmed = isolated != null && isolated !== sg.s.id;
               const isTop = sg.s.id === topId;
               const label = formatValue(sg.v);
-              const labelW = measureText(label, 10);
-              const fits = sg.h >= 18 && labelW + 8 <= barWidth;
+              const labelW = measureText(label, VALUE_PX_AT_16 * scale);
+              const fits = sg.h >= 18 * scale && labelW + 8 * scale <= barWidth;
               const clickable = onClickSegment != null;
               return (
                 <g
@@ -170,9 +223,9 @@ export function StackedColumns({
                   {fits && (
                     <text
                       x={x + barWidth / 2}
-                      y={sg.y + sg.h / 2 + 3}
+                      y={sg.y + sg.h / 2 + 3 * scale}
                       textAnchor="middle"
-                      className="pointer-events-none fill-white text-[9px] tabular-nums"
+                      className="pointer-events-none fill-white text-2xs font-medium tabular-nums"
                     >
                       {label}
                     </text>
@@ -193,27 +246,44 @@ export function StackedColumns({
                   strokeWidth={1}
                   rx={RADIUS}
                 />
-                <text x={x + barWidth / 2} y={scaleY(projection.to) - 5} textAnchor="middle" className="fill-ink-3 text-[9px]">
+                <text
+                  x={x + barWidth / 2}
+                  y={scaleY(projection.to) - 5 * scale}
+                  textAnchor="middle"
+                  className="fill-ink-3 text-3xs"
+                  style={LABEL_HALO}
+                >
                   {projection.label}
                 </text>
               </g>
             )}
             {showTotal && total > 0 && (
-              <text x={x + barWidth / 2} y={scaleY(total) - 6} textAnchor="middle" className="fill-ink-2 text-[10px] tabular-nums font-medium">
+              <text x={x + barWidth / 2} y={scaleY(total) - 6 * scale} textAnchor="middle" className={VALUE_CLASS} style={LABEL_HALO}>
                 {formatValue(total)}
               </text>
             )}
-            <text
-              x={at(month) + bandwidth / 2}
-              y={plotHeight + 14}
-              textAnchor="middle"
-              className={`text-[10px] ${isCurrent ? "fill-ink-2 font-medium" : "fill-ink-4"}`}
-            >
-              {formatMonth(month)}
-            </text>
-            {secondLine?.(month) && (
-              <text x={at(month) + bandwidth / 2} y={plotHeight + 26} textAnchor="middle" className="fill-ink-4 text-[9px] tabular-nums">
-                {secondLine(month)}
+            {bandLabels[mi] != null && (
+              <text
+                x={at(month) + bandwidth / 2}
+                y={plotHeight + 14 * scale}
+                textAnchor="middle"
+                className={`text-3xs ${isCurrent ? "fill-ink-2 font-medium" : "fill-ink-4"}`}
+                style={LABEL_HALO}
+              >
+                {bandLabels[mi]}
+              </text>
+            )}
+            {/* Only under a SHOWN primary label (never floating under a month
+               whose own tick was thinned away above) -- and using the row's
+               one uniformly-fitted form (§R4), not a per-column independent
+               fit. */}
+            {bandLabels[mi] != null && uniformSecondLine?.[mi] != null && (
+              // 30, not 26: a 12px line-to-line gap (scaled) was tight enough
+              // that a tall glyph in the second line (the "↑"/"↓" delta
+              // arrows) still clipped into the first line's own text above it
+              // by a few px (reviewer finding, R5-adjacent).
+              <text x={at(month) + bandwidth / 2} y={plotHeight + 30 * scale} textAnchor="middle" className={TICK_CLASS} style={LABEL_HALO}>
+                {uniformSecondLine[mi]}
               </text>
             )}
             {aboveLabel?.(month) && (
@@ -224,9 +294,27 @@ export function StackedColumns({
                 // none, and the old fixed -20 offset plus a y=10 floor is
                 // exactly what pinned every workflow-share label to the same
                 // row as the (now-removed) "100%" caps (reviewer finding).
-                y={Math.max(10, scaleY(total) - (showTotal && total > 0 ? 20 : 6))}
+                // 32, not 20: at a larger scaled text size the cap-total
+                // label's own (also-scaled) line height ate into the old
+                // margin, overlapping this label's bottom edge by a few px
+                // (reviewer finding, O7). Measured empirically against the
+                // real rendered glyph bounding boxes, not just the baseline
+                // math, since a `<text>` element's ink extends well above and
+                // below its own `y` (no `dominantBaseline` override here).
+                //
+                // A small ABSOLUTE floor (just clearing the SVG's own top
+                // edge), not one tied to `TOP_PAD` -- `TOP_PAD` already grew
+                // to give a near-max column's stacked total+share pair real
+                // headroom (so their un-floored positions land comfortably
+                // apart on their own), and flooring at `TOP_PAD` itself
+                // undid exactly that: it pulled a SMALLER, still-legitimately
+                // -placed target back up to sit almost on top of its own
+                // total, which is the collision this floor exists to prevent
+                // in the first place (regression found while re-verifying).
+                y={Math.max(4 * scale, scaleY(total) - (showTotal && total > 0 ? 32 * scale : 6 * scale))}
                 textAnchor="middle"
-                className="fill-ink-3 text-[9px] font-medium"
+                className="fill-ink-3 text-3xs font-medium"
+                style={LABEL_HALO}
               >
                 {aboveLabel(month)}
               </text>

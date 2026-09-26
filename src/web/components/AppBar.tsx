@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { State, LiveWorkflow } from "../types.ts";
 import { useTheme } from "../useTheme.ts";
 import { useTextSize } from "../useTextSize.ts";
@@ -47,6 +47,7 @@ function Count({
   escalate = false,
   pending = false,
   hideBelowSm = false,
+  compact = false,
 }: {
   testId: string;
   kind: GlyphKind;
@@ -65,6 +66,17 @@ function Count({
    *  node, so it changes nothing about what `textContent` reads at either
    *  width. */
   hideBelowSm?: boolean;
+  /** §5.2/A4 finding fix: at 390 width and a large text size, "N working" +
+   *  "N needs you" alone (both always shown, never `hideBelowSm`) are wider
+   *  than the whole viewport EVEN AFTER the desktop control cluster has
+   *  already collapsed to the "..." overflow button -- collapsing that
+   *  cluster alone assumed the counts themselves always fit, which stopped
+   *  being true once rem-scaled text made a "working"/"needs you" chip wide
+   *  enough on its own. Drops the text label to icon+number only, the exact
+   *  fallback the reviewer's own fix text names ("collapse the chip labels
+   *  to icon-plus-count"); the full label survives in `aria-label`/`title`
+   *  so nothing is lost for a screen reader or an on-hover glance. */
+  compact?: boolean;
 }) {
   // Tone IS the hierarchy: a zero count recedes on its own, with no branch in
   // the markup. The one escalation in the whole app is a non-zero needs-you -
@@ -76,13 +88,17 @@ function Count({
         ? "text-ink-2"
         : "text-ink-4";
   const display = hideBelowSm ? "hidden sm:inline-flex" : "inline-flex";
+  const nText = pending ? "…" : String(n);
+  const fullText = `${nText} ${label}`;
   return (
     <span
       data-testid={testId}
       className={`am-count ${display} shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${tone}`}
+      aria-label={compact ? fullText : undefined}
+      title={compact ? fullText : undefined}
     >
       <StatusGlyph kind={kind} animate={false} />
-      <span>{pending ? "…" : n} {label}</span>
+      <span>{compact ? nText : fullText}</span>
     </span>
   );
 }
@@ -128,12 +144,65 @@ export function AppBar({
   lastMessageAt?: number | null;
 }) {
   const { theme, toggle } = useTheme();
-  const { inc, dec, canInc, canDec } = useTextSize();
+  const { size: textSize, inc, dec, canInc, canDec } = useTextSize();
   const { on: motionOn, toggle: toggleMotion } = useMotion();
   const [overflowOpen, setOverflowOpen] = useState(false);
   const working = state.sessions.filter((s) => s.status === "working").length;
   const needsYou = state.sessions.filter((s) => s.status === "needs_you").length;
   const todoCount = state.todos.filter((t) => t.status === "todo").length;
+
+  // §5.2 finding fix: the desktop control cluster used to reveal at a single
+  // static `sm:` breakpoint no matter the text size, so at a wider viewport
+  // but a larger font (768/22, 1024/18, 1280/22 ...) the counts group and the
+  // nav links no longer both fit -- counts overflowed their own shrunken box
+  // and painted directly on top of "Insights"/"Workflows" instead of wrapping
+  // or clipping. `compactLevel` instead reflects whether the trailing cluster
+  // ACTUALLY fits, measured live, degrading in two steps at whatever width/
+  // text-size combination needs it, rather than one hardcoded viewport width:
+  //   0 - everything inline (desktop controls, full "N working" labels)
+  //   1 - desktop controls collapse behind the "..." overflow button
+  //   2 - the always-shown counts ALSO drop to icon+number (A4 finding: even
+  //       with the controls already gone, "N working" + "N needs you" alone
+  //       out-measure a 390px header once text is scaled up far enough --
+  //       collapsing the controls cluster alone assumed the counts themselves
+  //       always fit).
+  const MAX_COMPACT_LEVEL = 2;
+  const [compactLevel, setCompactLevel] = useState(0);
+  const headerRef = useRef<HTMLElement>(null);
+  const trailingRef = useRef<HTMLDivElement>(null);
+  const [headerWidth, setHeaderWidth] = useState(0);
+
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setHeaderWidth(Math.round(entry.contentRect.width));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Re-attempt the FULL (level-0) layout whenever the header's own width or
+  // the text-size setting changes -- compact content is small by
+  // construction, so once compacted it always "fits" on its own and would
+  // never notice a later resize back to a comfortable width without this.
+  useLayoutEffect(() => {
+    setCompactLevel(0);
+  }, [headerWidth, textSize]);
+
+  // ...then, after that reset (or any other render), measure the
+  // now-fully-rendered trailing cluster and escalate one level if it still
+  // overflows its own flexed box. Runs on every render (no dependency array),
+  // so a render that escalates gets re-measured on the render it causes,
+  // climbing one level at a time until it fits or the max level is reached --
+  // the effect above is what re-opens the window to shrink back down.
+  useLayoutEffect(() => {
+    const el = trailingRef.current;
+    if (!el || compactLevel >= MAX_COMPACT_LEVEL) return;
+    if (el.scrollWidth > el.clientWidth + 1) setCompactLevel((l) => l + 1);
+  });
+  const compact = compactLevel >= 1;
+  const compactCounts = compactLevel >= 2;
 
   // Rendered twice (desktop cluster, phone overflow panel) so the two layouts
   // never fight over the same DOM node - see the component doc below.
@@ -201,7 +270,7 @@ export function AppBar({
 
   return (
     <>
-    <header className="sticky top-0 z-20 -mx-3 flex h-12 items-center gap-2 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:gap-4 sm:px-6">
+    <header ref={headerRef} className="sticky top-0 z-20 -mx-3 flex h-12 items-center gap-2 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:gap-4 sm:px-6">
       <a
         href="#/"
         data-press
@@ -220,55 +289,66 @@ export function AppBar({
 
       <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-weak" />
 
-      <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-        {/* keyed on the COUNT only - never on the 1Hz clock (§5.5) */}
-        <Count key={`w-${working}`} testId="appbar-count-working" kind="working" label="working" n={working} pending={!ready} />
-        <Count
-          key={`n-${needsYou}`}
-          testId="appbar-count-needs-you"
-          kind="needs_you"
-          label="needs you"
-          n={needsYou}
-          escalate
-          pending={!ready}
-        />
-        <Count
-          key={`t-${todoCount}`}
-          testId="appbar-count-todo"
-          kind="todo"
-          label="to do"
-          n={todoCount}
-          pending={!ready}
-          hideBelowSm
-        />
-      </div>
+      {/* One flex-1 wrapper around counts + the desktop/overflow pair, so its
+          own `scrollWidth` vs `clientWidth` (measured above) reflects whether
+          BOTH groups together fit next to the fixed-width brand -- the thing
+          that actually determines whether counts spill onto the nav links,
+          rather than a viewport-width breakpoint that can't see text-size. */}
+      <div ref={trailingRef} data-testid="appbar-trailing" className="flex min-w-0 flex-1 items-center justify-between gap-2">
+        <div className="flex shrink-0 items-center gap-2 overflow-hidden sm:gap-4">
+          {/* keyed on the COUNT only - never on the 1Hz clock (§5.5) */}
+          <Count key={`w-${working}`} testId="appbar-count-working" kind="working" label="working" n={working} pending={!ready} compact={compactCounts} />
+          <Count
+            key={`n-${needsYou}`}
+            testId="appbar-count-needs-you"
+            kind="needs_you"
+            label="needs you"
+            n={needsYou}
+            escalate
+            pending={!ready}
+            compact={compactCounts}
+          />
+          <Count
+            key={`t-${todoCount}`}
+            testId="appbar-count-todo"
+            kind="todo"
+            label="to do"
+            n={todoCount}
+            pending={!ready}
+            compact={compactCounts}
+            hideBelowSm
+          />
+        </div>
 
-      {/* Desktop: every control inline. Phone (< sm): collapsed behind a
-          single "⋯" toggle (§5.2) - the SAME controls render a second time,
-          conditionally, in the panel below; they never coexist unless the
-          panel is actually open, so no test (or screen reader, thanks to the
-          CSS `hidden` this relies on in a real browser) ever sees a dupe. */}
-      <div className="ml-auto hidden items-center gap-1 sm:flex">{controls}</div>
+        {/* Desktop (fits): every control inline. Compact (doesn't fit, at
+            whatever width/text-size combination that turns out to be):
+            collapsed behind a single "⋯" toggle (§5.2) - the SAME controls
+            render a second time, conditionally, in the panel below; they
+            never coexist unless the panel is actually open, so no test (or
+            screen reader, thanks to the `hidden` class this relies on in a
+            real browser) ever sees a dupe. */}
+        <div className={compact ? "hidden" : "flex shrink-0 items-center gap-1"}>{controls}</div>
 
-      <div className="relative ml-auto sm:hidden">
-        <button
-          type="button"
-          data-press
-          onClick={() => setOverflowOpen((v) => !v)}
-          aria-label="More controls"
-          aria-expanded={overflowOpen}
-          className={`${GHOST} text-ink-3`}
-        >
-          <span aria-hidden="true">⋯</span>
-        </button>
-        {overflowOpen && (
-          <div
-            data-testid="appbar-overflow-panel"
-            className="absolute right-0 top-full z-30 mt-1 flex w-48 flex-col items-stretch gap-1 rounded-md border-hairline border-border bg-surface-1 p-1.5 shadow-pop"
+        <div className={compact ? "relative shrink-0" : "relative hidden shrink-0"}>
+          <button
+            type="button"
+            data-press
+            onClick={() => setOverflowOpen((v) => !v)}
+            aria-label="More controls"
+            aria-expanded={overflowOpen}
+            className={`${GHOST} text-ink-3`}
           >
-            {controls}
-          </div>
-        )}
+            <span aria-hidden="true">⋯</span>
+          </button>
+          {overflowOpen && (
+            <div
+              data-testid="appbar-overflow-panel"
+              className="absolute right-0 top-full z-30 mt-1 flex w-48 flex-col items-stretch gap-1 rounded-md border-hairline border-border bg-surface-1 p-1.5 shadow-pop"
+            >
+              {controls}
+            </div>
+          )}
+        </div>
       </div>
     </header>
     {/* §5.2 finding fix: was Board-only, so the Cost and Workflows pages -

@@ -30,15 +30,21 @@ export function StatTile({
 }) {
   return (
     <div className="rounded-lg border-hairline border-border bg-surface-1 p-3">
-      <div className="flex items-center gap-1">
-        <span className="text-2xs text-ink-3">{label}</span>
+      <div className="flex min-w-0 items-center gap-1">
+        {/* truncate + title, not free wrapping: a 2-line label ("Projected
+           month end") used to push its OWN value a line lower than the
+           other tiles in the same row, breaking the row's shared baseline
+           (reviewer finding, A16). */}
+        <span className="min-w-0 truncate text-2xs text-ink-3" title={label}>
+          {label}
+        </span>
         {info && (
-          <span aria-hidden="true" title={info} className="cursor-help text-3xs text-ink-4">
+          <span aria-hidden="true" title={info} className="shrink-0 cursor-help text-3xs text-ink-4">
             ⓘ
           </span>
         )}
       </div>
-      <div className="mt-1 text-xl font-semibold text-ink">{value}</div>
+      <div className="mt-1 whitespace-nowrap text-xl font-semibold text-ink">{value}</div>
       {deltas && deltas.length > 0 && (
         <div className="mt-1 space-y-0.5">
           {deltas.map((d, i) => (

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { InsightsResponse } from "../../../shared/insights.ts";
 import { formatUsd, formatTokens } from "../../cost.ts";
-import { compactUsd, formatMonth } from "../charts/format.ts";
+import { compactUsd, formatMonth, orDash } from "../charts/format.ts";
 import { TOKEN_CLASS_VAR, TOKEN_CLASS_ORDER, TOKEN_CLASS_LABEL } from "../charts/palette.ts";
 import { StackedColumns } from "../charts/StackedColumns.tsx";
 import { Legend } from "../charts/Legend.tsx";
@@ -9,6 +9,8 @@ import { TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
 import { useChartWidth } from "../charts/useChartWidth.ts";
+import { xAxisBandPx } from "../charts/typography.ts";
+import { useRootPx } from "../../useRootPx.ts";
 import { Segmented } from "../primitives.tsx";
 
 type Mode = "absolute" | "share";
@@ -20,6 +22,7 @@ export function TokenClass({ data, loading, refetching }: { data: InsightsRespon
   const [view, setView] = useChartView();
   const [isolated, setIsolated] = useState<string | null>(null);
   const [ref, width] = useChartWidth<HTMLDivElement>();
+  const rootPx = useRootPx();
 
   const byMonth = new Map(data.byMonthTokenClass.map((r) => [r.month, r]));
   const values: Record<string, Record<string, number>> = {};
@@ -67,17 +70,20 @@ export function TokenClass({ data, loading, refetching }: { data: InsightsRespon
       rows={data.months}
       columns={[
         { key: "month", label: "Month", render: (m) => formatMonth(m, { current: data.currentMonth, withYear: true }) },
-        { key: "cacheRead", label: "Cache read", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.cacheReadUsd ?? 0) },
-        { key: "cacheWrite", label: "Cache write", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.cacheWriteUsd ?? 0) },
-        { key: "output", label: "Output", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.outputUsd ?? 0) },
-        { key: "input", label: "Input", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.inputUsd ?? 0) },
+        // "-" for a month with no token-class rows at all, not "$0.00"
+        // (reviewer finding, B18): `!!byMonth.get(m)` is true only when
+        // there was real data that month.
+        { key: "cacheRead", label: "Cache read", numeric: true, render: (m) => orDash(!!byMonth.get(m), formatUsd(byMonth.get(m)?.cacheReadUsd ?? 0)) },
+        { key: "cacheWrite", label: "Cache write", numeric: true, render: (m) => orDash(!!byMonth.get(m), formatUsd(byMonth.get(m)?.cacheWriteUsd ?? 0)) },
+        { key: "output", label: "Output", numeric: true, render: (m) => orDash(!!byMonth.get(m), formatUsd(byMonth.get(m)?.outputUsd ?? 0)) },
+        { key: "input", label: "Input", numeric: true, render: (m) => orDash(!!byMonth.get(m), formatUsd(byMonth.get(m)?.inputUsd ?? 0)) },
         {
           key: "total",
           label: "Total",
           numeric: true,
           render: (m) => {
             const r = byMonth.get(m);
-            return formatUsd(r ? r.cacheReadUsd + r.cacheWriteUsd + r.outputUsd + r.inputUsd : 0);
+            return orDash(!!r, formatUsd(r ? r.cacheReadUsd + r.cacheWriteUsd + r.outputUsd + r.inputUsd : 0));
           },
         },
         {
@@ -100,7 +106,7 @@ export function TokenClass({ data, loading, refetching }: { data: InsightsRespon
       title="Cost by token class"
       subtitle={`About ${contextShare.toFixed(0)}% of spend is context, not output`}
       legend={<Legend entries={legend} isolated={isolated} onToggle={setIsolated} />}
-      height={220 + 32}
+      height={220 + xAxisBandPx(rootPx, 1) + 12}
       loading={loading}
       refetching={refetching}
       view={view}

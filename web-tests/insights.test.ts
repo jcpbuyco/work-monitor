@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { cumulativeWithCarry, pctDelta, calendarLayout, sparklineFrom, daysInMonth, ymd } from "../src/web/insights.ts";
-import { formatDeltaPct } from "../src/web/components/charts/format.ts";
+import { formatDeltaPct, orDash } from "../src/web/components/charts/format.ts";
 import { niceTicks, logTicks, quantileEdges, binOf } from "../src/web/components/charts/scales.ts";
 import type { InsightsDay } from "../src/shared/insights.ts";
 
@@ -53,10 +53,25 @@ describe("pctDelta", () => {
 
 describe("formatDeltaPct", () => {
   it("follows pctDelta's comparability rule and labels tiny moves flat", () => {
-    expect(formatDeltaPct(1887, 960)).toBe("+97%");
+    // Arrow, not a sign (§5/B17): the same neutral "↑"/"↓" glyph the KPI
+    // tiles already use for a delta, not a second "+"/"-" spelling of "up".
+    expect(formatDeltaPct(1887, 960)).toBe("↑97%");
+    expect(formatDeltaPct(100, 150)).toBe("↓33%");
     expect(formatDeltaPct(960, 3)).toBeNull();
     expect(formatDeltaPct(0, 11)).toBeNull();
     expect(formatDeltaPct(100.2, 100)).toBe("flat");
+  });
+});
+
+describe("orDash", () => {
+  it("shows '-' for a month with no usage rows at all, the caller's own text otherwise", () => {
+    // reviewer finding B18: a month with no data and a month with real
+    // activity summing to exactly zero must read differently, e.g. a $0.00
+    // cache-write month next to a "-" no-activity month in the same column.
+    expect(orDash(false, "$0.00")).toBe("-");
+    expect(orDash(true, "$0.00")).toBe("$0.00");
+    expect(orDash(true, "0%")).toBe("0%");
+    expect(orDash(false, "0")).toBe("-");
   });
 });
 

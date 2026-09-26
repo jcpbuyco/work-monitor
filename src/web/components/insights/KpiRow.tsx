@@ -32,14 +32,12 @@ export function KpiRow({ data }: { data: InsightsResponse }) {
     ? firstDate.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
     : "-";
 
-  // Whole-dollar with a thousands separator for anything at least $1 (matches
-  // the hero figure's own convention), but keeps `formatUsd`'s cents for a
-  // genuinely sub-dollar harness (Cursor's $0.08) -- `formatUsdWhole` alone
-  // would round that away to "$0". The plain `formatUsd` this replaced had no
-  // separator at all, e.g. "Claude $10899.09" (reviewer finding).
-  const formatHarnessUsd = (n: number | null): string => (n != null && n > 0 && n < 1 ? formatUsd(n) : formatUsdWhole(n));
+  // `formatUsdWhole` already keeps cents for a genuinely sub-dollar harness
+  // (Cursor's $0.08) instead of rounding it away to "$0" -- the plain
+  // `formatUsd` this used to call had no thousands separator at all, e.g.
+  // "Claude $10899.09" (reviewer finding).
   const harnessLine = kpi.byHarness
-    .map((h) => `${h.harness[0].toUpperCase()}${h.harness.slice(1)} ${formatHarnessUsd(h.costUsd)}`)
+    .map((h) => `${h.harness[0].toUpperCase()}${h.harness.slice(1)} ${formatUsdWhole(h.costUsd)}`)
     .join(" · ");
 
   const mtdDeltaVsAugPoint = pct(kpi.mtdUsd, kpi.prevMonthSamePointUsd);

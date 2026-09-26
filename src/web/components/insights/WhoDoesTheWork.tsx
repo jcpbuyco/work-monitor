@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { InsightsResponse } from "../../../shared/insights.ts";
 import { formatUsd, formatTokens } from "../../cost.ts";
-import { compactUsd, formatMonth } from "../charts/format.ts";
+import { compactUsd, formatMonth, orDash } from "../charts/format.ts";
 import { KIND_VAR, KIND_ORDER, KIND_LABEL } from "../charts/palette.ts";
 import { StackedColumns } from "../charts/StackedColumns.tsx";
 import { Legend } from "../charts/Legend.tsx";
@@ -9,6 +9,8 @@ import { TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
 import { useChartWidth } from "../charts/useChartWidth.ts";
+import { xAxisBandPx } from "../charts/typography.ts";
+import { useRootPx } from "../../useRootPx.ts";
 import { Segmented } from "../primitives.tsx";
 
 type Mode = "absolute" | "share";
@@ -21,6 +23,7 @@ export function WhoDoesTheWork({ data, loading, refetching }: { data: InsightsRe
   const [view, setView] = useChartView();
   const [isolated, setIsolated] = useState<string | null>(null);
   const [ref, width] = useChartWidth<HTMLDivElement>();
+  const rootPx = useRootPx();
 
   const byMonth = new Map<string, Record<string, { costUsd: number | null; outputTokens: number }>>();
   for (const row of data.byMonthKind) {
@@ -51,11 +54,14 @@ export function WhoDoesTheWork({ data, loading, refetching }: { data: InsightsRe
       rows={data.months}
       columns={[
         { key: "month", label: "Month", render: (m) => formatMonth(m, { current: data.currentMonth, withYear: true }) },
-        { key: "main", label: "Main", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.main?.costUsd ?? 0) },
-        { key: "subagent", label: "Subagent", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.subagent?.costUsd ?? 0) },
-        { key: "workflow", label: "Workflow", numeric: true, render: (m) => formatUsd(byMonth.get(m)?.workflow?.costUsd ?? 0) },
-        { key: "share", label: "Workflow share", numeric: true, render: (m) => `${(workflowShare.get(m) ?? 0).toFixed(0)}%` },
-        { key: "runs", label: "Runs", numeric: true, render: (m) => String(runsByMonth.get(m) ?? 0) },
+        // "-" for a month with no kind-of-work rows at all, not "$0.00"/"0%"/
+        // "0" (reviewer finding, B18): `byMonth.has(m)` is true only when
+        // there was real data that month.
+        { key: "main", label: "Main", numeric: true, render: (m) => orDash(byMonth.has(m), formatUsd(byMonth.get(m)?.main?.costUsd ?? 0)) },
+        { key: "subagent", label: "Subagent", numeric: true, render: (m) => orDash(byMonth.has(m), formatUsd(byMonth.get(m)?.subagent?.costUsd ?? 0)) },
+        { key: "workflow", label: "Workflow", numeric: true, render: (m) => orDash(byMonth.has(m), formatUsd(byMonth.get(m)?.workflow?.costUsd ?? 0)) },
+        { key: "share", label: "Workflow share", numeric: true, render: (m) => orDash(byMonth.has(m), `${(workflowShare.get(m) ?? 0).toFixed(0)}%`) },
+        { key: "runs", label: "Runs", numeric: true, render: (m) => orDash(byMonth.has(m), String(runsByMonth.get(m) ?? 0)) },
       ]}
     />
   );
@@ -65,7 +71,9 @@ export function WhoDoesTheWork({ data, loading, refetching }: { data: InsightsRe
       title="Who does the work"
       subtitle="How much of monthly spend comes from orchestration rather than the main session?"
       legend={<Legend entries={legend} isolated={isolated} onToggle={setIsolated} />}
-      height={220 + 32}
+      // Always draws a "N runs" second line under the month tick (§R5): see
+      // MonthlyByModel's own comment on this same pattern.
+      height={220 + xAxisBandPx(rootPx, 2) + 12}
       loading={loading}
       refetching={refetching}
       view={view}
@@ -109,13 +117,22 @@ export function WhoDoesTheWork({ data, loading, refetching }: { data: InsightsRe
             return (
               <div className="space-y-1">
                 <div className="font-medium text-ink">{formatMonth(month, { current: data.currentMonth, withYear: true })}</div>
+                {/* One value per row (§5/B9/B14, reviewer finding: this used
+                   to pack cost, share and output tokens into one value
+                   string -- "$1,234.56 · 42% · 3.1M out" -- the only tooltip
+                   on the page doing that). The share is folded into the
+                   label instead of a fourth row, matching how the chart's
+                   own `aboveLabel` already reads this number. */}
                 {KIND_ORDER.map((k) => (
                   <TooltipRow
                     key={k}
                     swatch={KIND_VAR[k]}
-                    label={KIND_LABEL[k]}
-                    value={`${formatUsd(row[k]?.costUsd ?? 0)} · ${(((row[k]?.costUsd ?? 0) / total) * 100).toFixed(0)}% · ${formatTokens(row[k]?.outputTokens ?? 0)} out`}
+                    label={`${KIND_LABEL[k]} (${(((row[k]?.costUsd ?? 0) / total) * 100).toFixed(0)}%)`}
+                    value={formatUsd(row[k]?.costUsd ?? 0)}
                   />
+                ))}
+                {KIND_ORDER.map((k) => (
+                  <TooltipRow key={`${k}-out`} label={`${KIND_LABEL[k]} output`} value={formatTokens(row[k]?.outputTokens ?? 0)} indent />
                 ))}
                 <TooltipRow label="workflow runs" value={String(runsByMonth.get(month) ?? 0)} />
               </div>

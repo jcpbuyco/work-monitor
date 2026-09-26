@@ -84,16 +84,17 @@ export function ProjectsByMonth({ data, loading, refetching }: { data: InsightsR
         title="Projects by month"
         subtitle="Which projects consumed the budget, and when did each heat up and cool off?"
         legend={<ScaleLegend edges={edges} format={(v) => formatUsd(v)} />}
-        // Header (32px) + one ~24px row per project/fold row -- the previous
-        // 32px-per-row plus an 80px constant left 150-180px of empty space
-        // below the actual table at 1280/1600 (reviewer finding), since a
-        // `font-mono text-2xs` row with `py-1` padding renders shorter than
-        // that.
-        // Measured in a real browser: a 32px header plus ~25px per data row
-        // (borders included) -- the previous 24px-per-row estimate was just
-        // shy of that, clipping the very last row (reviewer finding, "Other"
-        // or "(no project)" depending on the data).
-        height={Math.min(480, 40 + rows.length * 25)}
+        // A loading-skeleton floor only -- this card IS a table (§6, C12: 40
+        // projects is past the categorical color cap), so its real height is
+        // however tall its rows naturally render, never a fixed px budget.
+        // The old `40 + rows.length * 25` estimate was one more px-vs-rem
+        // mismatch (rows are `font-mono text-2xs` with `py-1`, which scales
+        // with the text-size setting): it clipped the very last row into a
+        // nested vertical scroll at the default text size already, and lost
+        // several more rows at larger sizes -- the one nested scroll the spec
+        // explicitly bans on every card (reviewer finding, A5/B3).
+        height={280}
+        unboundedTable
         loading={loading}
         refetching={refetching}
         empty={rows.length === 0}
@@ -101,7 +102,11 @@ export function ProjectsByMonth({ data, loading, refetching }: { data: InsightsR
         onViewChange={setView}
         table={table}
       >
-        <div className="h-full overflow-auto">{table}</div>
+        {/* Horizontal scroll only (the sticky Project column is what makes
+            that legible), never vertical -- the table renders at its full
+            natural height and the PAGE scrolls past it like any other
+            content. */}
+        <div className="overflow-x-auto">{table}</div>
       </ChartCard>
       {/* Not inside ChartCard's `children`: that slot is unmounted in the
           Table-view branch (ChartCard renders the `table` prop instead), and

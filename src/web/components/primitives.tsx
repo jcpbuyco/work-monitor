@@ -208,9 +208,19 @@ export function MeterRow({
 /** A pulsing placeholder bar - the board's pre-`ready` skeleton (§5.2). One
  *  primitive so every skeleton row in the app pulses in lockstep and the
  *  Motion toggle governs it for free (`am-pulse` is already gated on
- *  `html.am-anim`). `w` is a Tailwind width class, e.g. `"w-24"`. */
+ *  `html.am-anim`). `w` is a Tailwind width class, e.g. `"w-24"`.
+ *
+ *  Defaults to `inline-block` so bars flow inline by default, but skips it
+ *  when the caller's own `className` already picks a display (`block`,
+ *  `flex`, ...): Tailwind's generated stylesheet orders `.inline-block`
+ *  AFTER `.block`, so a caller passing `className="mt-2 block"` to stack two
+ *  bars vertically got `inline-block`'s cascade priority regardless of
+ *  argument order, and the two sat side by side on one line instead
+ *  (reviewer finding, A12/B ...: skeleton title+subtitle pairs rendered as
+ *  one run-on line instead of stacked). */
 export function Skeleton({ w, className = "" }: { w: string; className?: string }) {
-  return <span aria-hidden="true" className={`am-pulse inline-block h-3 rounded bg-surface-3 ${w} ${className}`} />;
+  const ownDisplay = /(^|\s)(block|inline-block|flex|inline-flex|grid|inline-grid|inline|hidden)(\s|$)/.test(className);
+  return <span aria-hidden="true" className={`am-pulse h-3 rounded bg-surface-3 ${ownDisplay ? "" : "inline-block"} ${w} ${className}`} />;
 }
 
 /** Joined range control for the two pages. No `data-press`: a 3% scale on a

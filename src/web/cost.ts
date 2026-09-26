@@ -4,7 +4,11 @@
 export function formatUsd(n: number | null): string {
   if (n == null) return "unpriced";
   if (n > 0 && n < 0.01) return "<$0.01";
-  return "$" + n.toFixed(2);
+  // Thousands-grouped (`toLocaleString`, not `toFixed`): an exact table cell
+  // or tooltip value in the thousands used to print with no separator at all
+  // ("$3205.65"), the one thing that read differently from every whole-dollar
+  // figure elsewhere on the page (reviewer finding, B9).
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function formatTokens(n: number): string {
@@ -24,6 +28,11 @@ export function formatTokens(n: number): string {
  *  same "unpriced" convention as `formatUsd`. */
 export function formatUsdWhole(n: number | null): string {
   if (n == null) return formatUsd(null);
+  // A genuinely sub-dollar standalone figure (a small harness's monthly
+  // total, say) keeps `formatUsd`'s cents -- rounding it to whole dollars
+  // would print "$0" or "$1" for a real, nonzero amount (reviewer finding;
+  // previously every call site had to remember this exception itself).
+  if (n > 0 && n < 1) return formatUsd(n);
   return "$" + Math.round(n).toLocaleString("en-US");
 }
 

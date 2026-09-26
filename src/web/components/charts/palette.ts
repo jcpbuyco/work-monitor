@@ -27,12 +27,19 @@ export const KIND_LABEL: Record<WorkKind, string> = {
 
 export type TokenClass = "cacheRead" | "cacheWrite" | "output" | "input";
 
-/** Cost-by-token-class encoding (§6, C5): cache read / write / output get the
- *  three categorical slots; uncached input (usually sub-pixel) is neutral. */
+/** Cost-by-token-class encoding (§6, C5). Cache read/write -- the two
+ *  context steps this card exists to call out -- share one ramp (two steps of
+ *  the page's own sequential language, not the categorical s1/s2 slots) so
+ *  this card's blue no longer reads as the SAME entity as C3's Fable directly
+ *  above it (reviewer finding, B20: "the blue bottom segment reads as the
+ *  same entity" between two vertically stacked cards). Output keeps a
+ *  categorical slot since it is the one segment users compare against other
+ *  charts' "output" meaning; uncached input (usually sub-pixel) stays
+ *  neutral. */
 export const TOKEN_CLASS_VAR: Record<TokenClass, string> = {
-  cacheRead: "var(--viz-s1)",
-  cacheWrite: "var(--viz-s2)",
-  output: "var(--viz-s3)",
+  cacheRead: "var(--viz-seq-4)",
+  cacheWrite: "var(--viz-seq-2)",
+  output: "var(--viz-s2)",
   input: "var(--viz-other)",
 };
 export const TOKEN_CLASS_ORDER: TokenClass[] = ["cacheRead", "cacheWrite", "output", "input"];

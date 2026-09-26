@@ -232,10 +232,15 @@ describe("InsightsPage", () => {
     // sizes to its content's max-content instead of the viewport (jsdom does
     // no real layout, so this is asserted structurally: every element using
     // `lg:grid-cols-` also carries a bare, un-prefixed `grid` class only
-    // together with `lg:grid`, never alone).
+    // together with `lg:grid`, never alone) -- UNLESS it already declares its
+    // own base, un-prefixed `grid-cols-N` (an explicit column count at every
+    // width, e.g. the records strip's `grid-cols-2 sm:grid-cols-3
+    // lg:grid-cols-5`), which is the same "always an explicit grid" pattern
+    // this regression check exists to require, just with more than two tiers.
     const offenders = [...container.querySelectorAll('[class*="lg:grid-cols-"]')].filter((el) => {
       const cls = el.className.split(/\s+/);
-      return cls.includes("grid") && !cls.includes("lg:grid");
+      const hasBaseGridCols = cls.some((c) => /^grid-cols-\d+$/.test(c));
+      return cls.includes("grid") && !cls.includes("lg:grid") && !hasBaseGridCols;
     });
     expect(offenders).toEqual([]);
   });

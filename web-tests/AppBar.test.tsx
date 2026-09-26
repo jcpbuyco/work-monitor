@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { AppBar } from "../src/web/components/AppBar.tsx";
 import type { State } from "../src/web/types.ts";
@@ -35,6 +35,110 @@ describe("AppBar", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     fireEvent.click(screen.getByLabelText("Toggle theme"));
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+});
+
+// A4/§5.2 regression: at 390 width + a large text size, "N working" +
+// "N needs you" alone measured wider than the header even after the desktop
+// control cluster had already collapsed behind "..." -- fixed by escalating
+// a SECOND compaction level that drops the counts' own text labels. jsdom has
+// no real layout engine, so `scrollWidth`/`clientWidth` are stubbed on the
+// specific trailing element the component measures (by its test id) to
+// simulate an overflowing header.
+describe("AppBar §5.2/A4: two-stage measured overflow", () => {
+  let scrollWidthDesc: PropertyDescriptor | undefined;
+  let clientWidthDesc: PropertyDescriptor | undefined;
+  let fakeOverflow: false | "controls" | "counts";
+
+  beforeEach(() => {
+    fakeOverflow = false;
+    scrollWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    clientWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+      configurable: true,
+      get() {
+        if (!fakeOverflow || this.getAttribute?.("data-testid") !== "appbar-trailing") return 0;
+        if (fakeOverflow === "counts") return 500; // never fits, at any compaction level
+        // "controls": overflows only until the desktop cluster's own wrapper
+        // drops its `hidden` class (i.e. until `compact` is actually
+        // applied) -- a REAL browser's layout would shrink once that
+        // cluster leaves the flow; this stub has to say so explicitly since
+        // jsdom never lays anything out.
+        const moreBtn = this.querySelector('[aria-label="More controls"]');
+        const alreadyCompact = !!moreBtn && !moreBtn.parentElement?.className?.includes("hidden");
+        return alreadyCompact ? 280 : 320;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        if (fakeOverflow && this.getAttribute?.("data-testid") === "appbar-trailing") return 300;
+        return 0;
+      },
+    });
+    // Stub ResizeObserver so the header-width tracking effect runs (its
+    // absence used to make the whole measurement no-op in jsdom, matching
+    // production's own jsdom fallback, but this test wants the escalation
+    // effect -- driven by a plain layout effect with no dependency on
+    // ResizeObserver -- to actually run).
+    (globalThis as any).ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    };
+  });
+
+  afterEach(() => {
+    // Restore the ORIGINAL descriptor when jsdom defined one directly on
+    // HTMLElement.prototype, or delete our own shadowing property entirely
+    // when it didn't (jsdom defines these on a different prototype in the
+    // chain) -- restoring unconditionally with `if (desc)` alone left a
+    // stale own-property (and a closure over this describe block's last
+    // `fakeOverflow` value) on HTMLElement.prototype forever, leaking a
+    // permanently "overflowing" measurement into every later test in the
+    // file that renders an `appbar-trailing` element (regression caught
+    // while writing this test).
+    if (scrollWidthDesc) Object.defineProperty(HTMLElement.prototype, "scrollWidth", scrollWidthDesc);
+    else delete (HTMLElement.prototype as any).scrollWidth;
+    if (clientWidthDesc) Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidthDesc);
+    else delete (HTMLElement.prototype as any).clientWidth;
+    delete (globalThis as any).ResizeObserver;
+  });
+
+  // The "..." button is always PRESENT in the DOM (both the desktop cluster
+  // and the overflow trigger render unconditionally; a real browser's CSS
+  // `hidden` class is what actually hides whichever one isn't current --
+  // see the component's own comment), so "is it compact" is read off that
+  // class, not off whether the element exists at all.
+  function moreControlsVisible(): boolean {
+    const btn = screen.getByLabelText("More controls");
+    return !btn.parentElement?.className?.includes("hidden");
+  }
+
+  it("stays fully inline (no overflow measured)", () => {
+    fakeOverflow = false;
+    render(<AppBar state={state} route="#/insights" />);
+    expect(screen.getByText("1 working")).toBeTruthy();
+    expect(moreControlsVisible()).toBe(false);
+  });
+
+  it("collapses the desktop cluster behind '...' once the trailing group overflows, keeping full count labels", () => {
+    fakeOverflow = "controls";
+    render(<AppBar state={state} route="#/insights" />);
+    expect(moreControlsVisible()).toBe(true);
+    expect(screen.getByText("1 working")).toBeTruthy();
+    expect(screen.getByText("1 needs you")).toBeTruthy();
+  });
+
+  it("also collapses the count labels to icon+number when collapsing the controls alone still isn't enough", () => {
+    fakeOverflow = "counts";
+    render(<AppBar state={state} route="#/insights" />);
+    expect(moreControlsVisible()).toBe(true);
+    // The bare numbers replace "1 working"/"1 needs you" text nodes...
+    expect(screen.queryByText("1 working")).toBeNull();
+    expect(screen.queryByText("1 needs you")).toBeNull();
+    // ...but the full text survives for accessibility.
+    expect(screen.getByLabelText("1 working")).toBeTruthy();
+    expect(screen.getByLabelText("1 needs you")).toBeTruthy();
   });
 });
 

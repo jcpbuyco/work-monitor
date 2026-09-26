@@ -1,5 +1,6 @@
 import type { InsightsResponse } from "../../../shared/insights.ts";
-import { formatUsd } from "../../cost.ts";
+import { formatUsd, formatDay } from "../../cost.ts";
+import { ymd } from "../../insights.ts";
 import { formatMonth } from "../charts/format.ts";
 import { DotStrip } from "../charts/DotStrip.tsx";
 import { TooltipRow } from "../charts/Tooltip.tsx";
@@ -18,6 +19,18 @@ function fmtDuration(ms: number | null): string {
   if (ms == null) return "-";
   const h = ms / 3_600_000;
   return h >= 1 ? `${h.toFixed(1)}h` : `${(ms / 60_000).toFixed(0)}m`;
+}
+
+/** `formatDay`, not `toLocaleDateString()` -- the locale-dependent
+ *  "9/14/2026" this used to print was the one date on the page not spelled
+ *  "Sep 25" (reviewer finding, B14). */
+function fmtDate(startedAt: number | null): string {
+  return startedAt ? formatDay(ymd(new Date(startedAt))) : "-";
+}
+
+const OUTLIER_LABEL_MAX = 24;
+function truncateLabel(name: string): string {
+  return name.length > OUTLIER_LABEL_MAX ? `${name.slice(0, OUTLIER_LABEL_MAX - 1)}…` : name;
 }
 
 /** C7: one dot per workflow run, jittered within its month band on a log $
@@ -45,15 +58,20 @@ export function WorkflowRunCosts({ data, loading, refetching }: { data: Insights
       id: r.runId,
       month: r.month!,
       value: r.costUsd!,
-      label: top3Ids.has(r.runId) ? (r.name ?? r.runId).slice(0, 24) : undefined,
-      ariaLabel: `${r.name ?? r.runId}, ${r.startedAt ? new Date(r.startedAt).toLocaleDateString() : "no date"}: ${formatUsd(r.costUsd)}`,
+      // Truncated with an ellipsis, not a hard `.slice(0, 24)` with no
+      // indication anything was cut -- and the full name lives in the dot's
+      // own `fullLabel` (rendered as an SVG `<title>`, an on-hover fallback
+      // for whoever doesn't reach the richer tooltip) (reviewer finding, A18).
+      label: top3Ids.has(r.runId) ? truncateLabel(r.name ?? r.runId) : undefined,
+      fullLabel: top3Ids.has(r.runId) ? r.name ?? r.runId : undefined,
+      ariaLabel: `${r.name ?? r.runId}, ${fmtDate(r.startedAt)}: ${formatUsd(r.costUsd)}`,
       onClick: () => {
         window.location.hash = `#/workflows?run=${encodeURIComponent(r.runId)}`;
       },
       tooltip: (
         <div className="space-y-1">
           <div className="font-medium text-ink">{r.name ?? r.runId}</div>
-          <TooltipRow label="date" value={r.startedAt ? new Date(r.startedAt).toLocaleDateString() : "-"} />
+          <TooltipRow label="date" value={fmtDate(r.startedAt)} />
           <TooltipRow label="status" value={r.status ?? "-"} />
           <TooltipRow label="agents" value={String(r.agentCount ?? "-")} />
           <TooltipRow label="duration" value={fmtDuration(r.durationMs)} />
@@ -70,7 +88,7 @@ export function WorkflowRunCosts({ data, loading, refetching }: { data: Insights
       rows={[...data.workflowRuns].sort((a, b) => (b.costUsd ?? -1) - (a.costUsd ?? -1))}
       columns={[
         { key: "name", label: "Run", render: (r) => r.name ?? r.runId },
-        { key: "date", label: "Date", render: (r) => (r.startedAt ? new Date(r.startedAt).toLocaleDateString() : "-") },
+        { key: "date", label: "Date", render: (r) => fmtDate(r.startedAt) },
         { key: "status", label: "Status", render: (r) => r.status ?? "-" },
         { key: "agents", label: "Agents", numeric: true, render: (r) => String(r.agentCount ?? "-") },
         { key: "duration", label: "Duration", numeric: true, render: (r) => fmtDuration(r.durationMs) },

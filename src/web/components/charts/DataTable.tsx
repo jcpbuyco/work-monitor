@@ -19,7 +19,7 @@ export function DataTable<T>({ columns, rows, caption, rowKey }: { columns: Data
           {columns.map((c) => (
             <th
               key={c.key}
-              className={`sticky top-0 border-b border-border bg-surface-1 px-2 py-1 text-left font-normal text-3xs uppercase tracking-caps text-ink-4 ${c.numeric ? "text-right" : ""}`}
+              className={`sticky top-0 whitespace-nowrap border-b border-border bg-surface-1 px-2 py-1 text-left font-normal text-3xs uppercase tracking-caps text-ink-4 ${c.numeric ? "text-right" : ""}`}
             >
               {c.label}
             </th>
@@ -30,7 +30,7 @@ export function DataTable<T>({ columns, rows, caption, rowKey }: { columns: Data
         {rows.map((row, i) => (
           <tr key={rowKey(row, i)} className="border-b border-border-weak">
             {columns.map((c) => (
-              <td key={c.key} className={`px-2 py-1 tabular-nums slashed-zero text-ink-2 ${c.numeric ? "text-right" : ""}`}>
+              <td key={c.key} className={`whitespace-nowrap px-2 py-1 tabular-nums slashed-zero text-ink-2 ${c.numeric ? "text-right" : ""}`}>
                 {c.render(row)}
               </td>
             ))}

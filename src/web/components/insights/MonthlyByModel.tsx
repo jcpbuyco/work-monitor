@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { InsightsResponse } from "../../../shared/insights.ts";
 import { formatUsd, formatTokens, prettyModel } from "../../cost.ts";
-import { compactUsd, compactTokens, formatDeltaPct, formatMonth } from "../charts/format.ts";
+import { compactUsd, compactTokens, formatDeltaPct, formatMonth, orDash } from "../charts/format.ts";
 import { FAMILY_VAR, FAMILY_ORDER } from "../charts/palette.ts";
 import { StackedColumns } from "../charts/StackedColumns.tsx";
 import { Legend } from "../charts/Legend.tsx";
@@ -9,7 +9,8 @@ import { TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
 import { useChartWidth } from "../charts/useChartWidth.ts";
-import { pctDelta } from "../../insights.ts";
+import { xAxisBandPx } from "../charts/typography.ts";
+import { useRootPx } from "../../useRootPx.ts";
 import { Segmented } from "../primitives.tsx";
 
 type Metric = "cost" | "tokens" | "output";
@@ -22,6 +23,7 @@ export function MonthlyByModel({ data, loading, refetching }: { data: InsightsRe
   const [view, setView] = useChartView();
   const [isolated, setIsolated] = useState<string | null>(null);
   const [ref, width] = useChartWidth<HTMLDivElement>();
+  const rootPx = useRootPx();
 
   const byMonth = new Map<string, Map<string, { costUsd: number | null; tokens: number; outputTokens: number; unpriced: number }>>();
   for (const row of data.byMonthModel) {
@@ -84,29 +86,33 @@ export function MonthlyByModel({ data, loading, refetching }: { data: InsightsRe
       rows={data.months}
       columns={[
         { key: "month", label: "Month", render: (m) => formatMonth(m, { current: data.currentMonth, withYear: true }) },
-        { key: "fable", label: "Fable", numeric: true, render: (m) => renderValue(values[m].Fable) },
-        { key: "opus", label: "Opus", numeric: true, render: (m) => renderValue(values[m].Opus) },
-        { key: "sonnet", label: "Sonnet", numeric: true, render: (m) => renderValue(values[m].Sonnet) },
-        { key: "other", label: "Other", numeric: true, render: (m) => renderValue(values[m].Other) },
+        // A wholly empty month (Mar/Apr in the spec's own worked example --
+        // no usage rows at all, not even a priced $0 one) reads "-" in EVERY
+        // numeric cell, not just Total (reviewer finding, B18: "Total '-' but
+        // family cells '$0.00' in the same row") -- `!!byMonth.get(m)` is
+        // true only when there was real data that month, as distinct from a
+        // month whose rows happen to sum to exactly zero.
+        { key: "fable", label: "Fable", numeric: true, render: (m) => orDash(!!byMonth.get(m), renderValue(values[m].Fable)) },
+        { key: "opus", label: "Opus", numeric: true, render: (m) => orDash(!!byMonth.get(m), renderValue(values[m].Opus)) },
+        { key: "sonnet", label: "Sonnet", numeric: true, render: (m) => orDash(!!byMonth.get(m), renderValue(values[m].Sonnet)) },
+        { key: "other", label: "Other", numeric: true, render: (m) => orDash(!!byMonth.get(m), renderValue(values[m].Other)) },
         {
           key: "total",
           label: "Total",
           numeric: true,
-          // A wholly empty month (Mar/Apr in the spec's own worked example --
-          // no usage rows at all, not even a priced $0 one) reads "-", not
-          // "$0.00" (reviewer finding): `!byMonth.get(m)` is true only when
-          // there was NO data that month, as distinct from a month that had
-          // real rows summing to exactly zero.
-          render: (m) => (!byMonth.get(m) ? "-" : renderValue(monthTotalRaw.get(m) ?? 0)),
+          render: (m) => orDash(!!byMonth.get(m), renderValue(monthTotalRaw.get(m) ?? 0)),
         },
         {
           key: "mom",
           label: "MoM",
           numeric: true,
+          // Same helper (and so the same "↑97%"/"↓12%" spelling) as the
+          // chart's own MoM second line just below -- a plain sign here would
+          // be a second, inconsistent delta convention next to the chart it's
+          // the exact-number twin of (reviewer finding, B17).
           render: (m) => {
             const i = data.months.indexOf(m);
-            const d = i > 0 ? pctDelta(monthTotals[i], monthTotals[i - 1]) : null;
-            return d == null ? "-" : `${d > 0 ? "+" : ""}${d.toFixed(0)}%`;
+            return i > 0 ? formatDeltaPct(monthTotals[i], monthTotals[i - 1]) ?? "-" : "-";
           },
         },
       ]}
@@ -118,12 +124,25 @@ export function MonthlyByModel({ data, loading, refetching }: { data: InsightsRe
       title="Monthly spend by model"
       subtitle="How fast is monthly spend growing, and which models make up each month?"
       legend={<Legend entries={legend} isolated={isolated} onToggle={setIsolated} />}
-      height={220 + 32}
+      // This card always draws a MoM second line under the month tick (§R5):
+      // the floor has to grow with `xAxisBandPx`'s own scaled 2-line budget,
+      // not a flat `+32`, or the chart's own (correctly-scaled) axis band
+      // outgrows the card's floor at a larger text size and paints into the
+      // card's bottom padding below it.
+      height={220 + xAxisBandPx(rootPx, 2) + 12}
       loading={loading}
       refetching={refetching}
       view={view}
       onViewChange={setView}
       table={table}
+      // Unlike every other card's metric toggle, this one changes which
+      // COLUMNS the table itself renders (Cost/Tokens/Output each pick a
+      // different `renderValue`) -- hiding it in Table view (ChartCard's
+      // default, since a toggle usually only affects the chart) would strand
+      // whoever's in Table view on whatever metric they last had selected in
+      // Chart view, with no way to switch without leaving Table (reviewer
+      // finding; ChartCard's own doc comment names this exact card).
+      keepRightInTable
       right={
         <Segmented
           value={metric}

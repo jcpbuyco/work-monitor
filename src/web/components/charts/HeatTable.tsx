@@ -78,8 +78,8 @@ export function HeatTable<T extends { key: string }>({
             <th
               key={c.key}
               aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-              className={`h-8 border-b border-border px-2 text-left font-normal text-3xs uppercase tracking-caps text-ink-4 ${
-                i === 0 ? "sticky left-0 z-10 bg-surface-1" : "text-right"
+              className={`h-8 whitespace-nowrap border-b border-border px-2 text-left font-normal text-3xs uppercase tracking-caps text-ink-4 ${
+                i === 0 ? "sticky left-0 z-10 max-w-[14rem] truncate bg-surface-1" : "text-right"
               }`}
             >
               <button
@@ -101,8 +101,13 @@ export function HeatTable<T extends { key: string }>({
               const v = cell(row, c.key);
               const colShade = shaded && c.shade !== false;
               if (i === 0) {
+                // truncate + title, not free wrapping: a long project name
+                // ("oxygenrx-malta-scoping") wrapped onto 2-3 lines even
+                // though the table already scrolls sideways for exactly this
+                // case, giving every row in a narrow viewport its own uneven
+                // height (reviewer finding, A6).
                 return (
-                  <td key={c.key} className="sticky left-0 z-10 bg-surface-1 px-2 py-1 font-medium text-ink">
+                  <td key={c.key} className="sticky left-0 z-10 max-w-[14rem] truncate whitespace-nowrap bg-surface-1 px-2 py-1 font-medium text-ink" title={v.display}>
                     {v.display}
                   </td>
                 );
@@ -111,11 +116,30 @@ export function HeatTable<T extends { key: string }>({
                 const frac = lifetimeBar(row);
                 return (
                   <td key={c.key} className="px-2 py-1 text-right text-ink-2">
-                    <span className="inline-flex items-center justify-end gap-1.5">
-                      <span aria-hidden="true" className="h-1.5 w-10 overflow-hidden rounded-sm bg-surface-3">
+                    {/* A bar, then the value, in plain flex flow -- not a
+                       FIXED-width `w-24` track. `w-24` (a flat 6rem) fit the
+                       old fixed 9/10px labels' typical value width; at a
+                       larger scaled text size (or simply a wider dollar
+                       figure, "$3,205.65") the bar (`shrink-0`) plus the
+                       value's own automatic flex minimum (never shrinks
+                       narrower than its own content, since numbers have no
+                       break points) together needed MORE than 6rem, and a
+                       fixed-width flex container does not grow to fit
+                       overflowing children -- the value ran past the
+                       column's own cell, the "text outside its box" bug
+                       class, present at every width and worst at a larger
+                       text size (reviewer finding). Dropping the fixed width
+                       lets the real `<table>` do what it already does for
+                       every other column: size the Lifetime column to its
+                       own widest cell, which lines up every row's bar at the
+                       same x with no hand-picked constant at all -- a
+                       STRUCTURAL fix for the A19 alignment finding, not a
+                       regression of it. */}
+                    <span className="inline-flex items-center gap-1.5">
+                      <span aria-hidden="true" className="h-1.5 w-10 shrink-0 overflow-hidden rounded-sm bg-surface-3">
                         <span className="block h-full rounded-sm" style={{ width: `${Math.max(2, frac * 100)}%`, background: "var(--viz-s1)" }} />
                       </span>
-                      <span className="tabular-nums slashed-zero">{v.display}</span>
+                      <span className="min-w-[6ch] tabular-nums slashed-zero">{v.display}</span>
                     </span>
                   </td>
                 );

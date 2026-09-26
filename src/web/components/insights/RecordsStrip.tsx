@@ -1,5 +1,5 @@
 import type { InsightsResponse } from "../../../shared/insights.ts";
-import { formatUsd, formatUsdWhole, formatDay } from "../../cost.ts";
+import { formatUsdWhole, formatDay } from "../../cost.ts";
 import { ymd } from "../../insights.ts";
 
 function RecordTile({
@@ -32,19 +32,37 @@ function RecordTile({
         }
       }}
     >
-      <div className="text-2xs text-ink-3">{label}</div>
+      {/* truncate + title, not free wrapping: a label that wraps to 2 lines
+         ("Priciest workflow run") pushed its own value a full line lower than
+         every other tile's in the same row, so the row's figures stopped
+         sharing a baseline (reviewer finding, A16). Widened breakpoints below
+         (grid-cols-2/3/5, not a flat 2/5) give this label enough room that it
+         rarely needs the truncation at all -- see the grid below. */}
+      <div className="truncate text-2xs text-ink-3" title={label}>
+        {label}
+      </div>
       {/* Proportional figures, not tabular-nums: §5 reserves tabular-nums for
          axis ticks and table cells, and a record value is a large standalone
-         number like the hero figure (reviewer finding). */}
+         number like the hero figure (reviewer finding). NOT `whitespace-nowrap`
+         -- forcing a single line let a wide value ("29.0 h active", "$416 ·
+         8.3x list"-scale text) run straight past the tile's own border and
+         force the whole PAGE to scroll sideways, the exact "text outside its
+         box" class of bug the user originally reported (reviewer finding,
+         R1). Wrapping to a second line inside the tile is always preferable
+         to bleeding past it. */}
       <div className="mt-1 text-lg font-semibold text-ink">{value}</div>
       {context && <p className="mt-0.5 text-2xs text-ink-4">{context}</p>}
     </div>
   );
 }
 
+// "29.0h", not "29.0 h" -- the space was the one duration on the page not
+// matching B17's "no space between a number and its compact unit" convention
+// (WorkflowRunCosts' own `fmtDuration` already reads "1.5h"/"45m", reviewer
+// finding, O7).
 function hMinutes(ms: number): string {
   const h = ms / 3_600_000;
-  return `${h.toFixed(1)} h`;
+  return `${h.toFixed(1)}h`;
 }
 
 /** C2: five record tiles (biggest day, longest streak, peak parallel agents,
@@ -61,7 +79,12 @@ export function RecordsStrip({
 }) {
   const r = data.records;
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+    // grid-cols-2/3/5, not a flat 2 -> 5 jump at `sm` (640px): 5 columns
+    // packed a wide value ("29.0 h active") into a ~105-160px tile at every
+    // width from 640 up, overflowing the tile (and, at large text sizes,
+    // forcing the whole PAGE to scroll sideways) -- the `lg` step gives each
+    // tile real room before jumping to 5-across (reviewer finding, R1).
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
       <RecordTile
         label="Biggest day"
         value={r.biggestDay ? formatUsdWhole(r.biggestDay.costUsd) : "-"}
@@ -98,7 +121,7 @@ export function RecordsStrip({
       />
       <RecordTile
         label="Priciest workflow run"
-        value={r.priciestRun ? formatUsd(r.priciestRun.costUsd) : "-"}
+        value={r.priciestRun ? formatUsdWhole(r.priciestRun.costUsd) : "-"}
         context={
           r.priciestRun
             ? `${r.priciestRun.name ?? r.priciestRun.runId} · ${r.priciestRun.agentCount ?? "?"} agents`
