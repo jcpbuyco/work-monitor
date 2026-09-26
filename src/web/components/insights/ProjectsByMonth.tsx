@@ -37,7 +37,7 @@ export function ProjectsByMonth({ data, loading, refetching }: { data: InsightsR
 
   const values = monthsWithData.flatMap((m) => data.projects.map((p) => p.byMonth[m]?.costUsd).filter((v): v is number => v != null && v > 0));
   const edges = values.length ? quantileEdges(values) : [0, 0, 0, 0, 0, 0];
-  const maxLifetime = Math.max(1, ...data.projects.map((p) => p.lifetimeUsd ?? 0));
+  const maxLifetime = Math.max(1, ...data.projects.filter((p) => p.kind === "project").map((p) => p.lifetimeUsd ?? 0));
 
   const table = (
     <HeatTable
@@ -48,6 +48,7 @@ export function ProjectsByMonth({ data, loading, refetching }: { data: InsightsR
       edges={edges}
       format={(v) => formatUsd(v)}
       defaultSort={{ key: "lifetime", dir: "desc" }}
+      pinned={(p) => p.kind !== "project"}
       lifetimeBar={(p) => (p.lifetimeUsd ?? 0) / maxLifetime}
       cell={(p, key) => {
         if (key === "project") return { value: null, display: p.project };

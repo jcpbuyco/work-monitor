@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { State, LiveWorkflow } from "../types.ts";
 import type { InsightsResponse } from "../../shared/insights.ts";
 import { AppBar } from "./AppBar.tsx";
-import { SectionHeader } from "./primitives.tsx";
+import { SectionHeader, Skeleton } from "./primitives.tsx";
 import { ago } from "../time.ts";
 import { KpiRow } from "./insights/KpiRow.tsx";
 import { RecordsStrip } from "./insights/RecordsStrip.tsx";
@@ -137,9 +137,7 @@ export function InsightsPage({
           </button>
         </div>
       ) : loading || !data ? (
-        <div className="py-24 text-center text-sm text-ink-3" role="status" aria-live="polite">
-          Loading insights…
-        </div>
+        <InsightsSkeleton />
       ) : data.meta.usageRows === 0 ? (
         <div className="py-24 text-center text-sm text-ink-3">No usage recorded yet. Insights appear once agents start spending tokens.</div>
       ) : (
@@ -192,6 +190,49 @@ export function InsightsPage({
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+/** First-load placeholder in the page's own shape (hero + tiles, records,
+ *  paired chart cards), so nothing jumps when the data lands. */
+function InsightsSkeleton() {
+  const card = "rounded-lg border-hairline border-border bg-surface-1 p-4";
+  const chart = (i: number) => (
+    <div key={i} className={card}>
+      <Skeleton w="w-40" />
+      <Skeleton w="w-64" className="mt-2 block" />
+      <div className="am-pulse mt-6 h-48 rounded bg-surface-2" />
+    </div>
+  );
+  return (
+    <div className="space-y-6 pt-4" data-testid="insights-skeleton" role="status" aria-live="polite">
+      <span className="sr-only">Loading insights</span>
+      <div className="space-y-4 lg:grid lg:grid-cols-3 lg:gap-4 lg:space-y-0">
+        <div className={`${card} lg:col-span-1`}>
+          <Skeleton w="w-44" className="h-9" />
+          <Skeleton w="w-56" className="mt-3 block" />
+          <Skeleton w="w-48" className="mt-2 block" />
+        </div>
+        <div className="grid grid-cols-2 gap-4 lg:col-span-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className={card}>
+              <Skeleton w="w-20" />
+              <Skeleton w="w-24" className="mt-3 block h-5" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className={card}>
+            <Skeleton w="w-20" />
+            <Skeleton w="w-16" className="mt-3 block h-4" />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-4 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0">{[0, 1].map(chart)}</div>
+      <div className="space-y-4 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0">{[2, 3].map(chart)}</div>
     </div>
   );
 }

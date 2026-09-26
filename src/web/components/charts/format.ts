@@ -1,4 +1,5 @@
 import { formatUsd as formatUsdExact } from "../../cost.ts";
+import { pctDelta } from "../../insights.ts";
 
 /** Compact USD for chart labels/axes: "$10.8k", "$960", "$1.2M". `null` reuses
  *  the existing "unpriced" convention. Never used for a value under $1000 that
@@ -55,8 +56,8 @@ export function formatMonth(month: string, opts: { current?: string; withYear?: 
  *  is not a status (§5), so this never carries a color -- callers pair it with
  *  a plain up/down arrow glyph in text-3, never text-danger/text-done. */
 export function formatDeltaPct(current: number | null, previous: number | null): string | null {
-  if (current == null || previous == null || previous === 0) return null;
-  const pct = ((current - previous) / previous) * 100;
+  const pct = pctDelta(current, previous);
+  if (pct == null) return null;
   if (Math.abs(pct) < 0.5) return "flat";
   return `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`;
 }

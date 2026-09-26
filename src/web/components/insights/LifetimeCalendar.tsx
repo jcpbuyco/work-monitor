@@ -8,6 +8,7 @@ import { HeatGrid, type HeatCellData } from "../charts/HeatGrid.tsx";
 import { ScaleLegend } from "../charts/ScaleLegend.tsx";
 import { TooltipRow } from "../charts/Tooltip.tsx";
 import { DataTable } from "../charts/DataTable.tsx";
+import { useChartWidth } from "../charts/useChartWidth.ts";
 import { ChartCard, useChartView } from "../charts/ChartCard.tsx";
 import { useMediaQuery } from "../../useMediaQuery.ts";
 import { Segmented } from "../primitives.tsx";
@@ -31,8 +32,8 @@ export function LifetimeCalendar({
   const [metric, setMetric] = useState<Metric>("spend");
   const [view, setView] = useChartView();
   const isPhone = useMediaQuery("(max-width: 390px)");
-  const cellSize = isPhone ? 12 : 14;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [gridBoxRef, gridBoxWidth] = useChartWidth<HTMLDivElement>();
 
   const firstDay = data.meta.firstAt != null ? ymd(new Date(data.meta.firstAt)) : null;
   const today = ymd(new Date());
@@ -41,6 +42,11 @@ export function LifetimeCalendar({
   const values = data.days.map((d) => (metric === "spend" ? d.costUsd ?? 0 : d.messages)).filter((v) => v > 0);
   const edges = quantileEdges(values, 5);
   const weeks = layout.length ? Math.max(...layout.map((c) => c.week)) + 1 : 0;
+  // Cells grow to fill the card (a fixed 14px grid left half of a wide card
+  // empty) but never past 24px, and never below the old fixed size, so a
+  // phone still scrolls horizontally instead of shrinking cells illegibly.
+  const minCell = isPhone ? 12 : 14;
+  const cellSize = weeks ? Math.max(minCell, Math.min(24, Math.floor(gridBoxWidth / weeks) - 2)) : minCell;
 
   // Anchor to the latest week (§4, phone layout). A single mount-time
   // assignment isn't enough: at 390px the summary sidebar is hidden and the
@@ -190,7 +196,7 @@ export function LifetimeCalendar({
       }
     >
       <div className="flex h-full gap-6" id={id}>
-        <div className="flex min-w-0 flex-1 gap-2">
+        <div ref={gridBoxRef} className="flex min-w-0 flex-1 gap-2">
           {/* Row labels live OUTSIDE the horizontal scroller (pt-4 aligns
               them under the 16px month-label row) -- inside it, they used to
               scroll away with the grid at narrow widths (reviewer finding),

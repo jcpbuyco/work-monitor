@@ -120,3 +120,37 @@ describe("inkForFill", () => {
     }
   });
 });
+
+describe("HeatTable pinned rows", () => {
+  it("keeps pinned rows below the sorted rows, in their given order, in both sort directions", () => {
+    const withFolded: Row[] = [
+      { key: "a", name: "Alpha", value: 10 },
+      { key: "other", name: "Other 30 projects", value: 900 },
+      { key: "b", name: "Beta", value: 50 },
+      { key: "none", name: "(no project)", value: 1 },
+    ];
+    render(
+      <HeatTable
+        columns={[{ key: "name", label: "Name" }, { key: "value", label: "Value" }]}
+        rows={withFolded}
+        cell={(r, key) => (key === "name" ? { value: null, display: r.name } : { value: r.value, display: String(r.value) })}
+        edges={[0, 10, 20, 30, 40, 50]}
+        format={(v) => String(v)}
+        defaultSort={{ key: "value", dir: "desc" }}
+        pinned={(r) => r.key === "other" || r.key === "none"}
+      />
+    );
+    const names = () => screen.getAllByRole("row").slice(1).map((r) => r.textContent ?? "");
+    const desc = names();
+    expect(desc[0]).toContain("Beta");
+    expect(desc[1]).toContain("Alpha");
+    expect(desc[2]).toContain("Other");
+    expect(desc[3]).toContain("(no project)");
+    fireEvent.click(screen.getByText("Value")); // flip to ascending
+    const asc = names();
+    expect(asc[0]).toContain("Alpha");
+    expect(asc[1]).toContain("Beta");
+    expect(asc[2]).toContain("Other");
+    expect(asc[3]).toContain("(no project)");
+  });
+});

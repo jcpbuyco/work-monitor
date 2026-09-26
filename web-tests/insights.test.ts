@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { cumulativeWithCarry, pctDelta, calendarLayout, sparklineFrom, daysInMonth, ymd } from "../src/web/insights.ts";
+import { formatDeltaPct } from "../src/web/components/charts/format.ts";
 import { niceTicks, logTicks, quantileEdges, binOf } from "../src/web/components/charts/scales.ts";
 import type { InsightsDay } from "../src/shared/insights.ts";
 
@@ -38,6 +39,24 @@ describe("pctDelta", () => {
     expect(pctDelta(null, 100)).toBeNull();
     expect(pctDelta(100, null)).toBeNull();
     expect(pctDelta(100, 0)).toBeNull();
+  });
+
+  it("is null when the months are not comparable (either is zero, or one is over 10x the other)", () => {
+    expect(pctDelta(960, 3)).toBeNull(); // Jun vs a $3 May: "+37500%" says nothing
+    expect(pctDelta(0, 11)).toBeNull(); // an empty month after a tiny one
+    expect(pctDelta(1000, 100)).toBeCloseTo(900, 6); // exactly 10x is still shown
+    expect(pctDelta(1001, 100)).toBeNull();
+    expect(pctDelta(10, 100)).toBeCloseTo(-90, 6);
+    expect(pctDelta(9, 100)).toBeNull();
+  });
+});
+
+describe("formatDeltaPct", () => {
+  it("follows pctDelta's comparability rule and labels tiny moves flat", () => {
+    expect(formatDeltaPct(1887, 960)).toBe("+97%");
+    expect(formatDeltaPct(960, 3)).toBeNull();
+    expect(formatDeltaPct(0, 11)).toBeNull();
+    expect(formatDeltaPct(100.2, 100)).toBe("flat");
   });
 });
 

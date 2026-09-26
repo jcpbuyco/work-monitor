@@ -114,6 +114,17 @@ describe("InsightsPage", () => {
     expect(await screen.findByText("$10,800")).toBeTruthy();
   });
 
+  it("shows a page-shaped skeleton, announced to screen readers, until the first response arrives", async () => {
+    let resolveFirst: (r: Response) => void;
+    fetchImpl = () => new Promise((resolve) => { resolveFirst = resolve; });
+    render(<InsightsPage state={readyState} />);
+    expect(screen.getByTestId("insights-skeleton")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Loading insights");
+    resolveFirst!({ ok: true, json: async () => baseResponse() } as Response);
+    expect(await screen.findByText("$10,800")).toBeTruthy();
+    expect(screen.queryByTestId("insights-skeleton")).toBeNull();
+  });
+
   it("shows the empty-database state when usageRows is 0", async () => {
     fetchImpl = () => Promise.resolve({ ok: true, json: async () => baseResponse({ meta: { ...baseResponse().meta, usageRows: 0 } }) } as Response);
     render(<InsightsPage state={readyState} />);
@@ -197,7 +208,7 @@ describe("InsightsPage", () => {
     fireEvent.click(screen.getByText("Refresh"));
     // The old figure is still on screen while the refetch is in flight.
     expect(screen.getByText("$10,800")).toBeTruthy();
-    expect(screen.queryByText("Loading insights…")).toBeNull();
+    expect(screen.queryByTestId("insights-skeleton")).toBeNull();
     // Regression: `refetching` used to be computed by reading a ref at
     // render time, which a ref mutation alone never triggers -- so this
     // dim-while-refetching effect the spec asks for never actually happened.

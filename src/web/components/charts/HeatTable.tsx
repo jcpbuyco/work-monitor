@@ -32,6 +32,7 @@ export function HeatTable<T extends { key: string }>({
   shaded = true,
   dark = false,
   defaultSort,
+  pinned,
   onCellHover,
   onCellLeave,
 }: {
@@ -44,6 +45,9 @@ export function HeatTable<T extends { key: string }>({
   shaded?: boolean;
   dark?: boolean;
   defaultSort?: { key: string; dir: "asc" | "desc" };
+  /** Rows that stay below every sorted row, in their given order, whatever
+   *  the sort (folded "Other" / "(no project)" buckets are not peers). */
+  pinned?: (row: T) => boolean;
   /** Caller-owned tooltip hook: HeatTable has no `Tooltip` of its own (unlike
    *  HeatGrid/StackedColumns), since a table cell's tooltip content (§6, C12:
    *  "project, month, $, sessions, share of that month's spend") needs data
@@ -52,7 +56,8 @@ export function HeatTable<T extends { key: string }>({
   onCellLeave?: () => void;
 }) {
   const [sort, setSort] = useState(defaultSort ?? { key: columns[0]?.key ?? "", dir: "desc" as "asc" | "desc" });
-  const sorted = [...rows].sort((a, b) => {
+  const isPinned = pinned ?? (() => false);
+  const sorted = [...rows.filter((r) => !isPinned(r))].sort((a, b) => {
     const av = cell(a, sort.key);
     const bv = cell(b, sort.key);
     // A text column (the Project name) has no numeric `value` at all -- the
@@ -63,6 +68,7 @@ export function HeatTable<T extends { key: string }>({
     const c = av.value == null && bv.value == null ? av.display.localeCompare(bv.display) : (av.value ?? -Infinity) - (bv.value ?? -Infinity);
     return sort.dir === "asc" ? c : -c;
   });
+  sorted.push(...rows.filter(isPinned));
 
   return (
     <table className="w-full border-collapse font-mono text-2xs">

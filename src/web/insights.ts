@@ -37,12 +37,19 @@ export function cumulativeWithCarry(days: InsightsDay[], month: string, monthLen
   return out;
 }
 
-/** Percentage change vs. the previous value, `null` when either side is
- *  missing/zero (nothing to compare against). Purely numeric -- string
- *  formatting (with the neutral arrow glyph) lives in charts/format.ts. */
+/** Beyond this ratio between two months a percentage stops meaning anything
+ *  ($3 in May to $960 in June reads "+37500%"). */
+const MAX_COMPARABLE_RATIO = 10;
+
+/** Percentage change vs. the previous value, `null` when there is nothing
+ *  meaningful to compare: either side missing or zero, or one side more than
+ *  10x the other. Purely numeric -- string formatting (with the neutral arrow
+ *  glyph) lives in charts/format.ts. */
 export function pctDelta(current: number | null, previous: number | null): number | null {
-  if (current == null || previous == null || previous === 0) return null;
-  return ((current - previous) / previous) * 100;
+  if (current == null || previous == null || current <= 0 || previous <= 0) return null;
+  const ratio = current / previous;
+  if (ratio > MAX_COMPARABLE_RATIO || ratio < 1 / MAX_COMPARABLE_RATIO) return null;
+  return (ratio - 1) * 100;
 }
 
 export interface CalendarCell {
