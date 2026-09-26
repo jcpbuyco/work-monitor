@@ -8,9 +8,23 @@ export function formatUsd(n: number | null): string {
 }
 
 export function formatTokens(n: number): string {
+  // §6 (Insights): a lifetime total can reach into the billions (14.79B
+  // tokens on the current copy) -- without this case it fell through to the
+  // millions branch and printed an unreadable "14787.2M".
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
   if (n >= 1e3) return Math.round(n / 1e3) + "K";
   return String(n);
+}
+
+/** Whole-dollar, thousands-separated USD for a big standalone figure (a hero
+ *  number, a KPI tile, a records-strip value) -- distinct from `formatUsd`'s
+ *  exact-cents convention, which stays for table cells and axis ticks (§5:
+ *  "Large standalone numbers ... use proportional figures"). `null` keeps the
+ *  same "unpriced" convention as `formatUsd`. */
+export function formatUsdWhole(n: number | null): string {
+  if (n == null) return formatUsd(null);
+  return "$" + Math.round(n).toLocaleString("en-US");
 }
 
 /** "claude-opus-4-8" → "Opus 4.8"; unknown ids are best-effort title-cased.

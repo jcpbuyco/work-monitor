@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { costOf, canonicalModel, fnv1a, RATES_VERSION, type Tokens } from "../src/server/pricing.ts";
+import { costOf, canonicalModel, fnv1a, RATES_VERSION, rateFor, type Tokens } from "../src/server/pricing.ts";
 
 const zero: Tokens = { input: 0, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 };
 
@@ -187,5 +187,32 @@ describe("Cursor model ids (cursor.com/docs/models, fetched 2026-09-25)", () => 
     expect(canonicalModel("claude-opus-5-5[1m]")).toBe("claude-opus-5-5");
     expect(canonicalModel("gpt-5.5")).toBe("gpt-5.5");
     expect(canonicalModel("gpt-5.3-codex")).toBe("gpt-5.3-codex");
+  });
+});
+
+describe("rateFor", () => {
+  it("returns the same rate costOf uses internally, with no warning side effect", () => {
+    expect(rateFor("claude-opus-4-8")).toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 });
+  });
+
+  it("resolves aliases and date suffixes exactly like costOf/canonicalModel", () => {
+    expect(rateFor("opus")).toEqual(rateFor("claude-opus-5"));
+    expect(rateFor("claude-haiku-4-5-20251001")).toEqual(rateFor("claude-haiku-4-5"));
+  });
+
+  it("resolves Cursor ids exactly like canonicalModel", () => {
+    expect(rateFor("cursor-grok-4.6-high")).toEqual(rateFor("grok-4.6"));
+  });
+
+  it("returns null for an unknown model, without logging a warning", () => {
+    let called = false;
+    const orig = console.warn;
+    console.warn = () => { called = true; };
+    try {
+      expect(rateFor("some-brand-new-model-never-seen")).toBeNull();
+    } finally {
+      console.warn = orig;
+    }
+    expect(called).toBe(false);
   });
 });

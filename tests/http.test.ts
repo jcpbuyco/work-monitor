@@ -816,3 +816,43 @@ describe("POST /api/usage/cursor (am-cursor)", () => {
     expect((store.db.query("SELECT count(*) AS n FROM usage").get() as any).n).toBe(0);
   });
 });
+
+describe("GET /api/insights", () => {
+  it("returns 200 with the documented top-level keys", async () => {
+    const res = await fetch(`${base}/api/insights`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    for (const key of [
+      "meta", "months", "currentMonth", "kpi", "records", "byMonthModel", "byMonthTokenClass",
+      "byMonthKind", "days", "weekHour", "weekdayCounts", "activity", "workflowRuns", "models", "projects",
+    ]) {
+      expect(body).toHaveProperty(key);
+    }
+  });
+
+  it("an empty database returns usageRows: 0 and empty arrays", async () => {
+    const res = await fetch(`${base}/api/insights`);
+    const body = (await res.json()) as any;
+    expect(body.meta.usageRows).toBe(0);
+    expect(body.days).toEqual([]);
+    expect(body.months).toEqual([]);
+  });
+
+  it("reflects newly recorded usage", async () => {
+    await fetch(`${base}/events?type=session_start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: "s1", cwd: "/x/browns" }),
+    });
+    store.recordUsage({
+      uuid: "u1",
+      sessionId: "s1",
+      model: "claude-sonnet-5",
+      tokens: { input: 0, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 },
+      at: Date.now(),
+      cost: 3.5,
+    });
+    const body = (await (await fetch(`${base}/api/insights`)).json()) as any;
+    expect(body.kpi.lifetimeUsd).toBeCloseTo(3.5, 6);
+  });
+});

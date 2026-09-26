@@ -854,3 +854,66 @@ describe("Store §3: live workflow-agent activity from hook events", () => {
     expect(row).toEqual({ tool_calls: null, last_tool: null });
   });
 });
+
+describe("Store.insights memoization (§7)", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = freshStore();
+  });
+
+  const tok = { input: 0, output: 0, cache_read: 0, cache_create_5m: 0, cache_create_1h: 0 };
+
+  it("returns the identical cached object while the key is unchanged", () => {
+    store.applyEvent("s1", { project: "p", status: "working", last_activity_at: 1 }, 1);
+    store.recordUsage({ uuid: "u1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 1, cost: 1 });
+    const now = 1000;
+    const a = store.insights(now);
+    const b = store.insights(now + 10); // no new usage, no new workflow run, same local day
+    expect(b).toBe(a);
+  });
+
+  it("a usage insert within the 60s floor returns the cached object with meta.stale: true", () => {
+    store.applyEvent("s1", { project: "p", status: "working", last_activity_at: 1 }, 1);
+    const t0 = 1_000_000;
+    store.recordUsage({ uuid: "u1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 1, cost: 1 });
+    const a = store.insights(t0);
+    expect(a.meta.stale).toBe(false);
+    store.recordUsage({ uuid: "u2", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 2, cost: 2 });
+    const b = store.insights(t0 + 30_000); // 30s later -- inside the 60s floor
+    expect(b.meta.stale).toBe(true);
+    // still the OLD figures (u2's $2 not folded in yet) -- the floor genuinely
+    // skipped recomputation rather than recomputing and mislabeling it stale.
+    expect(b.kpi.lifetimeUsd).toBeCloseTo(1, 6);
+  });
+
+  it("recomputes once the 60s floor has passed", () => {
+    store.applyEvent("s1", { project: "p", status: "working", last_activity_at: 1 }, 1);
+    const t0 = 1_000_000;
+    store.recordUsage({ uuid: "u1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 1, cost: 1 });
+    store.insights(t0);
+    store.recordUsage({ uuid: "u2", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 2, cost: 2 });
+    const c = store.insights(t0 + 61_000); // past the floor
+    expect(c.meta.stale).toBe(false);
+    expect(c.kpi.lifetimeUsd).toBeCloseTo(3, 6);
+  });
+
+  it("a local day change recomputes immediately, even inside the 60s floor", () => {
+    store.applyEvent("s1", { project: "p", status: "working", last_activity_at: 1 }, 1);
+    const midnightMs = new Date(2026, 8, 25, 0, 0, 0, 0).getTime();
+    store.recordUsage({ uuid: "u1", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 1, cost: 1 });
+    store.insights(midnightMs - 5_000); // 23:59:55 on the 24th
+    store.recordUsage({ uuid: "u2", sessionId: "s1", model: "claude-sonnet-5", tokens: tok, at: 2, cost: 2 });
+    const afterMidnight = store.insights(midnightMs + 5_000); // 00:00:05 on the 25th, 10s later
+    expect(afterMidnight.meta.stale).toBe(false);
+    expect(afterMidnight.kpi.lifetimeUsd).toBeCloseTo(3, 6);
+  });
+
+  it("a workflow run upsert changes the fingerprint and is picked up once the floor passes", () => {
+    const t0 = 1_000_000;
+    const a = store.insights(t0);
+    expect(a.kpi.workflowRuns).toBe(0);
+    store.upsertWorkflowRun({ run_id: "wf_1", session_id: "s1", dir: "/x" });
+    const b = store.insights(t0 + 61_000);
+    expect(b.kpi.workflowRuns).toBe(1);
+  });
+});

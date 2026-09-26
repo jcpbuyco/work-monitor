@@ -140,6 +140,7 @@ export function AppBar({
   const controls = (
     <>
       <NavLink href="#/cost" active={route === "#/cost"} icon="$">Cost</NavLink>
+      <NavLink href="#/insights" active={route === "#/insights"} icon="◔">Insights</NavLink>
       {/* Grouped in their own flex row: the phone overflow panel stacks
           `controls`' top-level children vertically, and without this wrapper
           the count chip fell to a row of its own under a bare "Workflows"

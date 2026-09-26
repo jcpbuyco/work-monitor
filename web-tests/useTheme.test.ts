@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useTheme } from "../src/web/useTheme.ts";
+import { useTheme, useIsDarkMode } from "../src/web/useTheme.ts";
 
 beforeEach(() => {
   localStorage.clear();
@@ -56,5 +56,20 @@ describe("useTheme", () => {
     expect(result.current.theme).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(localStorage.getItem("am-theme")).toBe("dark");
+  });
+});
+
+describe("useIsDarkMode", () => {
+  it("reacts to a theme toggle from a SEPARATE useTheme() instance (regression: a second component's own useTheme() call never re-rendered when a DIFFERENT instance -- e.g. AppBar's toggle button -- flipped the html.dark class, leaving its cached theme, and anything computed from it, stale)", async () => {
+    localStorage.setItem("am-theme", "light");
+    const themeHook = renderHook(() => useTheme());
+    const darkHook = renderHook(() => useIsDarkMode());
+    expect(darkHook.result.current).toBe(false);
+    await act(async () => {
+      themeHook.result.current.toggle();
+      await Promise.resolve();
+    });
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(darkHook.result.current).toBe(true);
   });
 });

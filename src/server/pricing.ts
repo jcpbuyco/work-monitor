@@ -6,7 +6,7 @@ export interface Tokens {
   cache_create_1h: number;
 }
 
-interface Rate {
+export interface Rate {
   input: number; // USD per million input tokens
   output: number; // USD per million output tokens
   cacheRead: number; // USD per million cache-read tokens (explicit, not a multiplier)
@@ -95,12 +95,20 @@ function cursorRateKey(id: string): string {
   return fast ? `${base}-fast` : base;
 }
 
+/** The model's `Rate` table entry, or `null` when it has none (unpriced) --
+ *  the exact lookup `costOf` uses, with no warning side effect (§7 insights.ts
+ *  needs to re-price token classes for a model it has already priced once
+ *  without re-triggering the once-per-model console warning). */
+export function rateFor(model: string): Rate | null {
+  return RATES[canonicalModel(model)] ?? null;
+}
+
 const warned = new Set<string>();
 
 /** USD cost of one message's token usage, or `null` when the model has no
  *  entry in `RATES` -- unpriced, not free (§2.1). Unknown model → logged once. */
 export function costOf(model: string, t: Tokens): number | null {
-  const rate = RATES[canonicalModel(model)];
+  const rate = rateFor(model);
   if (!rate) {
     if (!warned.has(model)) {
       console.warn(`[pricing] unknown model, unpriced: ${model}`);

@@ -49,6 +49,20 @@ describe("App routing", () => {
     expect(await screen.findByText("Workflow runs")).toBeTruthy();
   });
 
+  it("renders the insights page at #/insights", async () => {
+    window.location.hash = "#/insights";
+    const App = (await import("../src/web/App.tsx")).default;
+    render(<App />);
+    expect(await screen.findByText(/Lifetime since/)).toBeTruthy();
+  });
+
+  it("routes #/insights?<anything> to the insights page the same way", async () => {
+    window.location.hash = "#/insights?x=1";
+    const App = (await import("../src/web/App.tsx")).default;
+    render(<App />);
+    expect(await screen.findByText(/Lifetime since/)).toBeTruthy();
+  });
+
   it("routes a session row's workflow-chip deep link (#/workflows?run=<id>) to the workflows page, not the board", async () => {
     window.location.hash = "#/workflows?run=wf_abc";
     const App = (await import("../src/web/App.tsx")).default;

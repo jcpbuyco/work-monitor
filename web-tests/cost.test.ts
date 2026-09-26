@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatUsd, formatTokens, prettyModel, formatDay, costDailyRange } from "../src/web/cost.ts";
+import { formatUsd, formatUsdWhole, formatTokens, prettyModel, formatDay, costDailyRange } from "../src/web/cost.ts";
 
 describe("formatUsd", () => {
   it("formats dollars with two decimals", () => {
@@ -19,6 +19,21 @@ describe("formatTokens", () => {
     expect(formatTokens(950)).toBe("950");
     expect(formatTokens(312_000)).toBe("312K");
     expect(formatTokens(1_240_000)).toBe("1.2M");
+  });
+  it("uses a B suffix at a billion, so an Insights-page lifetime total never prints as an unreadable 4-digit M figure", () => {
+    expect(formatTokens(14_786_528_150)).toBe("14.79B");
+    expect(formatTokens(1_000_000_000)).toBe("1.00B");
+  });
+});
+
+describe("formatUsdWhole", () => {
+  it("rounds to whole dollars with a thousands separator, for a big standalone figure", () => {
+    expect(formatUsdWhole(10800.21)).toBe("$10,800");
+    expect(formatUsdWhole(4957.4)).toBe("$4,957");
+    expect(formatUsdWhole(590)).toBe("$590");
+  });
+  it("renders null the same 'unpriced' way formatUsd does", () => {
+    expect(formatUsdWhole(null)).toBe("unpriced");
   });
 });
 

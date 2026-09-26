@@ -6,6 +6,7 @@ import { Board } from "./components/Board.tsx";
 import { useHashRoute } from "./useHashRoute.ts";
 import { CostDailyPage } from "./components/CostDailyPage.tsx";
 import { WorkflowsPage } from "./components/WorkflowsPage.tsx";
+import { InsightsPage } from "./components/InsightsPage.tsx";
 
 /** §5.2: the SSE stream counts as stale once this long has passed with no
  *  message at all - state OR the 5s workflows tick, either one resets it. */
@@ -92,6 +93,11 @@ export default function App() {
   if (route === "#/workflows" || route.startsWith("#/workflows?")) {
     return (
       <WorkflowsPage state={state} workflows={workflows} ready={ready} connected={connected} lastMessageAt={lastMessageAt} />
+    );
+  }
+  if (route === "#/insights" || route.startsWith("#/insights?")) {
+    return (
+      <InsightsPage state={state} workflows={workflows} ready={ready} connected={connected} lastMessageAt={lastMessageAt} />
     );
   }
   return (

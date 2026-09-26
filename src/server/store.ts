@@ -5,6 +5,8 @@ import type { Tokens } from "./pricing.ts";
 import { deriveRunState } from "./workflows.ts";
 import { WF_QUIET_MS, WF_RECHECK_MS } from "./config.ts";
 import { truncate } from "./derive.ts";
+import { computeInsights } from "./insights.ts";
+import type { InsightsResponse } from "../shared/insights.ts";
 
 const SESSION_COLS =
   "id, project, cwd, transcript_path, status, current_task, current_intent, attention_reason, active_tool, branch, idle_reason, harness, model, title, parent_session_id, harness_version, started_at, last_activity_at, ended_at";
@@ -289,6 +291,21 @@ export class Store {
   private costByProjectCache: {
     version: number;
     rows: { project: string; costUsd: number | null; tokens: number; unpricedTokens: number }[];
+  } | null = null;
+  /** Insights payload cache (§7 of the Insights spec). Keyed on a string
+   *  combining `usageVersion` with the workflow-runs fingerprint (count +
+   *  MAX(last_seen_at), a sub-millisecond query) -- either changing means new
+   *  data exists. `localDayKey` is tracked separately because a day rollover
+   *  must recompute unconditionally, bypassing the 60s floor below.
+   *  `computedAtMs` anchors that floor: within 60s of the last real compute, a
+   *  changed key is served as the SAME cached object with `meta.stale = true`
+   *  rather than recomputed, so a burst of agent traffic can only trigger the
+   *  ~150ms computation about once a minute (per viewer of the page). */
+  private insightsCache: {
+    key: string;
+    localDayKey: string;
+    computedAtMs: number;
+    value: InsightsResponse;
   } | null = null;
   private costByBranchCache: {
     version: number;
@@ -1059,6 +1076,43 @@ export class Store {
       tokens: r.tokens,
       unpricedTokens: r.unpriced,
     }));
+  }
+
+  /** The `/api/insights` payload (Insights spec §7), memoized per the rules
+   *  above: an unchanged key returns the SAME cached object (reference
+   *  equality, so a caller can tell nothing changed); a key that changed
+   *  within 60s of the last real compute returns the cached object with
+   *  `meta.stale` flipped on instead of recomputing; a local day rollover
+   *  always recomputes regardless of the floor. */
+  insights(now: number = Date.now()): InsightsResponse {
+    const dayKey = (() => {
+      const d = new Date(now);
+      const p2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    })();
+    const wf = this.db.query(`SELECT COUNT(*) AS c, MAX(last_seen_at) AS m FROM workflow_runs`).get() as {
+      c: number;
+      m: number | null;
+    };
+    const key = `${this.usageVersion}|${wf.c}|${wf.m ?? 0}`;
+
+    const cache = this.insightsCache;
+    if (cache) {
+      const sameDay = cache.localDayKey === dayKey;
+      if (sameDay && cache.key === key) return cache.value;
+      if (sameDay && now - cache.computedAtMs < 60_000) {
+        if (!cache.value.meta.stale) {
+          cache.value = { ...cache.value, meta: { ...cache.value.meta, stale: true } };
+        }
+        return cache.value;
+      }
+    }
+
+    const t0 = performance.now();
+    const value = computeInsights(this.db, now);
+    value.meta.computeMs = performance.now() - t0;
+    this.insightsCache = { key, localDayKey: dayKey, computedAtMs: now, value };
+    return value;
   }
 
   createTodo(input: CreateTodoInput, now: number): Todo {

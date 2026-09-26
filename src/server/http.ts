@@ -351,6 +351,20 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
+      // --- Insights page payload; pull only, never pushed over SSE (Insights
+      // spec §7). computeInsights() throws are caught HERE (not just by the
+      // outer catch) so a broken compute logs once via logOnce, same as the
+      // state-broadcast and workflow-scan degradation paths. ---
+      if (method === "GET" && path === "/api/insights") {
+        try {
+          json(res, 200, store.insights(now()));
+        } catch (err) {
+          logOnce("insights", err);
+          json(res, 500, { error: String(err) });
+        }
+        return;
+      }
+
       // --- workflow run LIST; pull, not streamed (live runs use the SSE
       // `workflows` event instead - buildState() must stay under 50ms warm
       // (§1.3) and must not grow). §3: runs WITHOUT their per-agent array (see

@@ -115,6 +115,32 @@ describe("AppBar §5.2: active route highlight", () => {
     render(<AppBar state={state} route="#/workflows" />);
     expect(screen.getByText("Workflows").closest("a")!.getAttribute("aria-current")).toBe("page");
   });
+
+  it("marks the Insights link current at '#/insights', and nothing else", () => {
+    render(<AppBar state={state} route="#/insights" />);
+    expect(screen.getByText("Insights").closest("a")!.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("Cost").closest("a")!.getAttribute("aria-current")).toBeNull();
+  });
+});
+
+describe("AppBar: Insights nav link", () => {
+  it("appears between Cost and Workflows in the desktop cluster", () => {
+    render(<AppBar state={state} route="#/" />);
+    const links = screen.getAllByRole("link").map((a) => a.textContent ?? "");
+    const cost = links.findIndex((t) => t.includes("Cost"));
+    const insights = links.findIndex((t) => t.includes("Insights"));
+    const workflows = links.findIndex((t) => t.includes("Workflows"));
+    expect(cost).toBeGreaterThanOrEqual(0);
+    expect(insights).toBeGreaterThan(cost);
+    expect(workflows).toBeGreaterThan(insights);
+  });
+
+  it("also appears in the phone overflow panel", () => {
+    render(<AppBar state={state} />);
+    fireEvent.click(screen.getByLabelText("More controls"));
+    const panel = screen.getByTestId("appbar-overflow-panel");
+    expect(within(panel).getByText("Insights")).toBeTruthy();
+  });
 });
 
 describe("AppBar §5.2: phone overflow menu", () => {

@@ -44,6 +44,25 @@
 
   --shadow: 222 32% 28%;
   --shadow-a: 0.10;
+
+  /* --- Insights chart tokens (Insights spec §5) --- raw hex, not HSL: these
+     are picked/validated as exact hex by scripts/validate_palette.js, and
+     re-deriving them through the HSL ramp above would risk drifting off the
+     validated values by a rounding step. Dark values below are SELECTED
+     steps from the same ramps (never an automatic flip) -- see the spec's
+     validator results (§5) for the six-check pass/warn record. */
+  --viz-s1:      #2a78d6; /* categorical slot 1 -- blue; also every single-series chart */
+  --viz-s2:      #eb6834; /* categorical slot 2 -- orange */
+  --viz-s3:      #1baf7a; /* categorical slot 3 -- aqua (WARN 2.7-2.8:1 vs surface in light -- always paired with a legend + table view) */
+  --viz-other:   #c5cad4; /* "Other" / de-emphasised fills = border-strong */
+  --viz-context: #727a86; /* context lines in emphasis charts = text-4 */
+  --viz-s1-soft: #86b6ef; /* second step of the delegation ramp (blue 250) */
+  --viz-seq-1:   #86b6ef; /* sequential ramp, low -> high (starts one step darker than blue-100, which failed the light-end contrast check) */
+  --viz-seq-2:   #5598e7;
+  --viz-seq-3:   #2a78d6;
+  --viz-seq-4:   #1c5cab;
+  --viz-seq-5:   #104281;
+  --viz-empty:   #e9ecf2; /* zero / no-data heat cell = surface-3 */
 }
 
 html.dark {                      /* DARK - the reference design */
@@ -75,6 +94,20 @@ html.dark {                      /* DARK - the reference design */
 
   --shadow: 0 0% 0%;
   --shadow-a: 0.55;
+
+  /* Dark steps of the SAME ramps -- see the light block's comment. */
+  --viz-s1:      #3987e5;
+  --viz-s2:      #d95926;
+  --viz-s3:      #199e70;
+  --viz-other:   #3a3f47; /* = border-strong (dark) */
+  --viz-context: #626873; /* = text-4 (dark) */
+  --viz-s1-soft: #184f95; /* blue 600 */
+  --viz-seq-1:   #184f95;
+  --viz-seq-2:   #256abf;
+  --viz-seq-3:   #3987e5;
+  --viz-seq-4:   #6da7ec;
+  --viz-seq-5:   #9ec5f4;
+  --viz-empty:   #1d2026; /* = surface-3 (dark) */
 }
 
 /* Alias layer - PERMANENT, not a migration scaffold. `toolDot()` returns
