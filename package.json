@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "server": "bun run src/server/index.ts",
-    "test": "TZ=Europe/Berlin bun test tests/",
+    "test": "bun test tests/",
     "web:dev": "vite",
     "web:build": "vite build",
     "web:test": "vitest run",

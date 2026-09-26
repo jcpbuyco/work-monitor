@@ -19,11 +19,11 @@ import {
 // process's timezone via the C library, which caches it at startup -- writing
 // `process.env.TZ` from INSIDE a running test does not move it, even though
 // plain JS `Date` getters (V8/ICU) pick the new value up immediately. The two
-// engines must agree for every month/day bucket in this file, so the fix is
-// in package.json's `test` script (`TZ=Europe/Berlin bun test tests/`), which
-// sets the timezone before Bun starts. This test pins that finding down: if
-// someone "simplifies" the test script and drops the env var, this is the
-// test that goes red.
+// engines must agree for every month/day bucket in this file. `bun test` also
+// forces JS to UTC unless TZ is set, while SQLite keeps the system zone, so
+// the repo's `.env.test` sets TZ before any test code runs (Bun loads it at
+// startup), for `bun test tests/` and `bun run test` alike. If that file is
+// removed, the second test below goes red.
 // ---------------------------------------------------------------------------
 describe("timezone: bun:sqlite 'localtime' vs JS Date", () => {
   it("a TZ write from inside the test does NOT move bun:sqlite's 'localtime' (documented limitation)", () => {
@@ -40,11 +40,13 @@ describe("timezone: bun:sqlite 'localtime' vs JS Date", () => {
       // in-process reassignment above was a no-op for SQLite specifically.
       expect(row.s).not.toBe("2025-09-01 05:30");
     } finally {
-      process.env.TZ = before;
+      // Assigning undefined would leave a bogus value behind for later tests.
+      if (before === undefined) delete process.env.TZ;
+      else process.env.TZ = before;
     }
   });
 
-  it("with TZ pinned before process start (package.json's test script), SQLite 'localtime' and JS Date agree", () => {
+  it("with TZ pinned at startup (.env.test), SQLite 'localtime' and JS Date agree", () => {
     const db = new Database(":memory:");
     const at = 1_756_661_400_000;
     const row = db.query("SELECT strftime('%Y-%m-%d %H:%M', $at/1000, 'unixepoch', 'localtime') AS s").get({ $at: at }) as {
