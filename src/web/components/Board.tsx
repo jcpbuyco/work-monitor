@@ -3,11 +3,11 @@ import type { State, Session, Activity, LiveWorkflow, LastRun } from "../types.t
 import { HARNESSES, isHarness, type Harness } from "../../shared/harness.ts";
 import { HarnessMark } from "./HarnessMark.tsx";
 import { useNow } from "../useNow.ts";
+import { useDelayedFlag } from "../useDelayedFlag.ts";
 import { usePersistedValue } from "../usePersistedValue.ts";
 import { buildSessionTree, type SessionNode } from "../sessionTree.ts";
 import { Lane, Column } from "./Lane.tsx";
 import { SessionCard } from "./SessionCard.tsx";
-import { AppBar } from "./AppBar.tsx";
 import { TodosSection } from "./TodosSection.tsx";
 import { ActivityFeed } from "./ActivityFeed.tsx";
 import { ToolStats } from "./ToolStats.tsx";
@@ -67,6 +67,7 @@ export function Board({
   // Re-render every second so relative timestamps (and the reconnecting bar's
   // "last update Xm ago") tick live.
   useNow();
+  const slowLoad = useDelayedFlag(!ready, 300);
 
   const [harnessFilter, setHarnessFilter] = usePersistedValue<HarnessFilter>(
     "am-session-harness-filter",
@@ -125,16 +126,22 @@ export function Board({
   const MAX_DISMISSED_RUNS = 20;
   const dismissRun = (runId: string) => setDismissedRuns([...dismissedRuns, runId].slice(-MAX_DISMISSED_RUNS));
 
+  // A fast first load (the usual case: the local server answers in a few ms)
+  // goes straight from blank to real content. Placeholders only appear once
+  // loading is genuinely slow, since their heights can never match the real
+  // board and swapping them in and out makes everything below jump.
+  if (!ready && !slowLoad) {
+    return (
+      <div className="mt-3 min-h-[60vh]" aria-busy="true">
+        <span className="sr-only" role="status">
+          Loading sessions
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-board px-3 pb-16 sm:px-6">
-      <AppBar
-        state={state}
-        workflows={workflows}
-        ready={ready}
-        route="#/"
-        connected={connected}
-        lastMessageAt={lastMessageAt}
-      />
+    <>
 
       <div className="mt-3 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
         <main className="min-w-0 lg:pr-6">
@@ -200,12 +207,20 @@ export function Board({
             Live Activity, Session cost, Cost breakdown, Tool usage (§5.2) -
             activity is the reason this sidebar exists; the others are context. */}
         <aside className="mt-6 lg:sticky lg:top-14 lg:mt-0 lg:border-l-hairline lg:border-border-weak lg:pl-6">
-          <ActivityFeed activity={state.activity} sessions={state.sessions} />
-          <CostPanel cost={state.cost} />
-          <CostBreakdown cost={state.cost} />
-          <ToolStats stats={state.stats} />
+          {ready ? (
+            <>
+              <ActivityFeed activity={state.activity} sessions={state.sessions} />
+              <CostPanel cost={state.cost} />
+              <CostBreakdown cost={state.cost} />
+              <ToolStats stats={state.stats} />
+            </>
+          ) : (
+            // Before data, the feed would claim "Waiting for tool activity…",
+            // a confident empty state that isn't true yet.
+            <ColumnSkeleton />
+          )}
         </aside>
       </div>
-    </div>
+    </>
   );
 }

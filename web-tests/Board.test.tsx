@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, within, fireEvent, act } from "@testing-library/react";
 import { Board } from "../src/web/components/Board.tsx";
 import type { State } from "../src/web/types.ts";
 
@@ -164,11 +164,32 @@ describe("Board §5.2: last workflow run line", () => {
 });
 
 describe("Board §5.2: ready / skeleton", () => {
-  it("shows skeleton placeholders instead of the (empty) session lists before ready", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** Render before ready and wait out the delay, so the slow-load
+   *  placeholders are showing. */
+  function renderSlowLoad(st: State) {
+    vi.useFakeTimers();
+    const r = render(<Board state={st} ready={false} />);
+    act(() => vi.advanceTimersByTime(300));
+    return r;
+  }
+
+  it("shows nothing but a screen-reader status during a fast load, so no placeholder can jump away", () => {
+    vi.useFakeTimers();
     const { container } = render(<Board state={{ ...state, sessions: [] }} ready={false} />);
+    expect(container.querySelectorAll(".am-pulse").length).toBe(0);
+    expect(screen.queryByTestId("session-group-idle")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Loading");
+  });
+
+  it("shows skeleton placeholders instead of the (empty) session lists once loading is slow", () => {
+    const { container } = renderSlowLoad({ ...state, sessions: [] });
     // three columns, each with its own skeleton block
     expect(container.querySelectorAll(".am-pulse").length).toBeGreaterThan(0);
     expect(screen.queryByText("browns")).toBeNull();
+    // the sidebar never claims "Waiting for tool activity…" before data
+    expect(screen.queryByText(/Waiting for tool activity/)).toBeNull();
   });
 
   it("renders real sessions once ready (the default)", () => {
@@ -176,20 +197,15 @@ describe("Board §5.2: ready / skeleton", () => {
     expect(screen.getByText("browns")).toBeTruthy();
   });
 
-  it("passes ready through to the AppBar's counts", () => {
-    render(<Board state={state} ready={false} />);
-    expect(screen.getByTestId("appbar-count-working").textContent).toContain("…");
-  });
-
   it("shows … instead of a confident 0 in a session column's own header before ready (finding fix)", () => {
-    render(<Board state={{ ...state, sessions: [] }} ready={false} />);
+    renderSlowLoad({ ...state, sessions: [] });
     const idle = screen.getByTestId("session-group-idle");
     expect(within(idle).getByText("…")).toBeTruthy();
     expect(within(idle).queryByText("0")).toBeNull();
   });
 
   it("shows … in the harness filter's counts before ready, not confident zeroes (finding fix)", () => {
-    render(<Board state={{ ...state, sessions: [] }} ready={false} />);
+    renderSlowLoad({ ...state, sessions: [] });
     expect(screen.getByText("All (…)")).toBeTruthy();
     expect(screen.queryByText("All (0)")).toBeNull();
   });
@@ -201,12 +217,6 @@ describe("Board §5.2: reconnecting bar", () => {
     expect(screen.queryByTestId("reconnecting-bar")).toBeNull();
   });
 
-  it("shows a stale-data warning once disconnected", () => {
-    render(<Board state={state} connected={false} lastMessageAt={Date.now() - 120_000} />);
-    const bar = screen.getByTestId("reconnecting-bar");
-    expect(bar.textContent).toContain("Reconnecting");
-    expect(bar.textContent).toContain("2m ago");
-  });
 });
 
 describe("Board §5.1: harness filter", () => {

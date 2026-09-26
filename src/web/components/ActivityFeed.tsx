@@ -58,7 +58,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                   value={sessionFilter}
                   onChange={(e) => setSessionFilter(e.target.value)}
                   aria-label="Filter activity by session"
-                  className="h-6 max-w-[9rem] cursor-pointer appearance-none rounded-md border-hairline border-border bg-transparent pl-2 pr-6 text-2xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink"
+                  className="h-6 w-[9rem] cursor-pointer truncate appearance-none rounded-md border-hairline border-border bg-transparent pl-2 pr-6 text-2xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink"
                 >
                   <option value="all">all sessions</option>
                   {[...sessionOptions.entries()].map(([id, label]) => (
@@ -109,7 +109,7 @@ export function ActivityFeed({ activity, sessions }: { activity: Activity[]; ses
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="shrink-0 font-medium text-ink">{prettyTool(a.tool)}</span>
                       {a.dur != null && <span className="shrink-0 tabular-nums text-ink-4">{formatDur(a.dur)}</span>}
-                      <span className="ml-auto shrink-0 tabular-nums text-ink-4">{ago(a.at)}</span>
+                      <span className="ml-auto min-w-[7ch] shrink-0 text-right tabular-nums text-ink-4">{ago(a.at)}</span>
                     </div>
                   </div>
                   <div className="flex items-baseline gap-2 pl-rail">

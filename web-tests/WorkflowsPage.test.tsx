@@ -226,14 +226,6 @@ describe("WorkflowsPage", () => {
     expect(screen.getAllByTestId("wf-row")[0].querySelector("svg")).toBeTruthy();
   });
 
-  it("shows the shared reconnecting bar when disconnected, same as the board (§5.2 finding fix)", async () => {
-    // The banner used to live on Board alone, so this page - sharing the
-    // exact same App-level SSE subscription - looked falsely healthy while
-    // the stream was actually stale.
-    mockFetch(RUNS);
-    render(<WorkflowsPage connected={false} lastMessageAt={Date.now() - 120_000} />);
-    expect(screen.getByTestId("reconnecting-bar").textContent).toContain("Reconnecting");
-  });
 });
 
 describe("WorkflowsPage §5.3: search and project filter", () => {
@@ -630,11 +622,18 @@ describe("WorkflowsPage §5.3: live duration", () => {
 });
 
 describe("WorkflowsPage §5.3: skeleton loading and responsive layout", () => {
-  it("shows skeleton placeholder rows (not bare text) while the initial fetch is in flight", () => {
-    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch; // never resolves
-    const { container } = render(<WorkflowsPage />);
-    expect(container.querySelector(".am-pulse")).toBeTruthy();
-    expect(screen.getByText("Loading…")).toBeTruthy(); // still announced to assistive tech
+  it("announces loading at once but shows placeholders only once the first fetch is slow", () => {
+    vi.useFakeTimers();
+    try {
+      global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch; // never resolves
+      const { container } = render(<WorkflowsPage />);
+      expect(screen.getByText("Loading…")).toBeTruthy(); // announced to assistive tech immediately
+      expect(container.querySelector(".am-pulse")).toBeNull(); // a fast load never flashes a skeleton
+      act(() => vi.advanceTimersByTime(300));
+      expect(container.querySelector(".am-pulse")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders the desktop table by default (matchMedia unavailable in plain jsdom, same convention as useTheme)", async () => {

@@ -21,12 +21,18 @@ beforeEach(() => {
   document.documentElement.classList.remove("dark");
 });
 
+
+/** A count chip by its full visible text ("1 working"): the number sits in its
+ *  own fixed-width slot, so the phrase spans two inline elements. */
+const countChip = (text: string) =>
+  screen.getByText((_, el) => !!el?.getAttribute("data-testid")?.startsWith("appbar-count-") && el.textContent === text);
+
 describe("AppBar", () => {
   it("shows live counts derived from state", () => {
     render(<AppBar state={state} />);
-    expect(screen.getByText("1 working")).toBeDefined();
-    expect(screen.getByText("1 needs you")).toBeDefined();
-    expect(screen.getByText("1 to do")).toBeDefined();
+    expect(countChip("1 working")).toBeDefined();
+    expect(countChip("1 needs you")).toBeDefined();
+    expect(countChip("1 to do")).toBeDefined();
   });
 
   it("toggles the dark class when the theme button is clicked", () => {
@@ -117,7 +123,7 @@ describe("AppBar §5.2/A4: two-stage measured overflow", () => {
   it("stays fully inline (no overflow measured)", () => {
     fakeOverflow = false;
     render(<AppBar state={state} route="#/insights" />);
-    expect(screen.getByText("1 working")).toBeTruthy();
+    expect(countChip("1 working")).toBeTruthy();
     expect(moreControlsVisible()).toBe(false);
   });
 
@@ -125,8 +131,8 @@ describe("AppBar §5.2/A4: two-stage measured overflow", () => {
     fakeOverflow = "controls";
     render(<AppBar state={state} route="#/insights" />);
     expect(moreControlsVisible()).toBe(true);
-    expect(screen.getByText("1 working")).toBeTruthy();
-    expect(screen.getByText("1 needs you")).toBeTruthy();
+    expect(countChip("1 working")).toBeTruthy();
+    expect(countChip("1 needs you")).toBeTruthy();
   });
 
   it("also collapses the count labels to icon+number when collapsing the controls alone still isn't enough", () => {
@@ -156,7 +162,9 @@ describe("AppBar chrome", () => {
     expect(screen.getByTestId("appbar-count-working").querySelector('[data-glyph="working"]')).toBeTruthy();
     expect(screen.getByTestId("appbar-count-needs-you").querySelector('[data-glyph="needs_you"]')).toBeTruthy();
     expect(screen.getByTestId("appbar-count-todo").querySelector('[data-glyph="todo"]')).toBeTruthy();
-    expect(screen.getByText("1 working").tagName).toBe("SPAN");
+    // Count and label read as one phrase from a single chip element.
+    expect(countChip("1 working").tagName).toBe("SPAN");
+    expect(countChip("1 working").getAttribute("data-testid")).toBe("appbar-count-working");
   });
 
   it("never spins a glyph in the chrome", () => {
@@ -199,7 +207,7 @@ describe("AppBar §5.2: ready state", () => {
 
   it("shows real counts once ready (the default)", () => {
     render(<AppBar state={state} />);
-    expect(screen.getByText("1 working")).toBeTruthy();
+    expect(countChip("1 working")).toBeTruthy();
   });
 });
 

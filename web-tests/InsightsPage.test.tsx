@@ -114,12 +114,17 @@ describe("InsightsPage", () => {
     expect(await screen.findByText("$10,800")).toBeTruthy();
   });
 
-  it("shows a page-shaped skeleton, announced to screen readers, until the first response arrives", async () => {
+  it("announces loading at once and shows a page-shaped skeleton only when the first response is slow", async () => {
     let resolveFirst: (r: Response) => void;
     fetchImpl = () => new Promise((resolve) => { resolveFirst = resolve; });
+    vi.useFakeTimers();
     render(<InsightsPage state={readyState} />);
-    expect(screen.getByTestId("insights-skeleton")).toBeTruthy();
+    // Announced at once; the skeleton itself only after a slow 300ms.
     expect(screen.getByRole("status").textContent).toContain("Loading insights");
+    expect(screen.queryByTestId("insights-skeleton")).toBeNull();
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByTestId("insights-skeleton")).toBeTruthy();
+    vi.useRealTimers();
     resolveFirst!({ ok: true, json: async () => baseResponse() } as Response);
     expect(await screen.findByText("$10,800")).toBeTruthy();
     expect(screen.queryByTestId("insights-skeleton")).toBeNull();

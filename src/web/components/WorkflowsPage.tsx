@@ -7,9 +7,9 @@ import { useDebouncedValue } from "../useDebouncedValue.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
 import { useNow } from "../useNow.ts";
 import { useHashRoute } from "../useHashRoute.ts";
+import { useDelayedFlag } from "../useDelayedFlag.ts";
 import { Segmented, Chip, Chevron, Skeleton, DownCaret } from "./primitives.tsx";
 import { StatusGlyph } from "./StatusGlyph.tsx";
-import { AppBar } from "./AppBar.tsx";
 import type { WorkflowRunSummary, WorkflowRun, WorkflowAgentView, AgentCounts, State, LiveWorkflow } from "../types.ts";
 
 const EMPTY_STATE: State = {
@@ -281,6 +281,10 @@ export function WorkflowsPage({
   const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
+  // Same rule as the Cost page: after the first load, a filter or search
+  // change keeps the current list on screen, dimmed, until the new one lands.
+  const [refetching, setRefetching] = useState(false);
+  const slowFirstLoad = useDelayedFlag(status === "loading", 300);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "when", dir: "desc" });
@@ -363,9 +367,8 @@ export function WorkflowsPage({
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
-    setRuns([]);
-    setTotal(0);
+    setStatus((s) => (s === "ok" ? s : "loading"));
+    setRefetching(true);
     const { since } = costDailyRange(range, Date.now());
     const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
     if (since != null) params.set("since", String(since));
@@ -378,9 +381,12 @@ export function WorkflowsPage({
         setRuns(Array.isArray(body?.runs) ? (body.runs as WorkflowRunSummary[]) : []);
         setTotal(typeof body?.total === "number" ? body.total : 0);
         setStatus("ok");
+        setRefetching(false);
       })
       .catch(() => {
-        if (!cancelled) setStatus("error");
+        if (cancelled) return;
+        setStatus("error");
+        setRefetching(false);
       });
     return () => {
       cancelled = true;
@@ -612,15 +618,7 @@ export function WorkflowsPage({
   };
 
   return (
-    <div className="mx-auto max-w-board px-3 pb-16 sm:px-6">
-      <AppBar
-        state={state}
-        workflows={workflows}
-        ready={ready}
-        route="#/workflows"
-        connected={connected}
-        lastMessageAt={lastMessageAt}
-      />
+    <>
       {/* §5.2: the page's own slim toolbar, right under the shared AppBar -
           replaces the old standalone PageHeader (which dropped the AppBar
           entirely on this route). */}
@@ -651,7 +649,9 @@ export function WorkflowsPage({
             value={project}
             onChange={(e) => setProject(e.target.value)}
             aria-label="Filter by project"
-            className="h-7 cursor-pointer appearance-none rounded-md border-hairline border-border bg-transparent py-0 pl-2.5 pr-6 text-xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink"
+            // Fixed width: a native select sizes to its widest option, so the
+            // control used to widen (and its caret jump) when project names loaded.
+            className="h-7 w-44 cursor-pointer truncate appearance-none rounded-md border-hairline border-border bg-transparent py-0 pl-2.5 pr-6 text-xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink"
           >
             <option value="">All projects</option>
             {projects.map((p) => (
@@ -688,123 +688,126 @@ export function WorkflowsPage({
       {/* Same four states, in the same order, as CostDailyPage: error → loading →
           empty → table. Without the loading branch the totals row renders "0 runs"
           for one frame on every window change. */}
-      {status === "error" ? (
-        <p className="py-16 text-center text-sm text-ink-3">Couldn’t load workflow runs.</p>
-      ) : status === "loading" ? (
-        <>
-          <p role="status" aria-live="polite" className="sr-only">Loading…</p>
-          {isMobile ? <SkeletonCards /> : <SkeletonTable />}
-        </>
-      ) : sorted.length === 0 ? (
-        <div className="py-16 text-center text-sm text-ink-3">
-          {/* Distinguishes "the window is genuinely empty" from "your search/
-              project filter matched nothing" -- the same generic copy for both
-              (found in manual testing) left a filtered-to-zero search looking
-              exactly like there was no data at all, with no way back. */}
-          <p>{q.trim() || project ? "No runs match these filters." : "No workflow runs in this window."}</p>
-          {(q.trim() || project) && (
-            <button
-              type="button"
-              onClick={() => {
-                setQInput("");
-                setProject("");
-              }}
-              className="mt-2 text-xs text-accent underline-offset-2 hover:underline"
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
-      ) : (
-        <>
-          {/* §5.3: "tables become stacked cards below md" -- exactly one of
-              these two layouts renders (see useMediaQuery's doc comment). */}
-          {!isMobile && (
-            <table className="w-full border-collapse font-mono text-xs">
-              <thead>
-                <tr>
-                  {COLS.map((c) => (
-                    <th
-                      key={c.key}
-                      aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                      className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(c)}
-                        className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
-                      >
-                        {c.label}
-                        {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {dayGroups.map((g) => (
-                  <Fragment key={g.day}>
-                    <tr className="bg-surface-1">
-                      <td colSpan={COLS.length} className="px-2 py-1 text-3xs font-semibold uppercase tracking-caps text-ink-4">
-                        {dayGroupLabel(g.day)}
-                      </td>
-                    </tr>
-                    {g.rows.map(renderRow)}
-                  </Fragment>
-                ))}
-                <tr data-testid="wf-totals" className="border-t border-border bg-surface-1 font-semibold text-ink">
-                  <td className="px-2 py-[0.3125rem]" />
-                  <td className="px-2 py-[0.3125rem]">{runsCountLabel(sorted.length, total)}</td>
-                  <td className="px-2 py-[0.3125rem]" />
-                  <td className="px-2 py-[0.3125rem]" />
-                  <td className="px-2 py-[0.3125rem]" />
-                  <td className="px-2 py-[0.3125rem] text-right tabular-nums">{totals.agents}</td>
-                  <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatTokens(totals.tokens)}</td>
-                  <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatUsd(totals.cost)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-
-          {/* §5.3: the SAME dayGroups/sorted data, rendered as cards instead
-              of table rows so nothing on a 390px phone forces the page to
-              scroll sideways. */}
-          {isMobile && (
-          <div className="space-y-3">
-            {dayGroups.map((g) => (
-              <div key={g.day}>
-                <div className="mb-1.5 text-3xs font-semibold uppercase tracking-caps text-ink-4">{dayGroupLabel(g.day)}</div>
-                <div className="space-y-2">{g.rows.map(renderCard)}</div>
-              </div>
-            ))}
-            <div data-testid="wf-totals-mobile" className="pt-1 text-2xs text-ink-3">
-              {runsCountLabel(sorted.length, total)} · {plural(totals.agents, "agent")} · {formatTokens(totals.tokens)} tok ·{" "}
-              {formatUsd(totals.cost)}
-            </div>
-          </div>
-          )}
-
-          {sorted.length < total && (
-            <div className="flex flex-col items-center gap-1.5 py-4">
-              {loadMoreError && <p className="text-2xs text-danger">Couldn’t load more runs.</p>}
+      {/* Dimmed, never blanked, while a reload after the first is in flight. */}
+      <div aria-busy={refetching} style={{ opacity: refetching ? 0.6 : 1 }} className="transition-opacity duration-quick ease-quad">
+        {status === "error" ? (
+          <p className="py-16 text-center text-sm text-ink-3">Couldn’t load workflow runs.</p>
+        ) : status === "loading" ? (
+          <>
+            <p role="status" aria-live="polite" className="sr-only">Loading…</p>
+            {slowFirstLoad && (isMobile ? <SkeletonCards /> : <SkeletonTable />)}
+          </>
+        ) : sorted.length === 0 ? (
+          <div className="py-16 text-center text-sm text-ink-3">
+            {/* Distinguishes "the window is genuinely empty" from "your search/
+                project filter matched nothing" -- the same generic copy for both
+                (found in manual testing) left a filtered-to-zero search looking
+                exactly like there was no data at all, with no way back. */}
+            <p>{q.trim() || project ? "No runs match these filters." : "No workflow runs in this window."}</p>
+            {(q.trim() || project) && (
               <button
                 type="button"
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-md border-hairline border-border px-3 py-1.5 text-xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink disabled:opacity-50"
+                onClick={() => {
+                  setQInput("");
+                  setProject("");
+                }}
+                className="mt-2 text-xs text-accent underline-offset-2 hover:underline"
               >
-                {loadingMore ? "Loading…" : loadMoreError ? "Retry" : "Load more"}
+                Clear filters
               </button>
-            </div>
-          )}
+            )}
+          </div>
+        ) : (
+          <>
+            {/* §5.3: "tables become stacked cards below md" -- exactly one of
+                these two layouts renders (see useMediaQuery's doc comment). */}
+            {!isMobile && (
+              <table className="w-full border-collapse font-mono text-xs">
+                <thead>
+                  <tr>
+                    {COLS.map((c) => (
+                      <th
+                        key={c.key}
+                        aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+                        className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(c)}
+                          className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
+                        >
+                          {c.label}
+                          {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayGroups.map((g) => (
+                    <Fragment key={g.day}>
+                      <tr className="bg-surface-1">
+                        <td colSpan={COLS.length} className="px-2 py-1 text-3xs font-semibold uppercase tracking-caps text-ink-4">
+                          {dayGroupLabel(g.day)}
+                        </td>
+                      </tr>
+                      {g.rows.map(renderRow)}
+                    </Fragment>
+                  ))}
+                  <tr data-testid="wf-totals" className="border-t border-border bg-surface-1 font-semibold text-ink">
+                    <td className="px-2 py-[0.3125rem]" />
+                    <td className="px-2 py-[0.3125rem]">{runsCountLabel(sorted.length, total)}</td>
+                    <td className="px-2 py-[0.3125rem]" />
+                    <td className="px-2 py-[0.3125rem]" />
+                    <td className="px-2 py-[0.3125rem]" />
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums">{totals.agents}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatTokens(totals.tokens)}</td>
+                    <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatUsd(totals.cost)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
 
-          {sorted.find((r) => r.cc_version)?.cc_version && (
-            <p className="mt-3 px-2 text-2xs text-ink-4">
-              format last verified on {sorted.find((r) => r.cc_version)!.cc_version}
-            </p>
-          )}
-        </>
-      )}
-    </div>
+            {/* §5.3: the SAME dayGroups/sorted data, rendered as cards instead
+                of table rows so nothing on a 390px phone forces the page to
+                scroll sideways. */}
+            {isMobile && (
+            <div className="space-y-3">
+              {dayGroups.map((g) => (
+                <div key={g.day}>
+                  <div className="mb-1.5 text-3xs font-semibold uppercase tracking-caps text-ink-4">{dayGroupLabel(g.day)}</div>
+                  <div className="space-y-2">{g.rows.map(renderCard)}</div>
+                </div>
+              ))}
+              <div data-testid="wf-totals-mobile" className="pt-1 text-2xs text-ink-3">
+                {runsCountLabel(sorted.length, total)} · {plural(totals.agents, "agent")} · {formatTokens(totals.tokens)} tok ·{" "}
+                {formatUsd(totals.cost)}
+              </div>
+            </div>
+            )}
+
+            {sorted.length < total && (
+              <div className="flex flex-col items-center gap-1.5 py-4">
+                {loadMoreError && <p className="text-2xs text-danger">Couldn’t load more runs.</p>}
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="rounded-md border-hairline border-border px-3 py-1.5 text-xs text-ink-3 transition-colors duration-quick ease-quad hover:text-ink disabled:opacity-50"
+                >
+                  {loadingMore ? "Loading…" : loadMoreError ? "Retry" : "Load more"}
+                </button>
+              </div>
+            )}
+
+            {sorted.find((r) => r.cc_version)?.cc_version && (
+              <p className="mt-3 px-2 text-2xs text-ink-4">
+                format last verified on {sorted.find((r) => r.cc_version)!.cc_version}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </>
   );
 }

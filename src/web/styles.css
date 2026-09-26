@@ -153,6 +153,10 @@ html.dark {                      /* DARK - the reference design */
 @media (min-resolution: 2dppx) { :root { --hairline: 0.5px; } }
 
 :root { font-family: var(--font-sans); font-feature-settings: "cv01","ss03"; }
+/* Reserve the scrollbar's width on every page: with classic (non-overlay)
+   scrollbars, a short page and a long page would otherwise centre their
+   content at different x positions, so navigating shifts everything sideways. */
+html { scrollbar-gutter: stable; }
 
 body {
   @apply bg-background text-foreground antialiased;

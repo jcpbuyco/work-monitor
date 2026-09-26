@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, within, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, waitFor, act } from "@testing-library/react";
 import { CostDailyPage } from "../src/web/components/CostDailyPage.tsx";
 
 const ROWS = [
@@ -79,16 +79,7 @@ describe("CostDailyPage", () => {
     render(<CostDailyPage />);
     await screen.findByText("alpha");
     expect(screen.getAllByRole("button", { name: /cost/i }).length).toBe(1);
-    // §5.2: the shared AppBar replaces the old standalone "← Dashboard" link -
-    // its home (logo) link is the way back now.
-    expect(screen.getByText("agent-monitor").closest("a")!.getAttribute("href")).toBe("#/");
     expect(screen.getByText("Cost by day").tagName).toBe("SPAN");
-  });
-
-  it("renders the AppBar, with the Cost nav link marked current (§5.2)", async () => {
-    mockFetch(ROWS);
-    render(<CostDailyPage />);
-    expect(screen.getByText("Cost").closest("a")!.getAttribute("aria-current")).toBe("page");
   });
 
   it("announces the loading state to assistive tech", () => {
@@ -99,14 +90,6 @@ describe("CostDailyPage", () => {
     expect(loading.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("shows the shared reconnecting bar when disconnected, same as the board (§5.2 finding fix)", () => {
-    // The banner used to live on Board alone, so this page - sharing the
-    // exact same App-level SSE subscription - looked falsely healthy while
-    // the stream was actually stale.
-    mockFetch(ROWS);
-    render(<CostDailyPage connected={false} lastMessageAt={Date.now() - 120_000} />);
-    expect(screen.getByTestId("reconnecting-bar").textContent).toContain("Reconnecting");
-  });
 });
 
 describe("CostDailyPage §5.3: day grouping and subtotals", () => {
@@ -221,11 +204,28 @@ describe("CostDailyPage §5.3: harness column and filter", () => {
 });
 
 describe("CostDailyPage §5.3: skeleton loading and responsive layout", () => {
-  it("shows skeleton placeholder rows (not bare text) while the initial fetch is in flight", () => {
-    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch; // never resolves
-    const { container } = render(<CostDailyPage />);
-    expect(container.querySelector(".am-pulse")).toBeTruthy();
-    expect(screen.getByText("Loading…")).toBeTruthy();
+  it("keeps the current table on screen, dimmed and busy, while a window change reloads", async () => {
+    mockFetch(ROWS);
+    render(<CostDailyPage />);
+    await screen.findByText("alpha");
+    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch; // the reload never lands
+    fireEvent.click(screen.getByRole("button", { name: "30d" }));
+    expect(screen.getByText("alpha")).toBeTruthy();
+    expect(screen.getByText("alpha").closest("[aria-busy]")!.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("announces loading at once but shows placeholders only once the first fetch is slow", () => {
+    vi.useFakeTimers();
+    try {
+      global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch; // never resolves
+      const { container } = render(<CostDailyPage />);
+      expect(screen.getByText("Loading…")).toBeTruthy(); // announced to assistive tech immediately
+      expect(container.querySelector(".am-pulse")).toBeNull(); // a fast load never flashes a skeleton
+      act(() => vi.advanceTimersByTime(300));
+      expect(container.querySelector(".am-pulse")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders the desktop table by default (matchMedia unavailable in plain jsdom)", async () => {

@@ -2,9 +2,9 @@ import { Fragment, useMemo, useEffect, useState } from "react";
 import { formatUsd, formatTokens, formatDay, costDailyRange, type CostWindow } from "../cost.ts";
 import { groupByDay } from "../groupByDay.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
+import { useDelayedFlag } from "../useDelayedFlag.ts";
 import { Segmented, Skeleton, DownCaret } from "./primitives.tsx";
 import { HarnessMark } from "./HarnessMark.tsx";
-import { AppBar } from "./AppBar.tsx";
 import { HARNESSES, harnessLabel, isHarness, type Harness } from "../../shared/harness.ts";
 import type { State, LiveWorkflow } from "../types.ts";
 
@@ -125,6 +125,11 @@ export function CostDailyPage({
   const [harness, setHarness] = useState<"" | Harness>("");
   const [rows, setRows] = useState<Row[]>([]);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
+  // A reload after the first one (window or harness change) keeps the current
+  // table on screen, dimmed, instead of blanking it: blank-then-refill made
+  // the whole page jump on every toggle.
+  const [refetching, setRefetching] = useState(false);
+  const slowFirstLoad = useDelayedFlag(status === "loading", 300);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "project", dir: "asc" });
   // §5.3: "tables become stacked cards below md" -- one layout renders at a
   // time (see useMediaQuery's doc for why not a CSS-hidden pair).
@@ -132,7 +137,8 @@ export function CostDailyPage({
 
   useEffect(() => {
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "ok" ? s : "loading"));
+    setRefetching(true);
     const { since } = costDailyRange(range, Date.now());
     const params = new URLSearchParams();
     if (since != null) params.set("since", String(since));
@@ -144,9 +150,12 @@ export function CostDailyPage({
         if (cancelled) return;
         setRows(Array.isArray(body?.rows) ? (body.rows as Row[]) : []);
         setStatus("ok");
+        setRefetching(false);
       })
       .catch(() => {
-        if (!cancelled) setStatus("error");
+        if (cancelled) return;
+        setStatus("error");
+        setRefetching(false);
       });
     return () => {
       cancelled = true;
@@ -187,15 +196,7 @@ export function CostDailyPage({
     );
 
   return (
-    <div className="mx-auto max-w-page px-3 pb-16 sm:px-6">
-      <AppBar
-        state={state}
-        workflows={workflows}
-        ready={ready}
-        route="#/cost"
-        connected={connected}
-        lastMessageAt={lastMessageAt}
-      />
+    <>
       {/* §5.2: the page's own slim toolbar, right under the shared AppBar -
           replaces the old standalone PageHeader (which dropped the AppBar
           entirely on this route). */}
@@ -233,122 +234,125 @@ export function CostDailyPage({
         </div>
       </div>
 
-      {status === "error" ? (
-        <p className="py-16 text-center text-sm text-ink-3">Couldn't load cost data.</p>
-      ) : status === "loading" ? (
-        <>
-          <p role="status" aria-live="polite" className="sr-only">Loading…</p>
-          {isMobile ? <SkeletonCards /> : <SkeletonTable />}
-        </>
-      ) : sorted.length === 0 ? (
-        <p className="py-16 text-center text-sm text-ink-3">No usage in this window.</p>
-      ) : isMobile ? (
-        <div className="space-y-3">
-          {dayGroups.map((g) => {
-            const daySubtotal = costCell(sumCost(g.rows), sumUnpriced(g.rows));
-            return (
-              <div key={g.day}>
-                <div className="mb-1.5 flex items-center justify-between text-3xs font-semibold uppercase tracking-caps text-ink-4">
-                  <span>{formatDay(g.day)}</span>
-                  <span title={daySubtotal.title} className="normal-case tabular-nums slashed-zero">
-                    {daySubtotal.text} · {formatTokens(sumTokens(g.rows))} tok
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {g.rows.map((r) => {
-                    const cell = costCell(r.costUsd, r.unpricedTokens ?? 0);
-                    return (
-                      // The harness belongs in this key (finding fix): once
-                      // the server groups NULL and 'claude' rows into one
-                      // (store.ts), a project/branch can still have TWO rows
-                      // for the SAME day if it used more than one harness --
-                      // without the harness here they'd collide on this key
-                      // exactly like the desktop key below already avoids.
-                      <div key={`${r.project}/${r.branch ?? ""}/${r.harness ?? ""}`} data-testid="cost-row" className="rounded-md border-hairline border-border-weak p-3">
-                        <div className="flex items-center gap-2">
-                          <HarnessMark harness={isHarness(r.harness) ? r.harness : "claude"} />
-                          <span className="text-sm font-medium text-ink">{r.project}</span>
-                          <span className="text-xs text-ink-3">{r.branch ?? "-"}</span>
-                        </div>
-                        <div className="mt-1 flex items-center gap-3 font-mono text-2xs">
-                          <span title={cell.title} className="tabular-nums slashed-zero text-ink">{cell.text}</span>
-                          <span className="tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <table className="w-full border-collapse font-mono text-xs">
-          <thead>
-            <tr>
-              <th className="sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal">
-                <span className="text-2xs uppercase tracking-caps text-ink-4">Harness</span>
-              </th>
-              {COLS.map((c) => (
-                <th
-                  key={c.key}
-                  aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(c)}
-                    className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
-                  >
-                    {c.label}
-                    {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
-                  </button>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
+      {/* Dimmed, never blanked, while a reload after the first is in flight. */}
+      <div aria-busy={refetching} style={{ opacity: refetching ? 0.6 : 1 }} className="transition-opacity duration-quick ease-quad">
+        {status === "error" ? (
+          <p className="py-16 text-center text-sm text-ink-3">Couldn't load cost data.</p>
+        ) : status === "loading" ? (
+          <>
+            <p role="status" aria-live="polite" className="sr-only">Loading…</p>
+            {slowFirstLoad && (isMobile ? <SkeletonCards /> : <SkeletonTable />)}
+          </>
+        ) : sorted.length === 0 ? (
+          <p className="py-16 text-center text-sm text-ink-3">No usage in this window.</p>
+        ) : isMobile ? (
+          <div className="space-y-3">
             {dayGroups.map((g) => {
-              const subtotal = costCell(sumCost(g.rows), sumUnpriced(g.rows));
-              const subtotalTokens = sumTokens(g.rows);
+              const daySubtotal = costCell(sumCost(g.rows), sumUnpriced(g.rows));
               return (
-                <Fragment key={g.day}>
-                  <tr className="bg-surface-1">
-                    <td colSpan={COLS.length + 1} className="px-2 py-1 text-3xs font-semibold uppercase tracking-caps text-ink-4">
-                      {formatDay(g.day)}
-                    </td>
-                  </tr>
-                  {g.rows.map((r) => {
-                    const cell = costCell(r.costUsd, r.unpricedTokens ?? 0);
-                    return (
-                      <tr
-                        key={`${r.project}/${r.branch ?? ""}/${r.harness ?? ""}`}
-                        data-testid="cost-row"
-                        className="h-8 border-b border-border-weak transition-colors duration-quick ease-quad hover:bg-surface-2"
-                      >
-                        <td className="px-2 py-[0.3125rem]">
-                          <HarnessMark harness={isHarness(r.harness) ? r.harness : "claude"} />
-                        </td>
-                        <td className="px-2 py-[0.3125rem] font-medium text-ink">{r.project}</td>
-                        <td className="px-2 py-[0.3125rem] text-ink-3">{r.branch ?? "-"}</td>
-                        <td title={cell.title} className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink">{cell.text}</td>
-                        <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</td>
-                      </tr>
-                    );
-                  })}
-                  {/* §5.3: per-day subtotal row. */}
-                  <tr data-testid="cost-subtotal" className="border-b border-border bg-surface-1 font-semibold text-ink">
-                    <td className="px-2 py-[0.3125rem]" />
-                    <td className="px-2 py-[0.3125rem]" colSpan={2}>Subtotal</td>
-                    <td title={subtotal.title} className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{subtotal.text}</td>
-                    <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatTokens(subtotalTokens)}</td>
-                  </tr>
-                </Fragment>
+                <div key={g.day}>
+                  <div className="mb-1.5 flex items-center justify-between text-3xs font-semibold uppercase tracking-caps text-ink-4">
+                    <span>{formatDay(g.day)}</span>
+                    <span title={daySubtotal.title} className="normal-case tabular-nums slashed-zero">
+                      {daySubtotal.text} · {formatTokens(sumTokens(g.rows))} tok
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {g.rows.map((r) => {
+                      const cell = costCell(r.costUsd, r.unpricedTokens ?? 0);
+                      return (
+                        // The harness belongs in this key (finding fix): once
+                        // the server groups NULL and 'claude' rows into one
+                        // (store.ts), a project/branch can still have TWO rows
+                        // for the SAME day if it used more than one harness --
+                        // without the harness here they'd collide on this key
+                        // exactly like the desktop key below already avoids.
+                        <div key={`${r.project}/${r.branch ?? ""}/${r.harness ?? ""}`} data-testid="cost-row" className="rounded-md border-hairline border-border-weak p-3">
+                          <div className="flex items-center gap-2">
+                            <HarnessMark harness={isHarness(r.harness) ? r.harness : "claude"} />
+                            <span className="text-sm font-medium text-ink">{r.project}</span>
+                            <span className="text-xs text-ink-3">{r.branch ?? "-"}</span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-3 font-mono text-2xs">
+                            <span title={cell.title} className="tabular-nums slashed-zero text-ink">{cell.text}</span>
+                            <span className="tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
-          </tbody>
-        </table>
-      )}
-    </div>
+          </div>
+        ) : (
+          <table className="w-full border-collapse font-mono text-xs">
+            <thead>
+              <tr>
+                <th className="sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal">
+                  <span className="text-2xs uppercase tracking-caps text-ink-4">Harness</span>
+                </th>
+                {COLS.map((c) => (
+                  <th
+                    key={c.key}
+                    aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+                    className={`sticky top-[5.75rem] z-10 h-8 border-b border-border bg-surface-0 px-2 text-left font-normal ${c.numeric ? "text-right" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(c)}
+                      className="inline-flex items-center gap-1 text-2xs uppercase tracking-caps text-ink-4 transition-colors duration-quick ease-quad hover:text-ink"
+                    >
+                      {c.label}
+                      {sort.key === c.key && <span aria-hidden="true" className="text-3xs">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dayGroups.map((g) => {
+                const subtotal = costCell(sumCost(g.rows), sumUnpriced(g.rows));
+                const subtotalTokens = sumTokens(g.rows);
+                return (
+                  <Fragment key={g.day}>
+                    <tr className="bg-surface-1">
+                      <td colSpan={COLS.length + 1} className="px-2 py-1 text-3xs font-semibold uppercase tracking-caps text-ink-4">
+                        {formatDay(g.day)}
+                      </td>
+                    </tr>
+                    {g.rows.map((r) => {
+                      const cell = costCell(r.costUsd, r.unpricedTokens ?? 0);
+                      return (
+                        <tr
+                          key={`${r.project}/${r.branch ?? ""}/${r.harness ?? ""}`}
+                          data-testid="cost-row"
+                          className="h-8 border-b border-border-weak transition-colors duration-quick ease-quad hover:bg-surface-2"
+                        >
+                          <td className="px-2 py-[0.3125rem]">
+                            <HarnessMark harness={isHarness(r.harness) ? r.harness : "claude"} />
+                          </td>
+                          <td className="px-2 py-[0.3125rem] font-medium text-ink">{r.project}</td>
+                          <td className="px-2 py-[0.3125rem] text-ink-3">{r.branch ?? "-"}</td>
+                          <td title={cell.title} className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink">{cell.text}</td>
+                          <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero text-ink-4">{formatTokens(r.tokens)}</td>
+                        </tr>
+                      );
+                    })}
+                    {/* §5.3: per-day subtotal row. */}
+                    <tr data-testid="cost-subtotal" className="border-b border-border bg-surface-1 font-semibold text-ink">
+                      <td className="px-2 py-[0.3125rem]" />
+                      <td className="px-2 py-[0.3125rem]" colSpan={2}>Subtotal</td>
+                      <td title={subtotal.title} className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{subtotal.text}</td>
+                      <td className="px-2 py-[0.3125rem] text-right tabular-nums slashed-zero">{formatTokens(subtotalTokens)}</td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
   );
 }

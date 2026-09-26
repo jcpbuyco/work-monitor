@@ -81,9 +81,11 @@ function Count({
   // Tone IS the hierarchy: a zero count recedes on its own, with no branch in
   // the markup. The one escalation in the whole app is a non-zero needs-you -
   // and pending can never escalate, since an unknown count isn't a known one.
+  // Every chip carries the pill's padding, so escalating to the pill (or back)
+  // never changes its size and never nudges its neighbours.
   const tone =
     escalate && !pending && n > 0
-      ? "rounded-full bg-attention/[0.08] px-2 py-0.5 text-attention"
+      ? "bg-attention/[0.08] text-attention"
       : !pending && n > 0
         ? "text-ink-2"
         : "text-ink-4";
@@ -93,12 +95,18 @@ function Count({
   return (
     <span
       data-testid={testId}
-      className={`am-count ${display} shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${tone}`}
+      className={`am-count ${display} shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${tone}`}
       aria-label={compact ? fullText : undefined}
       title={compact ? fullText : undefined}
     >
       <StatusGlyph kind={kind} animate={false} />
-      <span>{compact ? nText : fullText}</span>
+      {/* The number sits in a one-digit-wide slot: "…" is wider than a digit,
+          so "… working" turning into "1 working" used to nudge every chip
+          after it. The phrase still reads as one ("1 working"). */}
+      <span>
+        <span className={`inline-block text-center tabular-nums ${pending ? "w-[1ch] whitespace-nowrap" : "min-w-[1ch]"}`}>{nText}</span>
+        {compact ? null : ` ${label}`}
+      </span>
     </span>
   );
 }
@@ -214,12 +222,21 @@ export function AppBar({
           `controls`' top-level children vertically, and without this wrapper
           the count chip fell to a row of its own under a bare "Workflows"
           link instead of sitting beside it. */}
-      <div className="flex items-center gap-1.5">
+      {/* The live-run count overlays the link's corner instead of sitting
+          beside it: appearing or disappearing as runs start and finish must
+          not push the rest of the bar sideways. */}
+      <div className="relative flex items-center">
         <NavLink href="#/workflows" active={route === "#/workflows"} icon="⚙">
           Workflows
         </NavLink>
         {workflows.length > 0 && (
-          <Chip data-testid="appbar-wf-count" tone="working" round size="2xs" className="tabular-nums">
+          <Chip
+            data-testid="appbar-wf-count"
+            tone="working"
+            round
+            size="2xs"
+            className="pointer-events-none absolute -right-1.5 -top-1 tabular-nums"
+          >
             {workflows.length}
           </Chip>
         )}
@@ -270,7 +287,7 @@ export function AppBar({
 
   return (
     <>
-    <header ref={headerRef} className="sticky top-0 z-20 -mx-3 flex h-12 items-center gap-2 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:gap-4 sm:px-6">
+    <header ref={headerRef} data-app-bar className="sticky top-0 z-20 -mx-3 flex h-12 items-center gap-2 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 backdrop-blur-[20px] sm:-mx-6 sm:gap-4 sm:px-6">
       <a
         href="#/"
         data-press

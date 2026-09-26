@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { State, LiveWorkflow } from "../types.ts";
 import type { InsightsResponse } from "../../shared/insights.ts";
-import { AppBar } from "./AppBar.tsx";
 import { SectionHeader, Skeleton } from "./primitives.tsx";
+import { useDelayedFlag } from "../useDelayedFlag.ts";
 import { ago } from "../time.ts";
 import { KpiRow } from "./insights/KpiRow.tsx";
 import { RecordsStrip } from "./insights/RecordsStrip.tsx";
@@ -105,6 +105,10 @@ export function InsightsPage({
   }, []);
 
   const loading = status === "loading";
+  // The endpoint is usually cached and answers in about a millisecond: only a
+  // genuinely slow load shows the page-shaped skeleton, so a fast one never
+  // flashes placeholders that then jump.
+  const slowLoad = useDelayedFlag(loading || !data, 300);
 
   const sinceLabel = `Lifetime since ${data?.meta.firstAt != null ? new Date(data.meta.firstAt).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" }) : "-"} · local time${data?.meta.tz ? ` (${data.meta.tz})` : ""}`;
 
@@ -114,8 +118,7 @@ export function InsightsPage({
     // the AppBar above it (which always renders at -mx-3, the app-wide
     // convention) sat 1px narrower than the toolbar right under it at every
     // width (reviewer finding, B13).
-    <div className="mx-auto max-w-board px-3 pb-16 sm:px-6">
-      <AppBar state={state} workflows={workflows} ready={ready} route="#/insights" connected={connected} lastMessageAt={lastMessageAt} />
+    <>
       <div className="sticky top-12 z-10 -mx-3 flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 border-b-hairline border-border-weak bg-surface-0/[0.72] px-3 py-1.5 backdrop-blur-[20px] sm:-mx-6 sm:px-6">
         <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-ink">Insights</span>
         {/* min-w-0 + truncate, not `shrink-0 whitespace-nowrap`: at 390/22 the
@@ -156,7 +159,13 @@ export function InsightsPage({
           </button>
         </div>
       ) : loading || !data ? (
-        <InsightsSkeleton />
+        slowLoad ? (
+          <InsightsSkeleton />
+        ) : (
+          <span className="sr-only" role="status">
+            Loading insights
+          </span>
+        )
       ) : data.meta.usageRows === 0 ? (
         <div className="py-24 text-center text-sm text-ink-3">No usage recorded yet. Insights appear once agents start spending tokens.</div>
       ) : (
@@ -210,7 +219,7 @@ export function InsightsPage({
           </section>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

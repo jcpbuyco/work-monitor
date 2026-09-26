@@ -8,3 +8,8 @@ import { cleanup } from "@testing-library/react";
 afterEach(() => {
   cleanup();
 });
+
+// jsdom has no canvas: its getContext logs "Not implemented" and returns null.
+// Return null quietly instead - measureText already falls back to a
+// deterministic estimate when there is no 2D context.
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
