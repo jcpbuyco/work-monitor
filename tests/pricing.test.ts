@@ -84,6 +84,14 @@ describe("costOf", () => {
     expect(costOf("sonnet", { ...zero, output: 1_000_000 })).toBeCloseTo(10, 6);
   });
 
+  it("prices claude-mythos-5-1 at Fable 5.1's rates, with its cheaper cache read", () => {
+    expect(costOf("claude-mythos-5-1", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(10 + 50, 6);
+    expect(
+      costOf("claude-mythos-5-1", { ...zero, cache_read: 1_000_000, cache_create_5m: 1_000_000, cache_create_1h: 1_000_000 })
+    ).toBeCloseTo(0.25 + 12.5 + 20, 6);
+    expect(costOf("mythos", { ...zero, cache_read: 1_000_000 })).toBeCloseTo(0.25, 6); // 5-1's rate, not mythos-5's 1
+  });
+
   it("prices bare fable at the fable-5-1 tier, not the stale fable-5 tier", () => {
     expect(costOf("fable", { ...zero, cache_read: 1_000_000 })).toBeCloseTo(0.25, 6); // 5-1's rate, not 5-series's 1
   });
@@ -107,6 +115,7 @@ describe("canonicalModel", () => {
     // fable IS re-pointed: transcripts resolve the bare alias to fable-5-1 100%
     // of the time (never bare fable-5), so the stale mapping cost $0 for real spend.
     expect(canonicalModel("fable")).toBe("claude-fable-5-1");
+    expect(canonicalModel("mythos")).toBe("claude-mythos-5-1");
   });
 
   it("passes canonical and unknown ids through unchanged", () => {

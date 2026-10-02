@@ -15,11 +15,13 @@ export interface Rate {
 }
 
 // Published list prices (USD / MTok), all five fields explicit -- no global
-// multipliers (§2.1). Two models (fable-5-1, opus-5-5) have a cheaper cache-read
-// rate than the rest of their family, which a shared multiplier could not express.
+// multipliers (§2.1). Some models (fable-5-1, mythos-5-1, opus-5-5) have a
+// cheaper cache-read rate than the rest of their family, which a shared
+// multiplier could not express.
 const RATES: Record<string, Rate> = {
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5, cacheWrite1h: 20 },
   "claude-fable-5": { input: 10, output: 50, cacheRead: 1, cacheWrite5m: 12.5, cacheWrite1h: 20 },
+  "claude-mythos-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5, cacheWrite1h: 20 },
   "claude-mythos-5": { input: 10, output: 50, cacheRead: 1, cacheWrite5m: 12.5, cacheWrite1h: 20 },
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite5m: 5, cacheWrite1h: 8 },
   "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 },
@@ -70,7 +72,7 @@ const FAMILY_ALIAS: Record<string, string> = {
   // would send it to costOf's unknown-model branch and cost it $0.
   haiku: "claude-haiku-4-5",
   fable: "claude-fable-5-1",
-  mythos: "claude-mythos-5",
+  mythos: "claude-mythos-5-1",
 };
 
 /** Normalize a transcript model id to a `RATES` key. Real transcripts emit
