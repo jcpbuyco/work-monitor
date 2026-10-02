@@ -27,6 +27,7 @@ const RATES: Record<string, Rate> = {
   "claude-opus-4-7": { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 },
   "claude-opus-4-6": { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 },
   "claude-opus-4-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 4 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 4 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite5m: 3.75, cacheWrite1h: 6 },
   "claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite5m: 3.75, cacheWrite1h: 6 },
@@ -63,7 +64,8 @@ const RATES: Record<string, Rate> = {
 // non-5.5 tier rather than silently costing at the wrong rate either way.
 const FAMILY_ALIAS: Record<string, string> = {
   opus: "claude-opus-5",
-  sonnet: "claude-sonnet-5",
+  // Same price either way; Claude Code now resolves bare `sonnet` to 5.5.
+  sonnet: "claude-sonnet-5-5",
   // NOT re-pointed: there is no claude-haiku-5 rate, so pointing `haiku` at one
   // would send it to costOf's unknown-model branch and cost it $0.
   haiku: "claude-haiku-4-5",

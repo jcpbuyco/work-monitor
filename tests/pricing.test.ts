@@ -49,6 +49,14 @@ describe("costOf", () => {
     expect(costOf("claude-sonnet-5", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(2 + 10, 6);
   });
 
+  it("prices claude-sonnet-5-5 at Sonnet 5's list price, cache rates included", () => {
+    expect(costOf("claude-sonnet-5-5", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(2 + 10, 6);
+    expect(
+      costOf("claude-sonnet-5-5", { ...zero, cache_read: 1_000_000, cache_create_5m: 1_000_000, cache_create_1h: 1_000_000 })
+    ).toBeCloseTo(0.2 + 2.5 + 4, 6);
+    expect(costOf("claude-sonnet-5-5[1m]", { ...zero, input: 1_000_000 })).toBeCloseTo(2, 6);
+  });
+
   it("prices claude-fable-5-1 and claude-opus-5-5, both previously missing from the table ($0 bug)", () => {
     expect(costOf("claude-fable-5-1", { ...zero, input: 1_000_000, output: 1_000_000 })).toBeCloseTo(10 + 50, 6);
     expect(costOf("claude-fable-5-1", { ...zero, cache_read: 1_000_000 })).toBeCloseTo(0.25, 6);
@@ -92,7 +100,7 @@ describe("canonicalModel", () => {
 
   it("maps bare family aliases to a canonical id", () => {
     expect(canonicalModel("opus")).toBe("claude-opus-5");
-    expect(canonicalModel("sonnet")).toBe("claude-sonnet-5");
+    expect(canonicalModel("sonnet")).toBe("claude-sonnet-5-5");
     // haiku is deliberately NOT re-pointed: there is no claude-haiku-5 rate,
     // so re-pointing it would send every bare `haiku` to the $0 unknown branch.
     expect(canonicalModel("haiku")).toBe("claude-haiku-4-5");
